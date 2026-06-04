@@ -1,0 +1,46 @@
+//! Tests for YrsComputeEngine.
+//!
+//! Split into focused submodules for navigability.
+
+mod helpers;
+mod sync_helpers;
+mod test_advanced_filter;
+mod test_binary_patches;
+mod test_bootstrap_hydration;
+mod test_comments;
+mod test_copy_range;
+mod test_core;
+mod test_data_bounds;
+mod test_deferred_xlsx_import;
+mod test_formatting;
+mod test_named_range_refers_to;
+mod test_old_value;
+mod test_outline_visibility;
+mod test_properties;
+mod test_queries;
+mod test_range_sort;
+mod test_range_structural;
+mod test_rebuild;
+mod test_shapes;
+mod test_sheet_introduce_unification;
+mod test_sheet_lifecycle_runtime_hint;
+mod test_sheet_metadata;
+mod test_slicers;
+mod test_sort_filter;
+mod test_sparklines;
+mod test_structural_viewport;
+mod test_sync_bootstrap;
+mod test_sync_mutation_results;
+mod test_sync_protocol;
+mod test_sync_provider_replay;
+mod test_undo_observer_translation;
+mod test_undo_redo_atomic_ops;
+mod test_undo_redo_bulk_position;
+mod test_undo_redo_core;
+mod test_undo_redo_merges;
+mod test_undo_redo_non_undoable_state;
+mod test_undo_redo_result_payloads;
+mod test_undo_redo_sort;
+mod test_viewport;
+mod test_workbook_settings;
+mod test_xlsx_export;
