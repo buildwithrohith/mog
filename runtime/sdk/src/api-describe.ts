@@ -1,4 +1,7 @@
 import rawApiSpec from './generated/api-spec.json';
+import { apiCompatibility, type ApiCompatibilityIndex } from './api-compatibility/index';
+import { apiGuidance, type ApiGuidanceApi } from './agent-guidance/index';
+import type { ApiCompatibilityReference } from './api-compatibility/types';
 
 // ─── Return Types ────────────────────────────────────────────────────────────
 
@@ -6,6 +9,7 @@ export interface ApiSpecFunctionEntry {
   signature: string;
   docstring: string;
   usedTypes: string[];
+  compatibility?: ApiCompatibilityReference[];
   targetInterface?: string;
 }
 
@@ -23,6 +27,7 @@ export interface ApiSpecTypeEntry {
 }
 
 export interface ApiSpec {
+  compatibility?: ApiCompatibilityIndex;
   subApis: {
     workbook: Record<string, ApiSpecFunctionEntry>;
     worksheet: Record<string, ApiSpecFunctionEntry>;
@@ -49,6 +54,7 @@ export interface MethodSummary {
   name: string;
   signature: string;
   docstring: string;
+  compatibility: ApiCompatibilityReference[];
 }
 
 export interface InterfaceResult {
@@ -63,6 +69,7 @@ export interface MethodResult {
   path: string;
   signature: string;
   docstring: string;
+  compatibility: ApiCompatibilityReference[];
   types: Record<string, TypeResult>;
 }
 
@@ -157,7 +164,7 @@ function getMethodsExcludingAccessors(ifaceName: string, root: string): string[]
 
 function buildMethodSummaries(ifaceName: string, excludeAccessors?: Set<string>): MethodSummary[] {
   const iface = spec.interfaces[ifaceName as keyof typeof spec.interfaces] as
-    | { functions: Record<string, { signature: string; docstring: string }> }
+    | { functions: Record<string, ApiSpecFunctionEntry> }
     | undefined;
   if (!iface) return [];
   const exclude = excludeAccessors ?? new Set<string>();
@@ -167,6 +174,7 @@ function buildMethodSummaries(ifaceName: string, excludeAccessors?: Set<string>)
       name,
       signature: fn.signature,
       docstring: fn.docstring,
+      compatibility: fn.compatibility ?? [],
     }));
 }
 
@@ -297,7 +305,7 @@ function resolveMethod(
 ): MethodResult | null {
   const iface = spec.interfaces[ifaceName as keyof typeof spec.interfaces] as
     | {
-        functions: Record<string, { signature: string; docstring: string; usedTypes: string[] }>;
+        functions: Record<string, ApiSpecFunctionEntry>;
       }
     | undefined;
   if (!iface) return null;
@@ -332,6 +340,7 @@ function resolveMethod(
     path: fullPath,
     signature: fn.signature,
     docstring: fn.docstring,
+    compatibility: fn.compatibility ?? [],
     types,
   };
 }
@@ -354,6 +363,7 @@ export interface MethodNode {
   readonly path: string;
   readonly signature: string;
   readonly docstring: string;
+  readonly compatibility: ApiCompatibilityReference[];
   readonly types: Record<string, TypeResult>;
 }
 
@@ -502,11 +512,15 @@ export const api: {
     (): OverviewResult;
     (path: string): DescribeResult;
   };
+  guidance: ApiGuidanceApi;
+  compatibility: ApiCompatibilityIndex;
   wb: RootNode;
   ws: RootNode;
   types: TypesNode;
 } = {
   describe,
+  guidance: apiGuidance,
+  compatibility: apiCompatibility,
   wb: buildRootNode('wb'),
   ws: buildRootNode('ws'),
   types: buildTypesNode(),

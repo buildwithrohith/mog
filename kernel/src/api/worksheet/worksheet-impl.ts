@@ -22,6 +22,9 @@
 import type {
   ActiveCellEditSource,
   AggregateResult,
+  Chart,
+  ChartConfig,
+  ChartReadOptions,
   CellData,
   CellMetadataCache as CellMetadataCacheContract,
   CellRange,
@@ -35,6 +38,10 @@ import type {
   FormulaSyntaxValidationError,
   IdentifiedCellData,
   NumberFormatCategory,
+  PivotCreateConfig,
+  PivotTableConfig,
+  PivotTableHandle,
+  PivotTableInfo,
   RawCellData,
   FindInRangeOptions,
   SearchOptions,
@@ -102,6 +109,7 @@ import * as DescribeOps from './operations/describe-operations';
 import * as SortOps from './operations/sort-operations';
 import { deletePivotsContainedByClearRange } from './pivot-clear';
 import { createViewportReader } from './viewport-reader';
+import { createHandleLiveness, type HandleLiveness } from '../lifecycle/handle-liveness';
 
 // Sub-API imports
 import type {
@@ -170,6 +178,7 @@ import { WorksheetLayoutImpl } from './layout';
 import { WorksheetNamesImpl } from './names';
 import { WorksheetOutlineImpl } from './outline';
 import { WorksheetPivotsImpl } from './pivots';
+import { dataConfigToApiConfig } from './pivots/config-conversion';
 import { WorksheetPrintImpl } from './print';
 import { WorksheetProtectionImpl } from './protection';
 import { WorksheetSettingsImpl } from './settings';
@@ -278,6 +287,8 @@ function mapSortDirection(direction: 'asc' | 'desc' | undefined): 'asc' | 'desc'
 
 export class WorksheetImpl implements Worksheet {
   private readonly workbook: Workbook | null;
+  private readonly _liveness: HandleLiveness;
+  private _disposed = false;
   private _cachedName: string | undefined;
   private _cachedIndex: number;
   private _cachedVisible: boolean;
@@ -317,10 +328,18 @@ export class WorksheetImpl implements Worksheet {
       index?: number;
       visible?: boolean;
       floatingObjectManager?: SpreadsheetObjectManager;
+      liveness?: HandleLiveness;
     },
   ) {
-    const { workbook, name, index, visible, floatingObjectManager } = options ?? {};
+    const { workbook, name, index, visible, floatingObjectManager, liveness } = options ?? {};
     this.workbook = workbook ?? null;
+    this._liveness =
+      liveness ??
+      createHandleLiveness({
+        label: 'Worksheet',
+        code: 'BRIDGE_DISPOSED',
+        metadata: { label: 'Worksheet', sheetId: String(sheetId) },
+      });
     this._cachedName = name;
     this._cachedIndex = index ?? -1;
     this._cachedVisible = visible ?? true;
@@ -333,6 +352,7 @@ export class WorksheetImpl implements Worksheet {
    * @internal
    */
   _syncMetadata(name: string, index: number, visible: boolean): void {
+    this._assertLive('worksheet._syncMetadata');
     this._cachedName = name;
     this._cachedIndex = index;
     this._cachedVisible = visible;
@@ -343,6 +363,7 @@ export class WorksheetImpl implements Worksheet {
   // ===========================================================================
 
   setBoundsReader(reader: IObjectBoundsReader): void {
+    this._assertLive('worksheet.setBoundsReader');
     this._boundsReader = reader;
     // Invalidate all cached typed collections so they are recreated with the new reader.
     this._objects = undefined;
@@ -362,11 +383,13 @@ export class WorksheetImpl implements Worksheet {
 
   /** SYNC — returns cached sheet name, updated by refreshSheetMetadata(). */
   get name(): string {
+    this._assertLive('worksheet.name');
     return this._cachedName ?? this.sheetId;
   }
 
   /** SYNC — returns cached 0-based index, updated by refreshSheetMetadata(). */
   get index(): number {
+    this._assertLive('worksheet.index');
     return this._cachedIndex;
   }
 
@@ -375,6 +398,7 @@ export class WorksheetImpl implements Worksheet {
   // ===========================================================================
 
   async getName(): Promise<string> {
+    this._assertLive('worksheet.getName');
     if (this._cachedName != null) {
       return this._cachedName;
     }
@@ -389,6 +413,7 @@ export class WorksheetImpl implements Worksheet {
   }
 
   async setName(name: string): Promise<void> {
+    this._assertLive('worksheet.setName');
     this._ensureWritable('worksheet.setName');
     this._invalidateActiveCellEditSourceForSheet(this.sheetId);
     await renameSheet(this.ctx, this.sheetId, name);
@@ -398,6 +423,7 @@ export class WorksheetImpl implements Worksheet {
   }
 
   getIndex(): number {
+    this._assertLive('worksheet.getIndex');
     return this._cachedIndex;
   }
 
@@ -411,6 +437,7 @@ export class WorksheetImpl implements Worksheet {
 
   private _diagrams?: WorksheetDiagramsImpl;
   get diagrams(): WorksheetDiagrams {
+    this._assertLive('worksheet.diagrams');
     return (this._diagrams ??= new WorksheetDiagramsImpl(
       this.ctx,
       this.sheetId,
@@ -427,6 +454,7 @@ export class WorksheetImpl implements Worksheet {
    * Called at the top of public mutation methods.
    */
   private _ensureWritable(operation: string): void {
+    this._assertLive(operation);
     try {
       this.ctx.writeGate.assertWritable(operation);
     } catch (err) {
@@ -640,6 +668,7 @@ export class WorksheetImpl implements Worksheet {
     options?: CellWriteOptions,
   ): Promise<void>;
   async setCell(a: string | number, b: any, c?: any, d?: any): Promise<void> {
+    this._assertLive('worksheet.setCell');
     this._ensureWritable('worksheet.setCell');
     let row: number, col: number, value: any, options: CellWriteOptions | undefined;
     if (typeof a === 'string') {
@@ -719,6 +748,7 @@ export class WorksheetImpl implements Worksheet {
     d?: number | { tz?: string },
     e?: number,
   ): Promise<void> {
+    this._assertLive('worksheet.setDateValue');
     this._ensureWritable('worksheet.setDateValue');
     const { row, col, year, month, day } = this.resolveDateArgs(a, b, c, d, e);
     await this.ensureCellEditable(row, col);
@@ -753,6 +783,7 @@ export class WorksheetImpl implements Worksheet {
     d?: number | { tz?: string },
     e?: number,
   ): Promise<void> {
+    this._assertLive('worksheet.setTimeValue');
     this._ensureWritable('worksheet.setTimeValue');
     const { row, col, hours, minutes, seconds } = this.resolveTimeArgs(a, b, c, d, e);
     await this.ensureCellEditable(row, col);
@@ -866,6 +897,7 @@ export class WorksheetImpl implements Worksheet {
   }
 
   async getCell(a: string | number, b?: number): Promise<CellData> {
+    this._assertLive('worksheet.getCell');
     const { row, col } = resolveCell(a, b);
     const data = await CellOps.getCell(this.ctx, this.sheetId, row, col);
     return data ?? { value: null };
@@ -886,9 +918,11 @@ export class WorksheetImpl implements Worksheet {
    */
   private _cells?: WorksheetCellsAccessor;
   get cells(): WorksheetCellsAccessor {
+    this._assertLive('worksheet.cells');
     if (!this._cells) {
       this._cells = {
         get: async (addr: string): Promise<CellRecord | undefined> => {
+          this._assertLive('worksheet.cells.get');
           const parsed = parseCellAddress(addr);
           if (!parsed) {
             throw new KernelError('API_INVALID_ADDRESS', `Invalid cell address: "${addr}"`);
@@ -906,12 +940,14 @@ export class WorksheetImpl implements Worksheet {
   }
 
   async getValue(a: string | number, b?: number): Promise<CellValuePrimitive> {
+    this._assertLive('worksheet.getValue');
     const { row, col } = resolveCell(a, b);
     const value = await CellOps.getValue(this.ctx, this.sheetId, row, col);
     return normalizeCellValue(value ?? null);
   }
 
   async getData(): Promise<CellValue[][]> {
+    this._assertLive('worksheet.getData');
     const range = await QueryOps.getUsedRange(this.ctx, this.sheetId);
     if (!range) return [];
     const cellData = await RangeOps.getRange(this.ctx, this.sheetId, {
@@ -930,6 +966,7 @@ export class WorksheetImpl implements Worksheet {
     c?: number,
     d?: number,
   ): Promise<CellValue[][]> {
+    this._assertLive('worksheet.getValues');
     const bounds = resolveRange(a, b, c, d);
     return RangeOps.getRangeValues(this.ctx, this.sheetId, {
       sheetId: this.sheetId,
@@ -946,6 +983,7 @@ export class WorksheetImpl implements Worksheet {
     c?: number,
     d?: number,
   ): Promise<CellData[][]> {
+    this._assertLive('worksheet.getRange');
     const bounds = resolveRange(a, b, c, d);
     return RangeOps.getRange(this.ctx, this.sheetId, {
       sheetId: this.sheetId,
@@ -957,6 +995,7 @@ export class WorksheetImpl implements Worksheet {
   }
 
   async getRanges(addresses: string): Promise<CellData[][][]> {
+    this._assertLive('worksheet.getRanges');
     const parts = addresses
       .split(',')
       .map((s) => s.trim())
@@ -965,6 +1004,7 @@ export class WorksheetImpl implements Worksheet {
   }
 
   async setRange(a: string | number | CellRange, b: any, c?: any[][]): Promise<void> {
+    this._assertLive('worksheet.setRange');
     this._ensureWritable('worksheet.setRange');
     let startRow: number, startCol: number, values: any[][];
     if (typeof a === 'object') {
@@ -1490,7 +1530,26 @@ export class WorksheetImpl implements Worksheet {
     return DescribeOps.describe(this.ctx, this.sheetId, address);
   }
 
-  async describeRange(range: string | CellRange, includeStyle: boolean = true): Promise<string> {
+  async describeRange(range?: string | CellRange, includeStyle: boolean = true): Promise<string> {
+    if (range == null) {
+      return DescribeOps.describeUsedRange(this.ctx, this.sheetId, includeStyle);
+    }
+    if (
+      typeof range !== 'string' &&
+      (typeof range.startRow !== 'number' ||
+        typeof range.startCol !== 'number' ||
+        typeof range.endRow !== 'number' ||
+        typeof range.endCol !== 'number')
+    ) {
+      throw new KernelError(
+        'API_INVALID_ARGUMENT',
+        'describeRange range must be an A1 range string or CellRange object',
+        {
+          path: ['range'],
+          suggestion: 'Call ws.describeRange() for the used range, or pass a range like "A1:B10"',
+        },
+      );
+    }
     const rangeStr =
       typeof range === 'string'
         ? range
@@ -1500,6 +1559,43 @@ export class WorksheetImpl implements Worksheet {
 
   async summarize(options?: SummaryOptions): Promise<string> {
     return DescribeOps.summarize(this.ctx, this.sheetId, options);
+  }
+
+  getCharts(options?: ChartReadOptions): Promise<Chart[]> {
+    return this.charts.list(options);
+  }
+
+  listCharts(options?: ChartReadOptions): Promise<Chart[]> {
+    return this.charts.list(options);
+  }
+
+  getChart(chartId: string): Promise<Chart | null> {
+    return this.charts.get(chartId);
+  }
+
+  updateChart(chartId: string, updates: Partial<ChartConfig>): Promise<void> {
+    return this.charts.update(chartId, updates);
+  }
+
+  removeChart(chartId: string): Promise<void> {
+    return this.charts.remove(chartId);
+  }
+
+  async addPivotTable(config: PivotCreateConfig): Promise<PivotTableConfig> {
+    const created = await this.pivots.add(config);
+    return dataConfigToApiConfig(created, created.sourceSheetName);
+  }
+
+  removePivotTable(name: string): Promise<void> {
+    return this.pivots.remove(name);
+  }
+
+  listPivotTables(): Promise<PivotTableInfo[]> {
+    return this.pivots.list();
+  }
+
+  getPivotTable(name: string): Promise<PivotTableHandle | null> {
+    return this.pivots.get(name);
   }
 
   // ===========================================================================
@@ -1625,6 +1721,7 @@ export class WorksheetImpl implements Worksheet {
       {
         caseSensitive: options?.matchCase,
         wholeCell: options?.entireCell,
+        includeFormulas: options?.searchFormulas,
       },
     );
   }
@@ -1647,6 +1744,7 @@ export class WorksheetImpl implements Worksheet {
       {
         caseSensitive: options?.matchCase,
         wholeCell: options?.entireCell,
+        includeFormulas: options?.searchFormulas,
       },
     );
   }
@@ -2474,6 +2572,7 @@ export class WorksheetImpl implements Worksheet {
   // ===========================================================================
 
   get cellMetadata(): CellMetadataCacheContract {
+    this._assertLive('worksheet.cellMetadata');
     if (!this._cellMetadata) {
       const cache = createCellMetadataCache(this.workbook);
       this._rawCellMetadataCache = cache;
@@ -2500,7 +2599,8 @@ export class WorksheetImpl implements Worksheet {
 
   private _changes?: WorksheetChangesImpl;
   get changes(): WorksheetChanges {
-    return (this._changes ??= new WorksheetChangesImpl(this.ctx, this.sheetId));
+    this._assertLive('worksheet.changes');
+    return (this._changes ??= new WorksheetChangesImpl(this.ctx, this.sheetId, this._liveness));
   }
 
   private _formats?: WorksheetFormatsImpl;
@@ -2647,7 +2747,13 @@ export class WorksheetImpl implements Worksheet {
 
   private _pivots?: WorksheetPivotsImpl;
   get pivots(): WorksheetPivots {
-    return (this._pivots ??= new WorksheetPivotsImpl(this.ctx, this.sheetId, this.workbook));
+    this._assertLive('worksheet.pivots');
+    return (this._pivots ??= new WorksheetPivotsImpl(
+      this.ctx,
+      this.sheetId,
+      this.workbook,
+      this._liveness,
+    ));
   }
 
   private _slicers?: WorksheetSlicersImpl;
@@ -2743,6 +2849,8 @@ export class WorksheetImpl implements Worksheet {
   // ===========================================================================
 
   dispose(): void {
+    if (this._disposed) return;
+    this._disposed = true;
     this._unsubscribeActiveCellEditSourceEvents?.();
     this._unsubscribeActiveCellEditSourceEvents = null;
     this._activeCellEditSource = null;
@@ -2760,6 +2868,13 @@ export class WorksheetImpl implements Worksheet {
       this.ctx.computeBridge.setCellMetadataCache(null);
     }
     this._viewport = null;
+  }
+
+  private _assertLive(operation: string): void {
+    this._liveness.assertLive(operation);
+    if (this._disposed) {
+      throw this._liveness.error(operation);
+    }
   }
 }
 

@@ -36,6 +36,15 @@ console.log(await ws.getCell('A2'));
 await wb.dispose();
 ```
 
+Agents should discover the SDK surface through `api.describe(...)`, then run
+generated code through `api.guidance.analyze(source)` or
+`api.guidance.preflight(source)` when that API is available in the SDK version
+they are using. OfficeJS-looking code such as `Excel.run`, `Office.context`,
+`context.sync()`, proxy `.load(...)`, or `range.values = ...` is diagnosed as a
+foreign spreadsheet dialect; Mog does not support or shim it. In generated
+sandbox code, use the injected `wb` object, derive `const ws = wb.activeSheet`,
+and read `diagnostic.mogReplacements` for replacement paths/snippets.
+
 Use `@mog-sdk/embed` for browser, React, and Web Component embeds. See:
 
 - [Unified SDK](runtime/sdk/README.md)

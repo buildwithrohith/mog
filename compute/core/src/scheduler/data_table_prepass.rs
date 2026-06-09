@@ -18,14 +18,6 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 /// Region group: maps (sheet_uuid, start_row, start_col) to (region_def, cells).
 type RegionGroupMap = FxHashMap<(String, u32, u32), (DataTableRegionDef, Vec<(CellId, u32, u32)>)>;
 
-/// Orphan signature map: maps (sheet, row_input_ref, col_input_ref) to cells needing region synthesis.
-///
-/// Typed data-table input refs: keys are typed `Option<CellRef>` (was `Option<(u32, u32)>`)
-/// to match the snapshot-side `DataTableRegionDef.row_input_ref` /
-/// `col_input_ref` shape — no `cell_ref_to_a1` round-trip when synthesizing
-/// orphan regions.
-type OrphanSigMap = FxHashMap<(SheetId, Option<CellRef>, Option<CellRef>), Vec<(CellId, u32, u32)>>;
-
 #[cfg(test)]
 static DATA_TABLE_PANIC_AFTER_OVERRIDE: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
@@ -76,30 +68,39 @@ fn restore_data_table_saved_values(mirror: &mut CellMirror, saved_values: &[(Cel
     clear_data_table_eval_caches();
 }
 
+/// Return the current values for a registered data-table region.
+///
+/// `TABLE()` is a region-owned pseudo-formula, not a normal worksheet function.
+/// If the prepass cannot reconstruct enough of the data-table model to evaluate
+/// a registered region, keep those cells resolved to their current values so
+/// they do not fall through to ordinary formula evaluation as `#CALC!`.
+fn current_data_table_region_values(
+    mirror: &mut CellMirror,
+    sheet_id: &SheetId,
+    region: &DataTableRegionDef,
+    id_alloc: &cell_types::IdAllocator,
+) -> Vec<(CellId, CellValue)> {
+    let mut values = Vec::new();
+    for row in region.start_row..=region.end_row {
+        for col in region.start_col..=region.end_col {
+            let pos = SheetPos::new(row, col);
+            let Some(cell_id) = mirror.ensure_cell_id_identity_only(sheet_id, pos, id_alloc) else {
+                continue;
+            };
+            let value = mirror
+                .get_cell_value_raw(&cell_id)
+                .or_else(|| mirror.get_cell_value_at(sheet_id, pos))
+                .cloned()
+                .unwrap_or(CellValue::Null);
+            values.push((cell_id, value));
+        }
+    }
+    values
+}
+
 /// Check if an AST node is a top-level TABLE function call.
 pub(super) fn is_table_formula(ast: &ASTNode) -> bool {
     matches!(ast, ASTNode::Function { name, .. } if name.eq_ignore_ascii_case("TABLE"))
-}
-
-/// Extract a typed `CellRef` (sheet-local) from a TABLE formula AST argument.
-/// Used to build the `OrphanSigMap` keyed on typed refs — matches the
-/// snapshot-side `DataTableRegionDef.row_input_ref` shape.
-fn extract_table_input_cell_refs(ast: &ASTNode) -> (Option<CellRef>, Option<CellRef>) {
-    let args = match ast {
-        ASTNode::Function { name, args } if name.eq_ignore_ascii_case("TABLE") => args,
-        _ => return (None, None),
-    };
-
-    let extract_ref = |arg: &ASTNode| -> Option<CellRef> {
-        match arg {
-            ASTNode::CellReference(cell_ref_node) => Some(cell_ref_node.reference),
-            _ => None,
-        }
-    };
-
-    let row_input = args.first().and_then(&extract_ref);
-    let col_input = args.get(1).and_then(extract_ref);
-    (row_input, col_input)
 }
 
 /// Resolve a typed `CellRef` to its (row, col) on the given mirror.
@@ -153,6 +154,26 @@ impl super::ComputeCore {
         if table_cells.is_empty() {
             return Vec::new();
         }
+
+        // Step 2: Group TABLE cells by registered data table region.
+        // API-authored `=TABLE(...)` formulas do not create `DataTableRegionDef`
+        // metadata; those are ordinary unsupported pseudo-function calls and must
+        // fall through to evaluator-level #CALC! handling.
+        let mut region_groups: RegionGroupMap = FxHashMap::default();
+        for &(cell_id, sheet_id, row, col) in &table_cells {
+            if let Some(region) = mirror.find_data_table_at(&sheet_id, row, col) {
+                let key = (region.sheet.clone(), region.start_row, region.start_col);
+                let entry = region_groups
+                    .entry(key)
+                    .or_insert_with(|| (region.clone(), Vec::new()));
+                entry.1.push((cell_id, row, col));
+            }
+        }
+
+        if region_groups.is_empty() {
+            return Vec::new();
+        }
+
         self.begin_sumifs_cache_epoch();
 
         let prior_in_data_table_eval = self.in_data_table_eval;
@@ -161,108 +182,6 @@ impl super::ComputeCore {
         DATA_TABLE_EVAL_SCOPE_ENTRIES.fetch_add(1, Ordering::SeqCst);
 
         let prepass_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            // Step 2: Group TABLE cells by data table region.
-            // Key: (sheet_uuid, start_row, start_col) uniquely identifies a region.
-            let mut region_groups: RegionGroupMap = FxHashMap::default();
-
-            for &(cell_id, sheet_id, row, col) in &table_cells {
-                if let Some(region) = mirror.find_data_table_at(&sheet_id, row, col) {
-                    let key = (region.sheet.clone(), region.start_row, region.start_col);
-                    let entry = region_groups
-                        .entry(key)
-                        .or_insert_with(|| (region.clone(), Vec::new()));
-                    entry.1.push((cell_id, row, col));
-                }
-            }
-
-            // Step 2b: Synthesize regions for orphan TABLE cells (no pre-registered region).
-            // This handles API-created workbooks where data_table_regions is empty.
-            //
-            // Key insight: each setCell('=TABLE(...)') triggers its own recalc with
-            // only 1 dirty cell. A 1x1 region misidentifies sibling TABLE cells as
-            // headers. To compute correct bounds, scan the FULL ast_cache for all
-            // TABLE cells sharing the same input refs — not just the dirty set.
-            {
-                let matched_cells: FxHashSet<CellId> = region_groups
-                    .values()
-                    .flat_map(|(_, cells)| cells.iter().map(|(cid, _, _)| *cid))
-                    .collect();
-
-                // Collect the input ref signatures of dirty orphan TABLE cells
-                let mut dirty_orphan_sigs: OrphanSigMap = FxHashMap::default();
-
-                for &(cell_id, sheet_id, row, col) in &table_cells {
-                    if matched_cells.contains(&cell_id) {
-                        continue;
-                    }
-                    if let Some(entry) = self.ast_cache.get(&cell_id) {
-                        let (row_input, col_input) = extract_table_input_cell_refs(&entry.ast);
-                        if row_input.is_some() || col_input.is_some() {
-                            dirty_orphan_sigs
-                                .entry((sheet_id, row_input, col_input))
-                                .or_default()
-                                .push((cell_id, row, col));
-                        }
-                    }
-                }
-
-                // For each unique signature, scan the full ast_cache for ALL TABLE
-                // cells with matching input refs to compute the true bounding box.
-                //
-                // Typed data-table input refs: signature keys are now typed `Option<CellRef>`
-                // (was `Option<(u32, u32)>`); the synthesized region writes them
-                // directly into `DataTableRegionDef` with no `cell_ref_to_a1`
-                // round-trip.
-                for ((sheet_id, row_input_ref, col_input_ref), dirty_cells) in dirty_orphan_sigs {
-                    let mut min_row = u32::MAX;
-                    let mut max_row = 0u32;
-                    let mut min_col = u32::MAX;
-                    let mut max_col = 0u32;
-
-                    for (&cid, entry) in self.ast_cache.iter() {
-                        if !is_table_formula(&entry.ast) {
-                            continue;
-                        }
-                        let (ri, ci) = extract_table_input_cell_refs(&entry.ast);
-                        if ri != row_input_ref || ci != col_input_ref {
-                            continue;
-                        }
-                        if let Some(compute_graph::CellPosition {
-                            sheet: sid,
-                            row: r,
-                            col: c,
-                        }) = compute_graph::PositionResolver::resolve(mirror, &cid)
-                            && sid == sheet_id
-                        {
-                            min_row = min_row.min(r);
-                            max_row = max_row.max(r);
-                            min_col = min_col.min(c);
-                            max_col = max_col.max(c);
-                        }
-                    }
-
-                    if min_row > max_row {
-                        continue;
-                    }
-
-                    let region = DataTableRegionDef {
-                        sheet: sheet_id.to_uuid_string(),
-                        start_row: min_row,
-                        start_col: min_col,
-                        end_row: max_row,
-                        end_col: max_col,
-                        row_input_ref,
-                        col_input_ref,
-                        ooxml_flags: None,
-                    };
-                    let key = (region.sheet.clone(), region.start_row, region.start_col);
-                    let entry = region_groups
-                        .entry(key)
-                        .or_insert_with(|| (region, Vec::new()));
-                    entry.1.extend(dirty_cells);
-                }
-            }
-
             // Step 3: Evaluate each region (sorted by key for deterministic ordering)
             let mut results: Vec<(CellId, CellValue)> = Vec::new();
             let mut sorted_regions: Vec<_> = region_groups.into_iter().collect();
@@ -283,6 +202,12 @@ impl super::ComputeCore {
                 // (start_row - 1, start_col) or (start_row, start_col - 1) per
                 // Excel convention, we try the corner first, then fall back.
                 if region.start_row == 0 || region.start_col == 0 {
+                    results.extend(current_data_table_region_values(
+                        mirror,
+                        &sheet_id,
+                        region,
+                        &self.id_alloc,
+                    ));
                     continue;
                 }
                 let candidate_positions = [
@@ -299,7 +224,15 @@ impl super::ComputeCore {
                     Some((cid, entry.ast.clone()))
                 }) {
                     Some(pair) => pair,
-                    None => continue,
+                    None => {
+                        results.extend(current_data_table_region_values(
+                            mirror,
+                            &sheet_id,
+                            region,
+                            &self.id_alloc,
+                        ));
+                        continue;
+                    }
                 };
 
                 // 3c: Resolve input cell references.
@@ -318,6 +251,12 @@ impl super::ComputeCore {
 
                 // Must have at least one input cell
                 if row_input_cell.is_none() && col_input_cell.is_none() {
+                    results.extend(current_data_table_region_values(
+                        mirror,
+                        &sheet_id,
+                        region,
+                        &self.id_alloc,
+                    ));
                     continue;
                 }
 
@@ -371,11 +310,10 @@ impl super::ComputeCore {
 
                 // 3d½: Batch-materialize body cell CellIds.
                 //
-                // XLSX-parsed data table body cells often exist only in col_data
-                // (dense column storage) without pos_to_id entries. Without CellIds
-                // the write-back loop silently drops computed values. Call
-                // ensure_cell_id() for every body position before evaluation so the
-                // write-back is infallible.
+                // Densely hydrated data table cells can exist only in col_data
+                // without pos_to_id entries. Without CellIds the write-back loop
+                // silently drops computed values. Call ensure_cell_id() for every
+                // body position before evaluation so the write-back is infallible.
                 let body_rows = (region.end_row - region.start_row + 1) as usize;
                 let body_cols = (region.end_col - region.start_col + 1) as usize;
                 let mut body_cell_ids: Vec<Vec<Option<CellId>>> = Vec::with_capacity(body_rows);
@@ -756,6 +694,24 @@ mod tests {
         reset_data_table_eval_scope_entries_for_tests();
         let mut dirty = FxHashSet::default();
         dirty.insert(test_cell_id(1));
+
+        assert!(core.run_data_table_prepass(&mut mirror, &dirty).is_empty());
+        assert!(!core.in_data_table_eval);
+        assert_eq!(data_table_eval_scope_entries_for_tests(), 0);
+    }
+
+    #[test]
+    fn data_table_prepass_orphan_table_dirty_set_does_not_toggle_flag() {
+        let _guard = data_table_test_lock();
+        let mut core = ComputeCore::new();
+        let mut mirror = CellMirror::new();
+        let mut snapshot = data_table_snapshot();
+        snapshot.data_table_regions.clear();
+        core.init_from_snapshot(&mut mirror, snapshot)
+            .expect("orphan TABLE snapshot should initialize");
+        reset_data_table_eval_scope_entries_for_tests();
+        let mut dirty = FxHashSet::default();
+        dirty.insert(test_cell_id(8));
 
         assert!(core.run_data_table_prepass(&mut mirror, &dirty).is_empty());
         assert!(!core.in_data_table_eval);
