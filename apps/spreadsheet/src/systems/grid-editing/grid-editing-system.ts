@@ -326,6 +326,7 @@ export class GridEditingSystem implements IGridEditingSystem {
               editingCell: editorEditingCell,
               commitActiveCell,
               commitSelectionRanges,
+              commitDirection,
             } = context;
             const editingCell = editorEditingCell ?? commitActiveCell;
             if (editingCell && sheetId && editorDeps?.setCellValue) {
@@ -355,6 +356,11 @@ export class GridEditingSystem implements IGridEditingSystem {
                   datePickerCommit.kind,
                 );
                 if (result instanceof Promise) await result;
+                this.rememberLastCommittedCellForFormatting(
+                  toSheetId(sheetId),
+                  editingCell,
+                  commitDirection,
+                );
                 return;
               }
 
@@ -399,6 +405,11 @@ export class GridEditingSystem implements IGridEditingSystem {
                 );
                 if (result instanceof Promise) await result;
               }
+              this.rememberLastCommittedCellForFormatting(
+                toSheetId(sheetId),
+                editingCell,
+                commitDirection,
+              );
             }
           }),
         },
@@ -455,6 +466,20 @@ export class GridEditingSystem implements IGridEditingSystem {
 
   private richTextCacheKey(sheetId: SheetId, cell: CellCoord): string {
     return `${sheetId}:${cell.row}:${cell.col}`;
+  }
+
+  private rememberLastCommittedCellForFormatting(
+    sheetId: SheetId,
+    cell: CellCoord,
+    direction: Direction | 'none' | null,
+  ): void {
+    this.config.uiStoreApi?.getState().setLastCommittedCellForFormatting?.({
+      sheetId,
+      row: cell.row,
+      col: cell.col,
+      direction,
+      committedAt: this.config.wallClockNow?.() ?? 0,
+    });
   }
 
   // ===========================================================================
@@ -2048,6 +2073,11 @@ export class GridEditingSystem implements IGridEditingSystem {
       prevSelectionActive = isActive;
     });
     this.cleanupFns.push(() => selSub.unsubscribe());
+
+    const userSelectionSub = this.selectionActor.on('userSelectionChanged', () => {
+      for (const cb of this.selectionActiveCallbacks) cb();
+    });
+    this.cleanupFns.push(() => userSelectionSub.unsubscribe());
 
     // Editor state change subscription
     const editorSub = this.editorActor.subscribe((state) => {

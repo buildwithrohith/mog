@@ -18,6 +18,7 @@ import { dispatch, useUIStore } from '../../internal-api';
 
 import { Button, Dialog, DialogBody, DialogFooter, DialogHeader, RadioGroup } from '@mog/shell';
 import { useActionDependencies } from '../../hooks/toolbar/use-action-dependencies';
+import { scheduleDialogAction } from './dialog-action-scheduler';
 
 // =============================================================================
 // Options Data
@@ -78,33 +79,43 @@ export function InsertCellsDialog() {
       return;
     }
 
-    // If user selected entire row/column, delegate to row/column actions
-    if (selectedOption === 'row') {
-      if (mode === 'insert') {
-        dispatch('INSERT_ROW_ABOVE', deps);
+    const action = () => {
+      // If user selected entire row/column, delegate to row/column actions
+      if (selectedOption === 'row') {
+        if (mode === 'insert') {
+          return dispatch('INSERT_ROW_ABOVE', deps);
+        } else {
+          return dispatch('DELETE_ROWS', deps);
+        }
+      } else if (selectedOption === 'column') {
+        if (mode === 'insert') {
+          return dispatch('INSERT_COLUMN_LEFT', deps);
+        } else {
+          return dispatch('DELETE_COLUMNS', deps);
+        }
       } else {
-        dispatch('DELETE_ROWS', deps);
+        // Shift cells in specified direction
+        if (mode === 'insert') {
+          if (deps.accessors.clipboard.hasCut()) {
+            const direction = selectedOption === 'right' ? 'right' : 'down';
+            return dispatch('INSERT_CUT_CELLS', deps, { range, direction });
+          }
+
+          // Insert cells - shift existing cells right or down
+          const direction = selectedOption === 'right' ? 'right' : 'down';
+          return dispatch('INSERT_CELLS', deps, { range, direction });
+        } else {
+          // Delete cells - shift remaining cells left or up
+          const direction = selectedOption === 'left' ? 'left' : 'up';
+          return dispatch('DELETE_CELLS', deps, { range, direction });
+        }
       }
-    } else if (selectedOption === 'column') {
-      if (mode === 'insert') {
-        dispatch('INSERT_COLUMN_LEFT', deps);
-      } else {
-        dispatch('DELETE_COLUMNS', deps);
-      }
-    } else {
-      // Shift cells in specified direction
-      if (mode === 'insert') {
-        // Insert cells - shift existing cells right or down
-        const direction = selectedOption === 'right' ? 'right' : 'down';
-        dispatch('INSERT_CELLS', deps, { range, direction });
-      } else {
-        // Delete cells - shift remaining cells left or up
-        const direction = selectedOption === 'left' ? 'left' : 'up';
-        dispatch('DELETE_CELLS', deps, { range, direction });
-      }
-    }
+    };
 
     closeDialog();
+    // Structural mutations can synchronously monopolize the main thread; let the
+    // click/close sequence complete before starting the apply work.
+    scheduleDialogAction(action);
   }, [selectedOption, mode, range, deps, closeDialog]);
 
   // Handle Cancel button click

@@ -35,6 +35,7 @@ import { useActionDependencies } from './use-action-dependencies';
 import { isPickerBackedValidation } from '../../systems/grid-editing/coordination/editor-validation-resolution';
 import { clipboardSelectors } from '../../selectors';
 import { useCoordinator } from '../shared/use-coordinator';
+import { trackPendingClipboardPaste } from '../../systems/grid-editing/coordination/pending-clipboard-paste';
 import type { ClipboardState } from '@mog-sdk/contracts/actors';
 import type { CellCoord } from '@mog-sdk/contracts/rendering';
 
@@ -86,6 +87,20 @@ function waitForClipboardPasteIdle(actor: ClipboardActorLike, signal?: AbortSign
   });
 }
 
+const CONTEXT_MENU_ACTION_DELAY_MS = 50;
+
+function runAfterInputClick<T>(callback: () => T | Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    setTimeout(() => {
+      try {
+        resolve(callback());
+      } catch (error) {
+        reject(error);
+      }
+    }, CONTEXT_MENU_ACTION_DELAY_MS);
+  });
+}
+
 export interface UseContextMenuActionsReturn {
   // Clipboard actions
   cut: () => void;
@@ -113,6 +128,8 @@ export interface UseContextMenuActionsReturn {
 
   // Insert Cells Dialog
   insertCells: () => void;
+  insertCutCells: () => void;
+  hasCutClipboard: boolean;
 
   // Delete actions
   deleteRows: () => void;
@@ -538,6 +555,16 @@ export function useContextMenuActions(
       dispatch('OPEN_INSERT_CELLS_DIALOG', actionDeps);
     });
   }, [actionDeps, closeContextMenu]);
+
+  const insertCutCells = useCallback(() => {
+    closeContextMenu();
+    trackPendingClipboardPaste(
+      runAfterInputClick(() => {
+        selectResolvedContextCell();
+        return dispatch('INSERT_CUT_CELLS_SHIFT_DOWN', actionDeps);
+      }),
+    );
+  }, [actionDeps, closeContextMenu, selectResolvedContextCell]);
 
   // ==========================================================================
   // Delete Actions
@@ -1422,6 +1449,8 @@ export function useContextMenuActions(
 
       // Insert Cells Dialog
       insertCells,
+      insertCutCells,
+      hasCutClipboard: clipboard.hasCut,
 
       // Delete
       deleteRows,
@@ -1580,6 +1609,8 @@ export function useContextMenuActions(
       insertColumnLeft,
       insertColumnRight,
       insertCells,
+      insertCutCells,
+      clipboard.hasCut,
       deleteRows,
       deleteColumns,
       deleteCells,

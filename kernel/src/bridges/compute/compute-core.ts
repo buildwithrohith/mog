@@ -33,7 +33,11 @@ import type { ReadonlyBinaryViewportBuffer } from '../wire/viewport-coordinator'
 import type { CellMetadataCache } from '../wire/cell-metadata-cache';
 import type { RangeMetadataCache } from '../wire/range-metadata-cache';
 import { ViewportCoordinatorRegistry } from '../wire/viewport-coordinator-registry';
-import type { ViewportPrefetchState, ViewportScrollBehavior } from '../wire/viewport-prefetch';
+import {
+  normalizeViewportBounds,
+  type ViewportPrefetchState,
+  type ViewportScrollBehavior,
+} from '../wire/viewport-prefetch';
 
 import { ViewportFetchManager } from './viewport-fetch-manager';
 import {
@@ -83,6 +87,39 @@ export function extractMutationData<T>(result: MutationResult): T | undefined {
 
 function isShowFormulasChange(change: SheetSettingsChange): boolean {
   return change.changedKey === 'showFormulas';
+}
+
+function historyReplayNeedsFullViewportRefresh(result: MutationResult): boolean {
+  return Boolean(
+    result.propertyChanges?.length ||
+    result.dimensionChanges?.length ||
+    result.mergeChanges?.length ||
+    result.visibilityChanges?.length ||
+    result.commentChanges?.length ||
+    result.filterChanges?.length ||
+    result.tableChanges?.length ||
+    result.slicerChanges?.length ||
+    result.sheetChanges?.length ||
+    result.settingsChanges?.length ||
+    result.pageBreakChanges?.length ||
+    result.printAreaChanges?.length ||
+    result.printTitlesChanges?.length ||
+    result.printSettingsChanges?.length ||
+    result.splitConfigChanges?.length ||
+    result.scrollPositionChanges?.length ||
+    result.viewSelectionChanges?.length ||
+    result.workbookSettingsChanges?.length ||
+    result.cfChanges?.length ||
+    result.namedRangeChanges?.length ||
+    result.groupingChanges?.length ||
+    result.sparklineChanges?.length ||
+    result.sortingChanges?.length ||
+    result.structureChanges?.length ||
+    result.floatingObjectChanges?.length ||
+    result.floatingObjectGroupChanges?.length ||
+    result.pivotChanges?.length ||
+    result.rangeChanges?.length,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1284,7 +1321,12 @@ export class ComputeCore {
     scrollBehavior: ViewportScrollBehavior = 'free',
   ): Promise<void> {
     this.ensureInitialized();
-    return this.fetchManager!.refresh(viewportId, sheetId, bounds, scrollBehavior);
+    return this.fetchManager!.refresh(
+      viewportId,
+      sheetId,
+      normalizeViewportBounds(bounds),
+      scrollBehavior,
+    );
   }
 
   /**
@@ -1297,7 +1339,7 @@ export class ComputeCore {
     bounds: { startRow: number; startCol: number; endRow: number; endCol: number },
   ): void {
     if (!this.isInitialized) return;
-    this.fetchManager?.updateVisibleWindow(viewportId, sheetId, bounds);
+    this.fetchManager?.updateVisibleWindow(viewportId, sheetId, normalizeViewportBounds(bounds));
   }
 
   /**
@@ -1371,14 +1413,15 @@ export class ComputeCore {
     bounds: { startRow: number; startCol: number; endRow: number; endCol: number },
   ): Promise<void> {
     this.ensureInitialized();
+    const normalizedBounds = normalizeViewportBounds(bounds);
     await this.transport.call<void>('compute_register_viewport', {
       docId: this.docId,
       viewportId,
       sheetId,
-      startRow: bounds.startRow,
-      startCol: bounds.startCol,
-      endRow: bounds.endRow,
-      endCol: bounds.endCol,
+      startRow: normalizedBounds.startRow,
+      startCol: normalizedBounds.startCol,
+      endRow: normalizedBounds.endRow,
+      endCol: normalizedBounds.endCol,
     });
   }
 
@@ -1390,13 +1433,14 @@ export class ComputeCore {
     bounds: { startRow: number; startCol: number; endRow: number; endCol: number },
   ): Promise<void> {
     this.ensureInitialized();
+    const normalizedBounds = normalizeViewportBounds(bounds);
     await this.transport.call<void>('compute_update_viewport_bounds', {
       docId: this.docId,
       viewportId,
-      startRow: bounds.startRow,
-      startCol: bounds.startCol,
-      endRow: bounds.endRow,
-      endCol: bounds.endCol,
+      startRow: normalizedBounds.startRow,
+      startCol: normalizedBounds.startCol,
+      endRow: normalizedBounds.endRow,
+      endCol: normalizedBounds.endCol,
     });
   }
 
@@ -1610,22 +1654,28 @@ export class ComputeCore {
   // ===========================================================================
 
   async undo(): Promise<MutationResult> {
-    const result = await this.mutatePublic('compute_undo', () =>
+    await this.admitPublicMutation('compute_undo');
+    const result = await this.mutateCore(
       this.transport.call<MutationTuple>('compute_undo', { docId: this.docId }),
+      undefined,
+      'compute_undo',
     );
-    // History replay can change derived/effective viewport state without
-    // Rust emitting the same fine-grained viewport patches as the original
-    // forward mutation. Re-read visible buffers so undo never paints stale
-    // effective formatting, table styles, or related derived state.
-    await this.forceRefreshAllViewports();
+    if (historyReplayNeedsFullViewportRefresh(result)) {
+      await this.forceRefreshAllViewports();
+    }
     return result;
   }
 
   async redo(): Promise<MutationResult> {
-    const result = await this.mutatePublic('compute_redo', () =>
+    await this.admitPublicMutation('compute_redo');
+    const result = await this.mutateCore(
       this.transport.call<MutationTuple>('compute_redo', { docId: this.docId }),
+      undefined,
+      'compute_redo',
     );
-    await this.forceRefreshAllViewports();
+    if (historyReplayNeedsFullViewportRefresh(result)) {
+      await this.forceRefreshAllViewports();
+    }
     return result;
   }
 

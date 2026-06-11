@@ -34,6 +34,7 @@ import {
   FormField,
   Label,
 } from '@mog/shell';
+import { scheduleDialogAction } from './dialog-action-scheduler';
 
 // =============================================================================
 // Types
@@ -281,28 +282,29 @@ export function InsertTableDialog({ onInsertTable }: InsertTableDialogProps) {
       return;
     }
 
-    // Create the table
-    if (onInsertTable) {
-      onInsertTable({
-        range: parsedRange,
-        hasHeaders,
-        stylePreset: selectedStyle,
-      });
-    } else {
+    closeDialog();
+    scheduleDialogAction(() => {
+      // Create the table
+      if (onInsertTable) {
+        return onInsertTable({
+          range: parsedRange,
+          hasHeaders,
+          stylePreset: selectedStyle,
+        });
+      }
+
       // Wrap table creation in an undo group so Cmd+Z reverts the entire
       // operation (table creation + style) in a single step.
       const ws = wb.getSheetById(activeSheetId);
       const rangeA1 = formatA1Range(parsedRange);
-      void wb
+      return wb
         .undoGroup(async () => {
           await ws.tables.add(rangeA1, { hasHeaders, style: selectedStyle });
         })
         .catch((err: unknown) => {
           console.error('Failed to create table:', err);
         });
-    }
-
-    closeDialog();
+    });
   }, [
     rangeInput,
     parsedRange,

@@ -61,12 +61,12 @@ describe('SDK agent API guidance', () => {
     expect(canonical?.kind).toBe('mog-api');
     if (canonical?.kind !== 'mog-api') throw new Error('expected canonical Mog guidance');
     expect(canonical.target.compatibility?.map((entry) => entry.id)).toContain(
-      'round55.worksheet.getCharts.alias',
+      'mog-api.worksheet.getCharts.alias',
     );
 
     const method = api.describe('ws.getCharts');
     expect(method && 'compatibility' in method ? method.compatibility : []).toContainEqual(
-      expect.objectContaining({ id: 'round55.worksheet.getCharts.alias' }),
+      expect.objectContaining({ id: 'mog-api.worksheet.getCharts.alias' }),
     );
   });
 
@@ -154,7 +154,7 @@ describe('SDK agent API guidance', () => {
       expect.objectContaining({
         code: 'MOG002_MOG_API_USAGE',
         dialect: 'mog-version',
-        entryId: 'round5.chart.listCharts.deprecated',
+        entryId: 'mog-api.chart.root.listCharts.deprecated',
         compatibilityStatus: 'deprecated_alias',
         blocking: false,
       }),
@@ -169,15 +169,130 @@ describe('SDK agent API guidance', () => {
     expect(rejected.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          entryId: 'round5.chart.addChart.diagnostic',
+          entryId: 'mog-api.chart.root.addChart.unsupported',
           blocking: true,
         }),
         expect.objectContaining({
-          entryId: 'round55.pivot.handle.describe.diagnostic',
+          entryId: 'mog-api.pivot.handle.describe.unsupported',
           blocking: true,
         }),
       ]),
     );
+  });
+
+  it('blocks observed wrong Mog worksheet API paths with structured guidance', () => {
+    const source = `
+      const cellValue = await ws.getCellValue("A1");
+      const raw = await ws.rawCellData("A1");
+      const displayedFormat = await ws.getFormat("A1");
+      const address = ws.indexToAddress(1, 1);
+      const position = ws.addressToIndex("A1");
+      const col = ws._colLetter(1);
+      console.log(cellValue, raw, displayedFormat, address, position, col);
+    `;
+
+    const preflight = preflightMogCode(source);
+    expect(preflight.ok).toBe(false);
+
+    const byId = new Map(
+      preflight.diagnostics.map((diagnostic) => [diagnostic.entryId, diagnostic]),
+    );
+    const expectedEntryIds = [
+      'mog-api.worksheet.getCellValue.unsupported',
+      'mog-api.worksheet.rawCellData.unsupported',
+      'mog-api.worksheet.getFormat.unsupported',
+      'mog-api.worksheet.indexToAddress.unsupported',
+      'mog-api.worksheet.addressToIndex.unsupported',
+      'mog-api.worksheet.privateColLetter.unsupported',
+    ];
+
+    for (const entryId of expectedEntryIds) {
+      expect(byId.get(entryId)).toEqual(
+        expect.objectContaining({
+          code: 'MOG002_MOG_API_USAGE',
+          dialect: 'mog-version',
+          compatibilityStatus: 'structured_diagnostic',
+          blocking: true,
+        }),
+      );
+    }
+
+    expect(byId.get('mog-api.worksheet.getCellValue.unsupported')?.mogReplacements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: 'ws.getValue' }),
+        expect.objectContaining({ path: 'ws.getCell' }),
+      ]),
+    );
+    expect(byId.get('mog-api.worksheet.getFormat.unsupported')?.mogReplacements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: 'ws.formats.getDisplayedCellProperties' }),
+        expect.objectContaining({ path: 'ws.formats.get' }),
+      ]),
+    );
+  });
+
+  it('blocks missing await on workbook getSheet before worksheet getValue', () => {
+    const preflight = preflightMogCode(`
+      const a = await workbook.getSheet("Data").getValue("A1");
+      const b = await wb.getSheet("Data").getValue("B1");
+      console.log(a, b);
+    `);
+
+    expect(preflight.ok).toBe(false);
+    expect(preflight.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'MOG002_MOG_API_USAGE',
+          entryId: 'mog-api.workbook.getSheet.missing-await',
+          matcherId: 'compatibility.mog-api.workbook.getSheet.missing-await.workbook',
+          blocking: true,
+          message: expect.stringContaining('getSheet is async'),
+          suggestion: expect.stringContaining('const ws = await wb.getSheet(name);'),
+        }),
+        expect.objectContaining({
+          code: 'MOG002_MOG_API_USAGE',
+          entryId: 'mog-api.workbook.getSheet.missing-await',
+          matcherId: 'compatibility.mog-api.workbook.getSheet.missing-await.wb',
+          blocking: true,
+        }),
+      ]),
+    );
+  });
+
+  it('does not flag comments, strings, valid Mog calls, or unrelated local helper names for Mog API guidance', () => {
+    const source = `
+      // await ws.getCellValue("A1");
+      const text = 'ws.rawCellData("A1"); ws.getFormat("A1"); ws._colLetter(1); workbook.getSheet("S").getValue("A1")';
+      const helpers = {
+        getCellValue() {},
+        rawCellData() {},
+        getFormat() {},
+        indexToAddress() {},
+        addressToIndex() {},
+        _colLetter() {},
+      };
+      helpers.getCellValue();
+      helpers.rawCellData();
+      helpers.getFormat();
+      helpers.indexToAddress();
+      helpers.addressToIndex();
+      helpers._colLetter();
+      const ws2 = await wb.getSheet("S");
+      await ws.getValue("A1");
+      await ws.getRawCellData("A1");
+      await ws.formats.getDisplayedCellProperties("A1");
+      await ws.formats.get("A1");
+      wb.indexToAddress(1, 1);
+      wb.addressToIndex("A1");
+      const ws3 = await workbook.getSheet("S");
+      await ws3.getValue("A1");
+      console.log(text, helpers, ws2, ws3);
+    `;
+
+    const mogApiDiagnostics = analyzeMogCode(source).filter((diagnostic) =>
+      diagnostic.entryId.startsWith('mog-api.'),
+    );
+    expect(mogApiDiagnostics).toEqual([]);
   });
 
   it('surfaces pivot handle getInfo in generated API metadata and describe output', () => {
@@ -214,7 +329,7 @@ describe('SDK agent API guidance', () => {
     if (handleDescribeDiagnostic?.kind !== 'mog-api-compatibility') {
       throw new Error('expected pivot handle describe compatibility guidance');
     }
-    expect(handleDescribeDiagnostic.entry.id).toBe('round55.pivot.handle.describe.diagnostic');
+    expect(handleDescribeDiagnostic.entry.id).toBe('mog-api.pivot.handle.describe.unsupported');
     expect(handleDescribeDiagnostic.entry.diagnostics?.replacements).toContain(
       'type:PivotTableHandle.getInfo',
     );

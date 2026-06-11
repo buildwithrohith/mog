@@ -58,6 +58,82 @@ function chartOoxmlWithAnchorIndex(anchorIndex: number): ChartFloatingObject['oo
   } as unknown as ChartFloatingObject['ooxml'];
 }
 
+function cellDataValue(value: string | number | boolean | null): unknown {
+  if (value === null) return null;
+  const type =
+    typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : 'text';
+  return { value: { type, value } };
+}
+
+function undefinedPaths(value: unknown, path = '$'): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((child, index) => undefinedPaths(child, `${path}[${index}]`));
+  }
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+
+  const paths: string[] = [];
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const childPath = `${path}.${key}`;
+    if (child === undefined) {
+      paths.push(childPath);
+    } else {
+      paths.push(...undefinedPaths(child, childPath));
+    }
+  }
+  return paths;
+}
+
+function createPieChartAddApi(cells: Record<string, string | number | boolean | null> = {}) {
+  let createdConfig: ChartFloatingObject | null = null;
+  const ctx = {
+    awaitMaterialized: jest.fn(async () => undefined),
+    computeBridge: {
+      createChart: jest.fn(async (_sheetId: string, config: ChartFloatingObject) => {
+        createdConfig = config;
+        return {
+          floatingObjectChanges: [
+            {
+              sheetId: SHEET_ID,
+              objectId: 'created-pie',
+              kind: { type: 'created' },
+              objectType: 'chart',
+              data: makeChart({
+                id: 'created-pie',
+                chartType: 'pie',
+                dataRange: config.dataRange,
+                title: config.title,
+              }),
+            },
+          ],
+        };
+      }),
+      getChart: jest.fn(async (_sheetId: string, chartId: string) =>
+        chartId === 'created-pie'
+          ? makeChart({
+              id: 'created-pie',
+              chartType: 'pie',
+              dataRange: createdConfig?.dataRange,
+              title: createdConfig?.title,
+            })
+          : null,
+      ),
+      getCellIdAt: jest.fn(async () => null),
+      getProjectionSource: jest.fn(async () => null),
+      getCellData: jest.fn(async (_sheetId: string, row: number, col: number) =>
+        cellDataValue(cells[`${row},${col}`] ?? null),
+      ),
+    },
+  };
+
+  return {
+    charts: new WorksheetChartsImpl(ctx as any, SHEET_ID),
+    ctx,
+    getCreatedConfig: () => createdConfig,
+  };
+}
+
 describe('WorksheetChartsImpl materialization scopes', () => {
   it('awaits sheet materialization before listing charts by default', async () => {
     const calls: string[] = [];
@@ -184,6 +260,101 @@ describe('WorksheetChartsImpl materialization scopes', () => {
       expect.anything(),
       `chart-import-0-other-sheet`,
     );
+  });
+});
+
+describe('WorksheetChartsImpl chart title inference', () => {
+  const tableCells = {
+    '3,2': 'Market',
+    '3,3': 'Net Income',
+    '4,2': 'Europe',
+    '4,3': 10000,
+    '5,2': 'Asia',
+    '5,3': 20000,
+    '6,2': 'LATAM',
+    '6,3': 30000,
+    '7,2': 'EMEA',
+    '7,3': 10000,
+  };
+
+  it('infers a pie chart title from a single value-header table', async () => {
+    const { charts, ctx, getCreatedConfig } = createPieChartAddApi(tableCells);
+
+    const chart = await charts.add({
+      type: 'pie',
+      dataRange: 'C4:D8',
+      anchorRow: 9,
+      anchorCol: 2,
+      width: 480,
+      height: 300,
+    });
+
+    expect(getCreatedConfig()).toEqual(expect.objectContaining({ title: 'Net Income' }));
+    expect(chart).toEqual(expect.objectContaining({ title: 'Net Income' }));
+    expect(ctx.computeBridge.getCellData).toHaveBeenCalledWith(SHEET_ID, 3, 3);
+  });
+
+  it('preserves explicit title deletion instead of inferring from headers', async () => {
+    const { charts, getCreatedConfig } = createPieChartAddApi(tableCells);
+
+    await charts.add({
+      type: 'pie',
+      dataRange: 'C4:D8',
+      anchorRow: 9,
+      anchorCol: 2,
+      width: 480,
+      height: 300,
+      title: null,
+    });
+
+    expect(getCreatedConfig()?.title).toBeUndefined();
+  });
+
+  it('persists chartTitle.text as the public chart title without reading range cells', async () => {
+    const { charts, ctx, getCreatedConfig } = createPieChartAddApi();
+
+    await charts.add({
+      type: 'pie',
+      dataRange: 'C4:D8',
+      anchorRow: 9,
+      anchorCol: 2,
+      width: 480,
+      height: 300,
+      chartTitle: { text: 'Custom title' },
+    });
+
+    expect(getCreatedConfig()).toEqual(expect.objectContaining({ title: 'Custom title' }));
+    expect(ctx.computeBridge.getCellData).not.toHaveBeenCalled();
+  });
+});
+
+describe('WorksheetChartsImpl chart create payloads', () => {
+  it('omits undefined optional chart fields before sending payloads to compute', async () => {
+    const { charts, getCreatedConfig } = createPieChartAddApi();
+
+    await charts.add({
+      type: 'column',
+      subType: 'clustered',
+      dataRange: 'A1:B5',
+      seriesOrientation: 'columns',
+      anchorRow: 2,
+      anchorCol: 2,
+      width: 8,
+      height: 15,
+      title: 'Sales',
+      axis: {
+        xAxis: { type: 'category', visible: true, title: undefined, gridLines: false },
+        yAxis: { type: 'value', visible: true, title: undefined, gridLines: true },
+      },
+      legend: { show: true, position: 'right', visible: true },
+      dataLabels: { show: false },
+    });
+
+    const createdConfig = getCreatedConfig();
+
+    expect(createdConfig).not.toHaveProperty('showLines');
+    expect(createdConfig).not.toHaveProperty('plotVisibleOnly');
+    expect(undefinedPaths(createdConfig)).toEqual([]);
   });
 });
 

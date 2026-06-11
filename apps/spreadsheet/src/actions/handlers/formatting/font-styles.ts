@@ -37,13 +37,43 @@ const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72
 const MAX_FONT_SIZE = 409;
 const MIN_FONT_SIZE = 1;
 
+async function getBooleanToggleValue(
+  deps: ActionDependencies,
+  activeCell: { row: number; col: number },
+  property: 'bold' | 'italic' | 'strikethrough' | 'wrapText',
+  activeCellFormat: Record<string, unknown> | undefined,
+): Promise<{ currentValue: boolean; newValue: boolean }> {
+  let currentValue = (activeCellFormat?.[property] as boolean | undefined) ?? false;
+
+  if (activeCellFormat?.[property] === undefined) {
+    try {
+      const ws = deps.workbook.activeSheet;
+      const formats = await ws.formats.getDisplayedRangeProperties({
+        startRow: activeCell.row,
+        startCol: activeCell.col,
+        endRow: activeCell.row,
+        endCol: activeCell.col,
+      });
+      currentValue =
+        ((formats[0]?.[0] as Record<string, unknown> | undefined)?.[property] as
+          | boolean
+          | undefined) ?? false;
+    } catch {
+      // Keep the viewport-derived default for old worksheet mocks or transient read failures.
+    }
+  }
+
+  return { currentValue, newValue: !currentValue };
+}
+
 // =============================================================================
 // Font Style Toggle Handlers
 // =============================================================================
 
 /**
  * Toggle a boolean format property on selected cells.
- * Reads the active cell's current value, then applies the inverse to all selected cells.
+ * The new value is determined from the active cell and then applied to every
+ * selected cell, matching spreadsheet shortcut behavior for mixed selections.
  *
  * Rich Text Editing Support
  * - Detects if in rich text editing mode with character selection
@@ -53,7 +83,7 @@ const MIN_FONT_SIZE = 1;
  *
  * Multi-Sheet Support
  * - Broadcasts to all selected sheets when multiple sheets are selected
- * - The toggle state is determined from the active cell on the active sheet
+ * - The toggle state is determined from the active sheet's active cell
  * - Same new value is applied to all selected sheets
  */
 async function toggleFormatProperty(
@@ -90,8 +120,7 @@ async function toggleFormatProperty(
   // refreshed after format mutations, so we use getCellData(row, col) instead.
   const activeCellData = ws.viewport.getCellData(activeCell.row, activeCell.col);
   const activeCellFormat = activeCellData?.format as Record<string, unknown> | undefined;
-  const currentValue = (activeCellFormat?.[property] as boolean) ?? false;
-  const newValue = !currentValue;
+  const { newValue } = await getBooleanToggleValue(deps, activeCell, property, activeCellFormat);
 
   // Apply to all selected ranges on ALL selected sheets
   for (const sheetId of targetSheetIds) {

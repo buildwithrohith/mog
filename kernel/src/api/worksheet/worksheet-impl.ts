@@ -1170,14 +1170,15 @@ export class WorksheetImpl implements Worksheet {
             if (!parsed) throw new KernelError('COMPUTE_ERROR', `Invalid range: "${range}"`);
             return parsed;
           })();
+    const clearMode = RangeQueryOps.validateClearApplyTo(applyTo ?? 'all');
     await this.ensureRangeEditable(bounds.startRow, bounds.startCol, bounds.endRow, bounds.endCol);
-    await deletePivotsContainedByClearRange(this.ctx, this.sheetId, bounds, applyTo ?? 'all');
+    await deletePivotsContainedByClearRange(this.ctx, this.sheetId, bounds, clearMode);
     this._invalidateActiveCellEditSourceForRange(bounds);
     return RangeQueryOps.clearWithMode(
       this.ctx,
       this.sheetId,
       { sheetId: this.sheetId, ...bounds },
-      applyTo ?? 'all',
+      clearMode,
     );
   }
 
@@ -1964,6 +1965,7 @@ export class WorksheetImpl implements Worksheet {
     await SortOps.sortRange(this.ctx, this.sheetId, cellRange, {
       sortBy,
       hasHeaders: options.hasHeaders,
+      visibleRowsOnly: options.visibleRowsOnly,
     });
   }
 
@@ -2002,6 +2004,7 @@ export class WorksheetImpl implements Worksheet {
     await SortOps.sortRange(this.ctx, this.sheetId, cellRange, {
       sortBy: [criterion],
       hasHeaders: opts.hasHeaders ?? false,
+      visibleRowsOnly: opts.visibleRowsOnly,
     });
   }
 

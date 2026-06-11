@@ -29,7 +29,7 @@ describe('resolveDataCommandTarget', () => {
     expect(ws.getCurrentRegion).not.toHaveBeenCalled();
   });
 
-  test('explicit multi-row command selection does not infer headers from first row', async () => {
+  test('explicit multi-row command selection infers headers when first row looks like headers', async () => {
     const ws = makeWorksheet({
       values: {
         '0,0': 'Name',
@@ -42,7 +42,43 @@ describe('resolveDataCommandTarget', () => {
 
     await expect(resolveDataCommandTarget(ws as Worksheet, range)).resolves.toEqual({
       range,
+      hasHeaders: true,
+      wasExpanded: false,
+    });
+    expect(ws.getCurrentRegion).not.toHaveBeenCalled();
+  });
+
+  test('explicit single-column mixed-data command selection remains headerless', async () => {
+    const ws = makeWorksheet({
+      values: {
+        '1,0': 'Banana',
+        '2,0': 1,
+      },
+    });
+    const range = { startRow: 1, startCol: 0, endRow: 5, endCol: 0 };
+
+    await expect(resolveDataCommandTarget(ws as Worksheet, range)).resolves.toEqual({
+      range,
       hasHeaders: false,
+      wasExpanded: false,
+    });
+    expect(ws.getCurrentRegion).not.toHaveBeenCalled();
+  });
+
+  test('explicit fiscal single-column command selection infers a header before spacer rows', async () => {
+    const ws = makeWorksheet({
+      values: {
+        '2,27': '1Q',
+        '3,27': '',
+        '4,27': null,
+        '5,27': 100536,
+      },
+    });
+    const range = { startRow: 2, startCol: 27, endRow: 20, endCol: 27 };
+
+    await expect(resolveDataCommandTarget(ws as Worksheet, range)).resolves.toEqual({
+      range,
+      hasHeaders: true,
       wasExpanded: false,
     });
     expect(ws.getCurrentRegion).not.toHaveBeenCalled();
@@ -62,6 +98,59 @@ describe('resolveDataCommandTarget', () => {
     await expect(resolveDataDialogTarget(ws as Worksheet, range)).resolves.toEqual({
       range,
       hasHeaders: true,
+      wasExpanded: false,
+    });
+    expect(ws.getCurrentRegion).not.toHaveBeenCalled();
+  });
+
+  test('explicit multi-row dialog target tolerates dense text headers with blank separators', async () => {
+    const range = { startRow: 2, startCol: 11, endRow: 20, endCol: 27 };
+    const ws = makeWorksheet({
+      values: {
+        '2,11': 'FY11/25',
+        '2,12': 'FY11/25',
+        '2,13': 'FY11/28',
+        '2,14': null,
+        '2,15': '1Q',
+        '2,16': '2Q',
+        '2,17': '3Q',
+        '2,18': '4Q',
+        '2,19': '1Q',
+        '2,20': '2Q',
+        '2,21': '3Q',
+        '2,22': '4Q',
+        '2,23': '1Q',
+        '2,24': '2Q',
+        '2,25': '3Q',
+        '2,26': '4Q',
+        '2,27': '1Q',
+        '6,12': 505000,
+        '6,13': 600000,
+        '6,15': 128319,
+      },
+    });
+
+    await expect(resolveDataDialogTarget(ws as Worksheet, range)).resolves.toEqual({
+      range,
+      hasHeaders: true,
+      wasExpanded: false,
+    });
+    expect(ws.getCurrentRegion).not.toHaveBeenCalled();
+  });
+
+  test('explicit multi-row dialog target keeps sparse title blocks headerless', async () => {
+    const range = { startRow: 457, startCol: 0, endRow: 479, endCol: 10 };
+    const ws = makeWorksheet({
+      values: {
+        '457,0': 'Consolidated Report',
+        '463,6': 235658,
+        '467,9': 486344,
+      },
+    });
+
+    await expect(resolveDataDialogTarget(ws as Worksheet, range)).resolves.toEqual({
+      range,
+      hasHeaders: false,
       wasExpanded: false,
     });
     expect(ws.getCurrentRegion).not.toHaveBeenCalled();

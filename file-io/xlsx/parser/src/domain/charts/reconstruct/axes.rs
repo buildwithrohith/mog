@@ -61,6 +61,33 @@ pub(super) fn build_axes(spec: &ChartSpec) -> Vec<ChartAxis> {
     if let Some(ref ser) = axes_data.series_axis {
         axes.push(build_single_axis(ser, AxisType::Series, 555555555, cat_id));
     }
+    if modeled_series_needs_secondary_axis(spec) {
+        let default_axis = default_visible_axis();
+        if axes_data.secondary_category_axis.is_none() {
+            let axis_type = if matches!(
+                spec.chart_type,
+                DomainChartType::Scatter | DomainChartType::Bubble
+            ) {
+                AxisType::Value
+            } else {
+                AxisType::Category
+            };
+            axes.push(build_single_axis_with_ids(
+                &default_axis,
+                axis_type,
+                333333333,
+                444444444,
+            ));
+        }
+        if axes_data.secondary_value_axis.is_none() {
+            axes.push(build_single_axis_with_ids(
+                &default_axis,
+                AxisType::Value,
+                444444444,
+                333333333,
+            ));
+        }
+    }
 
     axes
 }
@@ -72,7 +99,7 @@ pub(super) fn build_default_axes(spec: &ChartSpec) -> Vec<ChartAxis> {
 
     let cat_id = 111111111u32;
     let val_id = 222222222u32;
-    let default_axis = SingleAxisData::default();
+    let default_axis = default_visible_axis();
 
     if matches!(
         spec.chart_type,
@@ -121,6 +148,13 @@ pub(super) fn build_default_axes(spec: &ChartSpec) -> Vec<ChartAxis> {
     axes
 }
 
+fn default_visible_axis() -> SingleAxisData {
+    SingleAxisData {
+        visible: true,
+        ..Default::default()
+    }
+}
+
 fn modeled_series_needs_secondary_axis(spec: &ChartSpec) -> bool {
     spec.series
         .iter()
@@ -142,7 +176,7 @@ pub(super) fn build_axes_from_original(
     original_axes: &[ChartAxis],
 ) -> Vec<ChartAxis> {
     let role_ids = original_axis_role_ids(original_axes);
-    let default_sad = SingleAxisData::default();
+    let default_sad = default_visible_axis();
 
     original_axes
         .iter()
@@ -161,9 +195,25 @@ pub(super) fn build_axes_from_original(
                         .collect::<Vec<_>>(),
                 )
             };
-            build_single_axis_with_ids(sad, axis.axis_type, axis.ax_id, cross_ax)
+            let mut rebuilt = build_single_axis_with_ids(sad, axis.axis_type, axis.ax_id, cross_ax);
+            apply_imported_axis_fidelity(&mut rebuilt, axis, sad);
+            rebuilt
         })
         .collect()
+}
+
+fn apply_imported_axis_fidelity(
+    rebuilt: &mut ChartAxis,
+    original: &ChartAxis,
+    sad: &SingleAxisData,
+) {
+    rebuilt.delete_explicit = sad.visible_explicit || !sad.visible;
+    rebuilt.major_tick_mark_explicit = sad.tick_marks.is_some();
+    rebuilt.minor_tick_mark_explicit = sad.minor_tick_marks.is_some();
+    rebuilt.tick_lbl_pos_explicit = sad.tick_label_position.is_some();
+    rebuilt.crosses_explicit =
+        matches!(sad.crosses_at.as_deref(), Some("min" | "max" | "automatic"));
+    rebuilt.raw_axis_type_attr = original.raw_axis_type_attr.clone();
 }
 
 #[derive(Default)]
@@ -299,6 +349,14 @@ pub(super) fn build_single_axis_with_ids(
     ax_id: u32,
     cross_ax: u32,
 ) -> ChartAxis {
+    let default_axis;
+    let sad = if sad == &SingleAxisData::default() {
+        default_axis = default_visible_axis();
+        &default_axis
+    } else {
+        sad
+    };
+
     // Determine axis type from explicit field or use the parameter
     let effective_type = sad
         .axis_type
@@ -419,18 +477,23 @@ pub(super) fn build_single_axis_with_ids(
         ax_id,
         scaling,
         delete: !sad.visible,
+        delete_explicit: true,
         ax_pos,
         major_gridlines,
         minor_gridlines,
         title,
         num_fmt,
         major_tick_mark,
+        major_tick_mark_explicit: true,
         minor_tick_mark,
+        minor_tick_mark_explicit: true,
         tick_lbl_pos,
+        tick_lbl_pos_explicit: true,
         sp_pr,
         tx_pr,
         cross_ax,
         crosses,
+        crosses_explicit: true,
         crosses_at,
         cross_between,
         tick_lbl_skip: sad.tick_label_spacing,

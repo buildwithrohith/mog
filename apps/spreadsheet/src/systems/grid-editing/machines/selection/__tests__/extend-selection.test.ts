@@ -11,6 +11,7 @@
  * @see ../helpers.ts - buildExtendUpdate (single source of truth for shift-extend)
  */
 
+import { MAX_COLS, MAX_ROWS } from '@mog-sdk/contracts/core';
 import { buildExtendUpdate, initialSelectionContext } from '../helpers';
 import { keyboardActions } from '../keyboard-actions';
 import type { SelectionContext, SelectionEvent } from '../types';
@@ -219,6 +220,75 @@ describe('extendSelection - Shift+Arrow bug tests', () => {
       // Excel parity: activeCell stays pinned at the anchor (B5)
       expect(result.activeCell).toEqual({ row: 4, col: 1 });
     });
+
+    it('preserves a full-row selection when extending down from Shift+Space', () => {
+      const context: SelectionContext = {
+        ...initialSelectionContext,
+        activeCell: { row: 2, col: 0 }, // row 3
+        pendingRange: {
+          startRow: 2,
+          startCol: 0,
+          endRow: 2,
+          endCol: MAX_COLS - 1,
+          isFullRow: true,
+        },
+        anchor: null,
+        anchorRow: 2,
+      };
+
+      const event: SelectionEvent = {
+        type: 'KEY_ARROW',
+        direction: 'down',
+        shiftKey: true,
+      };
+
+      const result = callExtendSelection(context, event);
+
+      expect(result.pendingRange).toEqual({
+        startRow: 2,
+        startCol: 0,
+        endRow: 3,
+        endCol: MAX_COLS - 1,
+        isFullRow: true,
+      });
+      expect(result.anchor).toEqual({ row: 2, col: 0 });
+      expect(result.anchorRow).toBe(2);
+      expect(result.activeCell).toEqual({ row: 2, col: 0 });
+    });
+
+    it('keeps extending the moving row edge for an existing full-row span', () => {
+      const context: SelectionContext = {
+        ...initialSelectionContext,
+        activeCell: { row: 2, col: 0 },
+        pendingRange: {
+          startRow: 2,
+          startCol: 0,
+          endRow: 3,
+          endCol: MAX_COLS - 1,
+          isFullRow: true,
+        },
+        anchor: { row: 2, col: 0 },
+        anchorRow: 2,
+      };
+
+      const event: SelectionEvent = {
+        type: 'KEY_ARROW',
+        direction: 'down',
+        shiftKey: true,
+      };
+
+      const result = callExtendSelection(context, event);
+
+      expect(result.pendingRange).toEqual({
+        startRow: 2,
+        startCol: 0,
+        endRow: 4,
+        endCol: MAX_COLS - 1,
+        isFullRow: true,
+      });
+      expect(result.anchor).toEqual({ row: 2, col: 0 });
+      expect(result.activeCell).toEqual({ row: 2, col: 0 });
+    });
   });
 
   describe('Shift+Left extending selection', () => {
@@ -338,6 +408,121 @@ describe('extendSelection - Shift+Arrow bug tests', () => {
       expect(result.anchor).toEqual({ row: 4, col: 1 });
       // Excel parity: activeCell stays pinned at the anchor (B5)
       expect(result.activeCell).toEqual({ row: 4, col: 1 });
+    });
+
+    it('first Shift+Right from a hidden single-cell target jumps to the next visible column', () => {
+      const context: SelectionContext = {
+        ...initialSelectionContext,
+        activeCell: { row: 12, col: 15 }, // P13
+        pendingRange: { startRow: 12, startCol: 15, endRow: 12, endCol: 15 },
+        anchor: null,
+        isColHidden: (col) => col >= 15 && col <= 26, // P:AA
+      };
+
+      const event: SelectionEvent = {
+        type: 'KEY_ARROW',
+        direction: 'right',
+        shiftKey: true,
+      };
+
+      const result = callExtendSelection(context, event);
+
+      expect(result.pendingRange).toEqual({
+        startRow: 12,
+        startCol: 15,
+        endRow: 12,
+        endCol: 27,
+      });
+      expect(result.anchor).toEqual({ row: 12, col: 15 });
+      expect(result.activeCell).toEqual({ row: 12, col: 15 });
+    });
+
+    it('Shift+Right moves by visible columns while including hidden column spans', () => {
+      let context: SelectionContext = {
+        ...initialSelectionContext,
+        activeCell: { row: 16, col: 12 }, // M17
+        pendingRange: { startRow: 16, startCol: 12, endRow: 16, endCol: 12 },
+        anchor: null,
+        isColHidden: (col) => col >= 15 && col <= 26, // P:AA
+      };
+
+      for (let visibleStep = 0; visibleStep < 3; visibleStep += 1) {
+        const result = callExtendSelection(context, {
+          type: 'KEY_ARROW',
+          direction: 'right',
+          shiftKey: true,
+        });
+        context = { ...context, ...result };
+      }
+
+      expect(context.pendingRange).toEqual({
+        startRow: 16,
+        startCol: 12,
+        endRow: 16,
+        endCol: 27,
+      });
+      expect(context.anchor).toEqual({ row: 16, col: 12 });
+      expect(context.activeCell).toEqual({ row: 16, col: 12 });
+    });
+
+    it('Shift+Down moves by visible rows while including hidden row spans', () => {
+      const context: SelectionContext = {
+        ...initialSelectionContext,
+        activeCell: { row: 1, col: 0 }, // A2
+        pendingRange: { startRow: 1, startCol: 0, endRow: 1, endCol: 0 },
+        anchor: null,
+        isRowHidden: (row) => row >= 2 && row <= 3, // rows 3:4
+      };
+
+      const result = callExtendSelection(context, {
+        type: 'KEY_ARROW',
+        direction: 'down',
+        shiftKey: true,
+      });
+
+      expect(result.pendingRange).toEqual({
+        startRow: 1,
+        startCol: 0,
+        endRow: 4,
+        endCol: 0,
+      });
+      expect(result.anchor).toEqual({ row: 1, col: 0 });
+      expect(result.activeCell).toEqual({ row: 1, col: 0 });
+    });
+
+    it('preserves a full-column selection when extending right from Ctrl+Space', () => {
+      const context: SelectionContext = {
+        ...initialSelectionContext,
+        activeCell: { row: 0, col: 1 }, // column B
+        pendingRange: {
+          startRow: 0,
+          startCol: 1,
+          endRow: MAX_ROWS - 1,
+          endCol: 1,
+          isFullColumn: true,
+        },
+        anchor: null,
+        anchorCol: 1,
+      };
+
+      const event: SelectionEvent = {
+        type: 'KEY_ARROW',
+        direction: 'right',
+        shiftKey: true,
+      };
+
+      const result = callExtendSelection(context, event);
+
+      expect(result.pendingRange).toEqual({
+        startRow: 0,
+        startCol: 1,
+        endRow: MAX_ROWS - 1,
+        endCol: 2,
+        isFullColumn: true,
+      });
+      expect(result.anchor).toEqual({ row: 0, col: 1 });
+      expect(result.anchorCol).toBe(1);
+      expect(result.activeCell).toEqual({ row: 0, col: 1 });
     });
   });
 

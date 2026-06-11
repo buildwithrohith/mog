@@ -234,6 +234,43 @@ describe('unifiedPaste — image routing', () => {
     );
   });
 
+  it('forwards the selected target range captured before async clipboard read', async () => {
+    installClipboard([makeClipItem({ 'text/plain': blobLike('A\tB\nC\tD', 'text/plain') })]);
+    const commands = makeCommands();
+    const targetRange = { startRow: 4, startCol: 2, endRow: 7, endCol: 5 };
+
+    await unifiedPaste(ACTIVE_CELL, {
+      getClipboardSnapshot: () =>
+        ({
+          context: {
+            isCut: false,
+            data: {
+              textSignature: 'A\tB\nC\tD',
+              sourceRanges: [{ startRow: 0, startCol: 0, endRow: 1, endCol: 1 }],
+              sourceSheetId: 'sheet-1',
+              cells: {
+                '0,0': { raw: 'A' },
+                '0,1': { raw: 'B' },
+                '1,0': { raw: 'C' },
+                '1,1': { raw: 'D' },
+              },
+            },
+          },
+          matches: () => true,
+        }) as any,
+      commands,
+      getTargetRange: () => targetRange,
+      readPasteDefaultsPreference: () => null,
+    });
+
+    expect((commands as any).paste).toHaveBeenCalledWith(
+      ACTIVE_CELL,
+      undefined,
+      undefined,
+      targetRange,
+    );
+  });
+
   it('preserves internal cut normal paste even when a saved default exists', async () => {
     installClipboard([makeClipItem({ 'text/plain': blobLike('A', 'text/plain') })]);
     const commands = makeCommands();
@@ -293,6 +330,39 @@ describe('unifiedPaste — image routing', () => {
       html: undefined,
       options: expect.objectContaining({ values: false, formats: false, skipHiddenRows: true }),
     });
+  });
+
+  it('keeps fresh internal clipboard when exported HTML has no cells', async () => {
+    installClipboard([
+      makeClipItem({
+        'text/html': blobLike('<table><tbody><tr></tr></tbody></table>', 'text/html'),
+      }),
+    ]);
+    const commands = makeCommands();
+
+    await unifiedPaste(ACTIVE_CELL, {
+      getClipboardSnapshot: () =>
+        ({
+          context: {
+            isCut: false,
+            isStale: false,
+            data: {
+              textSignature: '',
+              sourceRanges: [{ startRow: 6, startCol: 27, endRow: 6, endCol: 27 }],
+              sourceSheetId: 'sheet-1',
+              cells: {
+                '0,0': { raw: '103,188 ', formula: '=407039-AA7-Z7-Y7' },
+              },
+            },
+          },
+          matches: () => true,
+        }) as any,
+      commands,
+      readPasteDefaultsPreference: () => null,
+    });
+
+    expect((commands as any).paste).toHaveBeenCalledWith(ACTIVE_CELL);
+    expect((commands as any).externalPaste).not.toHaveBeenCalled();
   });
 
   it('no-ops external plain text when the saved default is formats only', async () => {

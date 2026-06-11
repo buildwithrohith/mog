@@ -1,6 +1,7 @@
 import { jest } from '@jest/globals';
 
 import type { ActionDependencies } from '@mog-sdk/contracts/actions';
+import type { ClipboardData } from '@mog-sdk/contracts/actors';
 import {
   MAX_COLS,
   MAX_ROWS,
@@ -11,6 +12,7 @@ import {
 const autoFitRows = jest.fn(async () => undefined);
 const autoFitColumns = jest.fn(async () => undefined);
 const getTextMeasurementService = jest.fn(() => ({ measure: jest.fn() }));
+const pasteHandler = jest.fn(async () => ({ handled: true }));
 
 jest.unstable_mockModule('../../../systems/grid-editing/features/autofit', () => ({
   autoFitRows,
@@ -19,6 +21,10 @@ jest.unstable_mockModule('../../../systems/grid-editing/features/autofit', () =>
 
 jest.unstable_mockModule('@mog/grid-renderer', () => ({
   getTextMeasurementService,
+}));
+
+jest.unstable_mockModule('../clipboard-paste', () => ({
+  PASTE: pasteHandler,
 }));
 
 const StructureHandlers = await import('../structure');
@@ -37,9 +43,18 @@ function createDeps(
     usedRange?: CellRange | null;
     hiddenRows?: number[];
     hiddenCols?: number[];
+    cutSourceRanges?: CellRange[] | null;
+    clipboardData?: ClipboardData | null;
   } = {},
 ): ActionDependencies {
   const activeSheetId = makeSheetId('sheet1');
+  const clipboardData =
+    options.clipboardData ??
+    ({
+      sourceSheetId: activeSheetId,
+      sourceRanges: options.cutSourceRanges ?? [],
+      cells: {},
+    } as unknown as ClipboardData);
   const worksheet = {
     formatValues: jest.fn(async () => []),
     getUsedRange: jest.fn(async () => options.usedRange ?? null),
@@ -62,6 +77,7 @@ function createDeps(
   const workbook = {
     getSheetById: jest.fn(() => worksheet),
     activeSheet: worksheet,
+    batch: jest.fn(async (_label: string, fn: (wb: unknown) => Promise<unknown>) => fn(workbook)),
   };
 
   return {
@@ -72,8 +88,19 @@ function createDeps(
         getActiveCell: jest.fn(() => options.activeCell ?? { row: 4, col: 3 }),
         getRanges: jest.fn(() => options.ranges ?? []),
       },
+      clipboard: {
+        hasCut: jest.fn(() => true),
+        getIsCut: jest.fn(() => true),
+        isExternalClipboard: jest.fn(() => false),
+        getSourceRanges: jest.fn(() => options.cutSourceRanges ?? null),
+        getCutSource: jest.fn(() => options.cutSourceRanges ?? null),
+        getData: jest.fn(() => clipboardData),
+      },
     },
     commands: {
+      clipboard: {
+        cut: jest.fn(),
+      },
       selection: {
         setSelection: jest.fn(),
       },
@@ -94,6 +121,7 @@ describe('Structure autofit handlers', () => {
     autoFitRows.mockClear();
     autoFitColumns.mockClear();
     getTextMeasurementService.mockClear();
+    pasteHandler.mockClear();
   });
 
   it('AUTO_FIT_COLUMN_WIDTH targets the active column when no selection ranges are available', async () => {
@@ -186,6 +214,112 @@ describe('Structure autofit handlers', () => {
 
     const worksheet = deps.workbook.activeSheet as any;
     expect(worksheet.structure.insertCellsWithShift).toHaveBeenCalledWith(4, 3, 4, 3, 'down');
+  });
+
+  it('INSERT_CUT_CELLS_SHIFT_DOWN inserts the active-cell slot and awaits paste', async () => {
+    const deps = createDeps({ activeCell: { row: 4, col: 3 }, ranges: [] });
+
+    const result = await StructureHandlers.INSERT_CUT_CELLS_SHIFT_DOWN(deps);
+
+    const worksheet = deps.workbook.activeSheet as any;
+    expect(result.handled).toBe(true);
+    expect(deps.workbook.batch).toHaveBeenCalledWith('Insert Cut Cells', expect.any(Function));
+    expect(worksheet.structure.insertCellsWithShift).toHaveBeenCalledWith(4, 3, 4, 3, 'down');
+    expect(pasteHandler).toHaveBeenCalledWith(deps);
+  });
+
+  it('INSERT_CUT_CELLS uses the dialog range and selected shift direction', async () => {
+    const deps = createDeps({ activeCell: { row: 4, col: 3 }, ranges: [] });
+    const range = { startRow: 6, startCol: 11, endRow: 6, endCol: 12 };
+
+    const result = await StructureHandlers.INSERT_CUT_CELLS(deps, {
+      range,
+      direction: 'right',
+    });
+
+    const worksheet = deps.workbook.activeSheet as any;
+    expect(result.handled).toBe(true);
+    expect(deps.workbook.batch).toHaveBeenCalledWith('Insert Cut Cells', expect.any(Function));
+    expect(worksheet.structure.insertCellsWithShift).toHaveBeenCalledWith(6, 11, 6, 12, 'right');
+    expect(pasteHandler).toHaveBeenCalledWith(deps);
+  });
+
+  it('INSERT_CUT_CELLS expands a single-cell target to a wider cut source before shifting right', async () => {
+    const deps = createDeps({
+      activeCell: { row: 20, col: 15 },
+      ranges: [],
+      cutSourceRanges: [{ startRow: 20, startCol: 27, endRow: 20, endCol: 28 }],
+    });
+    const range = { startRow: 20, startCol: 15, endRow: 20, endCol: 15 };
+
+    const result = await StructureHandlers.INSERT_CUT_CELLS(deps, {
+      range,
+      direction: 'right',
+    });
+
+    const worksheet = deps.workbook.activeSheet as any;
+    expect(result.handled).toBe(true);
+    expect(worksheet.structure.insertCellsWithShift).toHaveBeenCalledWith(20, 15, 20, 16, 'right');
+    expect(pasteHandler).toHaveBeenCalledWith(deps);
+  });
+
+  it('INSERT_CUT_CELLS retargets same-sheet cut source ranges moved by a right shift before paste', async () => {
+    const sourceRange = { startRow: 20, startCol: 27, endRow: 20, endCol: 28 };
+    const deps = createDeps({
+      activeCell: { row: 20, col: 15 },
+      ranges: [],
+      cutSourceRanges: [sourceRange],
+    });
+    const range = { startRow: 20, startCol: 15, endRow: 20, endCol: 15 };
+
+    const result = await StructureHandlers.INSERT_CUT_CELLS(deps, {
+      range,
+      direction: 'right',
+    });
+
+    const worksheet = deps.workbook.activeSheet as any;
+    const clipboardCut = deps.commands.clipboard.cut as unknown as jest.Mock;
+    const retargetedRange = { startRow: 20, startCol: 29, endRow: 20, endCol: 30 };
+    expect(result.handled).toBe(true);
+    expect(worksheet.structure.insertCellsWithShift).toHaveBeenCalledWith(20, 15, 20, 16, 'right');
+    expect(clipboardCut).toHaveBeenCalledWith(
+      [retargetedRange],
+      expect.objectContaining({ sourceRanges: [retargetedRange] }),
+    );
+    expect(clipboardCut.mock.invocationCallOrder[0]).toBeLessThan(
+      pasteHandler.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('INSERT_CUT_CELLS expands a target anchor to the full cut source footprint before shifting down', async () => {
+    const deps = createDeps({
+      activeCell: { row: 10, col: 7 },
+      ranges: [],
+      cutSourceRanges: [{ startRow: 2, startCol: 4, endRow: 4, endCol: 5 }],
+    });
+    const range = { startRow: 10, startCol: 7, endRow: 10, endCol: 7 };
+
+    const result = await StructureHandlers.INSERT_CUT_CELLS(deps, {
+      range,
+      direction: 'down',
+    });
+
+    const worksheet = deps.workbook.activeSheet as any;
+    expect(result.handled).toBe(true);
+    expect(worksheet.structure.insertCellsWithShift).toHaveBeenCalledWith(10, 7, 12, 8, 'down');
+    expect(pasteHandler).toHaveBeenCalledWith(deps);
+  });
+
+  it('INSERT_CUT_CELLS_SHIFT_DOWN is disabled without an active cut clipboard', async () => {
+    const deps = createDeps({ activeCell: { row: 4, col: 3 }, ranges: [] });
+    (deps.accessors.clipboard.hasCut as jest.Mock).mockReturnValue(false);
+
+    const result = await StructureHandlers.INSERT_CUT_CELLS_SHIFT_DOWN(deps);
+
+    const worksheet = deps.workbook.activeSheet as any;
+    expect(result.handled).toBe(false);
+    expect(worksheet.structure.insertCellsWithShift).not.toHaveBeenCalled();
+    expect(pasteHandler).not.toHaveBeenCalled();
   });
 
   it('visibility and explicit sizing actions target the active row or column when ranges are empty', async () => {

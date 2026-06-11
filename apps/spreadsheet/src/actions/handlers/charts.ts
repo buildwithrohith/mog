@@ -39,7 +39,7 @@ import { type SheetId, sheetId } from '@mog-sdk/contracts/core';
 import { normalizeChartConfig } from '../../adapters/charts/chart-config-adapter';
 import { pasteChartFromClipboard } from './chart-clipboard';
 import { deselectChartObjects, selectChartObject } from './chart-selection';
-import { expandToDataRegion } from './expand-to-data-region';
+import { resolveChartSourceRange } from './chart-source-range';
 import { getUIStore, handled, notHandled } from './handler-utils';
 
 // =============================================================================
@@ -53,6 +53,13 @@ interface ChartPosition {
   anchorRow: number;
   anchorCol: number;
 }
+
+type ChartSourceRange = {
+  startRow: number;
+  startCol: number;
+  endRow: number;
+  endCol: number;
+};
 
 /**
  * Type guard to check if coordinator exposes renderer capabilities.
@@ -84,6 +91,19 @@ function getChartIdFromPayloadOrSelectedObject(
   return payload?.chartId ?? deps.accessors.object.getFirstSelectedId();
 }
 
+function isMultiCellRange(range: ChartSourceRange): boolean {
+  return range.startRow !== range.endRow || range.startCol !== range.endCol;
+}
+
+function getChartSourceRanges(deps: ActionDependencies, sheetId: SheetId): ChartSourceRange[] {
+  const editStartRanges = deps.accessors.editor.getEditStartSelectionRanges?.();
+  if (editStartRanges?.some(isMultiCellRange)) {
+    return editStartRanges;
+  }
+
+  return deps.accessors.selection.getDataBoundedRanges(sheetId);
+}
+
 /**
  * Get smart chart position that ensures visibility.
  *
@@ -95,7 +115,7 @@ function getChartIdFromPayloadOrSelectedObject(
  */
 async function getSmartChartPosition(
   deps: ActionDependencies,
-  sourceRange: { startRow: number; startCol: number; endRow: number; endCol: number } | null,
+  sourceRange: ChartSourceRange | null,
   defaultPosition: ChartPosition,
   _sheetId: SheetId,
 ): Promise<ChartPosition> {
@@ -813,7 +833,7 @@ export const CREATE_CHART_SHEET: AsyncActionHandler = async (deps): Promise<Acti
   const ws = deps.workbook.activeSheet;
 
   // Get selection for data range (bounded to actual data extent)
-  const ranges = deps.accessors.selection.getDataBoundedRanges(sheetId);
+  const ranges = getChartSourceRanges(deps, sheetId);
 
   // Create a new sheet for the chart via unified Workbook API
   let newWs;
@@ -829,8 +849,7 @@ export const CREATE_CHART_SHEET: AsyncActionHandler = async (deps): Promise<Acti
     // Excel parity: expand single-cell / single-row selections to the
     // surrounding data region. expandToDataRegion is a no-op for multi-row
     // selections and returns null for empty cells (we keep ranges[0] then).
-    const expanded = await expandToDataRegion(ws, ranges[0]);
-    const range = expanded ?? ranges[0];
+    const range = await resolveChartSourceRange(ws, ranges[0], { trimHiddenDetail: true });
     // Include sheet reference in data range for cross-sheet reference
     const sheetName = (await ws.getName()) || 'Sheet1';
     dataRange = `'${sheetName}'!${rangeToA1Notation(range)}`;
@@ -870,7 +889,7 @@ export const CREATE_EMBEDDED_CHART: AsyncActionHandler = async (
   const ws = deps.workbook.activeSheet;
 
   // Get selection for data range (bounded to actual data extent)
-  const ranges = deps.accessors.selection.getDataBoundedRanges(sheetId);
+  const ranges = getChartSourceRanges(deps, sheetId);
 
   // Default chart configuration
   const chartType = payload?.type || 'column';
@@ -905,8 +924,7 @@ export const CREATE_EMBEDDED_CHART: AsyncActionHandler = async (
 
     // Excel parity: expand single-cell / single-row selections to the
     // surrounding data region. Multi-row selections pass through unchanged.
-    const expanded = await expandToDataRegion(ws, ranges[0]);
-    const range = expanded ?? ranges[0];
+    const range = await resolveChartSourceRange(ws, ranges[0], { trimHiddenDetail: true });
     const dataRange = rangeToA1Notation(range);
 
     // Use smart positioning to ensure chart is visible
@@ -986,13 +1004,12 @@ export const OPEN_INSERT_CHART_WIZARD_DIALOG: AsyncActionHandler = async (
 
   // Try to get the current selection to pre-populate the data range (bounded to actual data extent)
   let initialDataRange = '';
-  const ranges = deps.accessors.selection.getDataBoundedRanges(sheetId);
+  const ranges = getChartSourceRanges(deps, sheetId);
   if (ranges && ranges.length > 0) {
     // Excel parity: expand single-cell / single-row selections to the
     // surrounding data region before seeding the wizard.
     const ws = deps.workbook.getSheetById(sheetId);
-    const expanded = await expandToDataRegion(ws, ranges[0]);
-    const range = expanded ?? ranges[0];
+    const range = await resolveChartSourceRange(ws, ranges[0]);
     initialDataRange = rangeToA1Notation(range);
   }
 
@@ -1040,7 +1057,7 @@ export const INSERT_CHART_FROM_WIZARD: AsyncActionHandler = async (deps): Promis
   const ws = deps.workbook.activeSheet;
 
   // Get current selection for chart placement (bounded to actual data extent)
-  const ranges = deps.accessors.selection.getDataBoundedRanges(sheetId);
+  const ranges = getChartSourceRanges(deps, sheetId);
 
   // Default position when no selection
   const DEFAULT_POSITION = { anchorRow: 2, anchorCol: 2 };

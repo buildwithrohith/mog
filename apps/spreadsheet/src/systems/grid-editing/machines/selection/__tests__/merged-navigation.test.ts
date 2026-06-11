@@ -463,7 +463,41 @@ describe('Hidden Cell Skipping - Machine Level', () => {
     expect(result.activeCell).toEqual(cell(0, 2)); // C1
   });
 
-  it('extendSelection skips hidden cells when extending', () => {
+  it('vertical movement in a hidden column advances by row', () => {
+    const isColHidden = (col: number) => col === 26; // AA is hidden/grouped
+
+    const context = createContext({
+      activeCell: cell(12, 26), // AA13
+      pendingRange: range(12, 26, 12, 26),
+      isColHidden,
+    });
+
+    const result = callAction('moveEnter', context, {
+      type: 'KEY_ENTER',
+      shiftKey: false,
+    });
+
+    expect(result.activeCell).toEqual(cell(13, 26)); // AA14
+  });
+
+  it('horizontal movement in a hidden row advances by column', () => {
+    const isRowHidden = (row: number) => row === 12; // Row 13 is hidden/grouped
+
+    const context = createContext({
+      activeCell: cell(12, 26), // AA13
+      pendingRange: range(12, 26, 12, 26),
+      isRowHidden,
+    });
+
+    const result = callAction('moveTab', context, {
+      type: 'KEY_TAB',
+      shiftKey: false,
+    });
+
+    expect(result.activeCell).toEqual(cell(12, 27)); // AB13
+  });
+
+  it('extendSelection moves to the next visible edge while including hidden rows', () => {
     const isRowHidden = (row: number) => row === 2; // Row 3 is hidden
 
     const context = createContext({
@@ -479,7 +513,8 @@ describe('Hidden Cell Skipping - Machine Level', () => {
       shiftKey: true,
     });
 
-    // Should skip row 2 (hidden), extend to row 3
+    // Shift+Arrow moves the edge to the next visible row while the hidden row
+    // remains inside the selected rectangle.
     expect(result.anchor).toEqual(cell(1, 0)); // A2 (anchor)
     expect(result.pendingRange).toEqual(range(1, 0, 3, 0)); // A2:A4
   });

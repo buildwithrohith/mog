@@ -97,6 +97,14 @@ export interface GridEditingUIStore {
   setActiveCellFormat: (format: import('@mog-sdk/contracts/core').CellFormat | null) => void;
   /** Set toolbar selection ranges */
   setToolbarRanges: (ranges: import('@mog-sdk/contracts/core').CellRange[]) => void;
+  /** Record the cell that was just written by an edit commit. */
+  setLastCommittedCellForFormatting?: (entry: {
+    sheetId: string;
+    row: number;
+    col: number;
+    direction: Direction | 'none' | null;
+    committedAt: number;
+  }) => void;
 
   // --- Table selection coordination ---
   /** Table design state */
@@ -325,6 +333,9 @@ export interface GridEditingConfig {
 
   /** Dependencies for clipboard paste operations */
   clipboardDeps?: ClipboardDependencies;
+
+  /** Platform-owned wall clock in Unix milliseconds. */
+  wallClockNow?: () => number;
 
   /**
    * Workbook for unified API access.
@@ -743,12 +754,8 @@ export interface ClipboardDependencies {
   /** Callback to show protection error dialog */
   onProtectionError?: (message: string) => void;
   /**
-   * Callback to show the cut-paste overwrite confirmation dialog.
-   *
-   * Invoked when a CUT-paste's destination contains existing non-empty cells,
-   * so the user can confirm/cancel the overwrite before any writes happen.
-   * The host stores `pendingData` so the Confirm path can re-trigger the
-   * paste with `skipOverwriteCheck=true`.
+   * Deprecated callback retained for older overwrite-confirm dialog wiring.
+   * Normal cut-paste commits overwrites directly.
    */
   onCutOverwriteConfirm?: (pendingData: {
     targetCell: { row: number; col: number };

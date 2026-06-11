@@ -2974,6 +2974,7 @@ export interface MutationResult {
   printSettingsChanges?: PrintSettingsChange[];
   splitConfigChanges?: SplitConfigChange[];
   scrollPositionChanges?: ScrollPositionChange[];
+  viewSelectionChanges?: ViewSelectionChange[];
   workbookSettingsChanges?: WorkbookSettingsChange[];
   cfChanges?: CfChange[];
   namedRangeChanges?: NamedRangeChange[];
@@ -4666,6 +4667,11 @@ export interface SheetSnapshotBin {
   ranges: RangeDataBin[];
 }
 
+export interface SheetViewCell {
+  row: number;
+  col: number;
+}
+
 export interface SheetViewOptions {
   showGridlines: boolean;
   showRowHeaders: boolean;
@@ -4674,6 +4680,13 @@ export interface SheetViewOptions {
   showFormulas: boolean;
   showZeros: boolean;
   zoomScale?: number;
+}
+
+export interface SheetViewRange {
+  startRow: number;
+  startCol: number;
+  endRow: number;
+  endCol: number;
 }
 
 export type ShowValuesAs = "noCalculation" | "percentOfGrandTotal" | "percentOfColumnTotal" | "percentOfRowTotal" | "percentOfParentRowTotal" | "percentOfParentColumnTotal" | "difference" | "percentDifference" | "runningTotal" | "percentRunningTotal" | "rankAscending" | "rankDescending" | "index";
@@ -4723,6 +4736,7 @@ export interface SignNeighbor {
 export interface SingleAxisData {
   title?: string;
   visible: boolean;
+  visibleExplicit?: boolean;
   min?: number;
   max?: number;
   axisType?: string;
@@ -5864,6 +5878,12 @@ export interface ValueFilter {
 }
 
 export type VerticalAlign = "top" | "middle" | "bottom" | "justified" | "distributed";
+
+export interface ViewSelectionChange {
+  sheetId: string;
+  activeCell: SheetViewCell;
+  ranges?: SheetViewRange[];
+}
 
 export interface Viewport {
   startRow: number;
