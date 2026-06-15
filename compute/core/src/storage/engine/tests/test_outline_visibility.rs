@@ -10,8 +10,10 @@
 
 use super::super::*;
 use super::helpers::*;
-use compute_wire::constants::{CELL_STRIDE, DIM_STRIDE, MERGE_STRIDE, VIEWPORT_HEADER_SIZE};
-use domain_types::{ColDimension, OutlineGroup, ParseOutput, SheetData, SheetDimensions};
+use crate::snapshot::Axis;
+use domain_types::{
+    ColDimension, OutlineGroup, ParseOutput, RowDimension, SheetData, SheetDimensions,
+};
 
 #[derive(serde::Deserialize)]
 struct GroupDefId {
@@ -27,63 +29,12 @@ fn created_group_id(group_result: MutationResult) -> String {
         .id
 }
 
-fn read_u16(bytes: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
-}
-
-fn read_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes([
-        bytes[offset],
-        bytes[offset + 1],
-        bytes[offset + 2],
-        bytes[offset + 3],
-    ])
-}
-
-fn read_f32(bytes: &[u8], offset: usize) -> f32 {
-    f32::from_le_bytes([
-        bytes[offset],
-        bytes[offset + 1],
-        bytes[offset + 2],
-        bytes[offset + 3],
-    ])
-}
-
-fn viewport_dimension_offsets(viewport_bytes: &[u8]) -> (usize, usize, usize, usize) {
-    let cell_count = read_u32(viewport_bytes, 8) as usize;
-    let string_pool_bytes = read_u32(viewport_bytes, 16) as usize;
-    let merge_count = read_u16(viewport_bytes, 24) as usize;
-    let row_dim_count = read_u16(viewport_bytes, 26) as usize;
-    let col_dim_count = read_u16(viewport_bytes, 28) as usize;
-
-    let row_dims_start = VIEWPORT_HEADER_SIZE
-        + cell_count * CELL_STRIDE
-        + string_pool_bytes
-        + merge_count * MERGE_STRIDE;
-    let col_dims_start = row_dims_start + row_dim_count * DIM_STRIDE;
-    (row_dims_start, row_dim_count, col_dims_start, col_dim_count)
-}
-
-fn viewport_row_height(viewport_bytes: &[u8], target_row: u32) -> Option<f32> {
-    let (row_dims_start, row_dim_count, _, _) = viewport_dimension_offsets(viewport_bytes);
-    for index in 0..row_dim_count {
-        let offset = row_dims_start + index * DIM_STRIDE;
-        if read_u32(viewport_bytes, offset) == target_row {
-            return Some(read_f32(viewport_bytes, offset + 4));
-        }
-    }
-    None
-}
-
-fn viewport_col_width(viewport_bytes: &[u8], target_col: u32) -> Option<f32> {
-    let (_, _, col_dims_start, col_dim_count) = viewport_dimension_offsets(viewport_bytes);
-    for index in 0..col_dim_count {
-        let offset = col_dims_start + index * DIM_STRIDE;
-        if read_u32(viewport_bytes, offset) == target_col {
-            return Some(read_f32(viewport_bytes, offset + 4));
-        }
-    }
-    None
+fn assert_empty_viewport_patches(patches: &[u8]) {
+    assert_eq!(
+        patches,
+        &[0, 0],
+        "visibility-changing outline mutations should not duplicate the client geometry refresh"
+    );
 }
 
 #[test]
@@ -289,6 +240,113 @@ fn imported_hidden_outline_columns_expand_to_visible_columns() {
 }
 
 #[test]
+fn imported_hidden_outline_rows_expand_to_visible_rows() {
+    let mut row_heights: Vec<RowDimension> = (3..=6)
+        .map(|row| RowDimension {
+            row,
+            height: 0.0,
+            custom_height: true,
+            hidden: true,
+            explicit_hidden: true,
+            ..Default::default()
+        })
+        .collect();
+    row_heights.push(RowDimension {
+        row: 7,
+        height: 15.0,
+        collapsed: Some(true),
+        ..Default::default()
+    });
+
+    let input = ParseOutput {
+        sheets: vec![SheetData {
+            name: "Imported".to_string(),
+            rows: 20,
+            cols: 12,
+            dimensions: SheetDimensions {
+                row_heights,
+                ..Default::default()
+            },
+            outline_groups: vec![OutlineGroup {
+                is_row: true,
+                start: 3,
+                end: 6,
+                level: 1,
+                collapsed: true,
+                hidden: true,
+                collapsed_on_member: false,
+            }],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let mut engine = engine_from_parse_output_normal(&input);
+    let sid = *engine.mirror().sheet_ids().next().expect("sheet id");
+
+    assert_eq!(engine.get_row_height_query(&sid, 3), 0.0);
+    assert!(
+        engine.is_row_hidden_query(&sid, 3),
+        "imported collapsed outline rows should report hidden before expansion"
+    );
+    let exported_before_expand = engine
+        .export_to_parse_output()
+        .expect("export before expand")
+        .parse_output;
+    assert!(
+        exported_before_expand.sheets[0]
+            .dimensions
+            .row_heights
+            .iter()
+            .any(|row| row.row == 7 && row.collapsed == Some(true)),
+        "imported collapsed summary row marker should be present before expansion"
+    );
+
+    let group_id = engine
+        .get_groups(&sid, "row")
+        .first()
+        .expect("row group")
+        .id
+        .clone();
+    engine
+        .set_group_collapsed(&sid, &group_id, false)
+        .expect("expand group");
+
+    assert!(engine.get_row_height_query(&sid, 3) > 0.0);
+    assert!(!engine.is_row_hidden_query(&sid, 3));
+    let group = engine
+        .get_group_in_sheet(&sid, &group_id)
+        .expect("expanded group");
+    assert!(!group.collapsed);
+    assert!(!group.hidden);
+    let exported_after_expand = engine
+        .export_to_parse_output()
+        .expect("export after expand")
+        .parse_output;
+    assert!(
+        !exported_after_expand.sheets[0]
+            .dimensions
+            .row_heights
+            .iter()
+            .any(|row| row.row == 7 && row.collapsed == Some(true)),
+        "expanded outline export must not keep the stale collapsed summary row marker"
+    );
+    assert!(
+        !exported_after_expand.sheets[0]
+            .dimensions
+            .row_heights
+            .iter()
+            .any(|row| row.row == 3 && row.hidden),
+        "expanded outline export must not keep hidden detail rows"
+    );
+
+    engine
+        .set_group_collapsed(&sid, &group_id, true)
+        .expect("collapse group");
+    assert_eq!(engine.get_row_height_query(&sid, 3), 0.0);
+    assert!(engine.is_row_hidden_query(&sid, 3));
+}
+
+#[test]
 fn explicit_hide_still_works_alongside_outline_groups() {
     // Sanity: the new check is OR-ed with the existing hide check. An
     // explicitly hidden row outside any group must still report height 0.
@@ -322,7 +380,7 @@ fn expanded_outline_group_does_not_zero_height() {
 }
 
 #[test]
-fn collapsed_outline_group_updates_layout_index_and_viewport_rows() {
+fn collapsed_outline_group_updates_layout_index_and_defers_viewport_refresh_rows() {
     let snap = simple_snapshot();
     let (mut engine, _) = YrsComputeEngine::from_snapshot(snap).unwrap();
     let sid = sheet_id();
@@ -334,9 +392,22 @@ fn collapsed_outline_group_updates_layout_index_and_viewport_rows() {
     let (_, group_result) = engine.group_rows(&sid, 2, 4).expect("group_rows");
     let group_id = created_group_id(group_result);
 
-    let (collapse_patches, _) = engine
+    let (collapse_patches, collapse_result) = engine
         .set_group_collapsed(&sid, &group_id, true)
         .expect("set_group_collapsed");
+    assert_eq!(
+        collapse_result
+            .visibility_changes
+            .iter()
+            .map(|change| (change.axis, change.index, change.hidden))
+            .collect::<Vec<_>>(),
+        vec![
+            (Axis::Row, 2, true),
+            (Axis::Row, 3, true),
+            (Axis::Row, 4, true)
+        ],
+        "outline collapse must surface effective row visibility transitions"
+    );
 
     let layout = engine.layout_index(&sid).expect("layout index");
     assert_eq!(layout.get_row_height(2).0, 0.0);
@@ -352,28 +423,34 @@ fn collapsed_outline_group_updates_layout_index_and_viewport_rows() {
         "outline collapse affects effective height, not explicit hidden state"
     );
 
-    let viewport_bytes =
-        extract_first_viewport_mutation(&collapse_patches).expect("viewport patch");
-    assert_eq!(viewport_row_height(&viewport_bytes, 2), Some(0.0));
-    assert_eq!(viewport_row_height(&viewport_bytes, 3), Some(0.0));
-    assert_eq!(viewport_row_height(&viewport_bytes, 4), Some(0.0));
+    assert_empty_viewport_patches(&collapse_patches);
 
-    let (expand_patches, _) = engine
+    let (expand_patches, expand_result) = engine
         .set_group_collapsed(&sid, &group_id, false)
         .expect("set_group_collapsed");
+    assert_eq!(
+        expand_result
+            .visibility_changes
+            .iter()
+            .map(|change| (change.axis, change.index, change.hidden))
+            .collect::<Vec<_>>(),
+        vec![
+            (Axis::Row, 2, false),
+            (Axis::Row, 3, false),
+            (Axis::Row, 4, false)
+        ],
+        "outline expansion must surface effective row visibility transitions"
+    );
     let layout = engine.layout_index(&sid).expect("layout index");
     assert!(layout.get_row_height(2).0 > 0.0);
     assert!(layout.get_row_height(3).0 > 0.0);
     assert!(layout.get_row_height(4).0 > 0.0);
 
-    let viewport_bytes = extract_first_viewport_mutation(&expand_patches).expect("viewport patch");
-    assert!(viewport_row_height(&viewport_bytes, 2).is_some_and(|height| height > 0.0));
-    assert!(viewport_row_height(&viewport_bytes, 3).is_some_and(|height| height > 0.0));
-    assert!(viewport_row_height(&viewport_bytes, 4).is_some_and(|height| height > 0.0));
+    assert_empty_viewport_patches(&expand_patches);
 }
 
 #[test]
-fn collapsed_outline_group_updates_layout_index_and_viewport_columns() {
+fn collapsed_outline_group_updates_layout_index_and_defers_viewport_refresh_columns() {
     let snap = simple_snapshot();
     let (mut engine, _) = YrsComputeEngine::from_snapshot(snap).unwrap();
     let sid = sheet_id();
@@ -385,9 +462,23 @@ fn collapsed_outline_group_updates_layout_index_and_viewport_columns() {
     let (_, group_result) = engine.group_columns(&sid, 3, 6).expect("group_columns");
     let group_id = created_group_id(group_result);
 
-    let (collapse_patches, _) = engine
+    let (collapse_patches, collapse_result) = engine
         .set_group_collapsed(&sid, &group_id, true)
         .expect("set_group_collapsed");
+    assert_eq!(
+        collapse_result
+            .visibility_changes
+            .iter()
+            .map(|change| (change.axis, change.index, change.hidden))
+            .collect::<Vec<_>>(),
+        vec![
+            (Axis::Col, 3, true),
+            (Axis::Col, 4, true),
+            (Axis::Col, 5, true),
+            (Axis::Col, 6, true)
+        ],
+        "outline collapse must surface effective column visibility transitions"
+    );
 
     let layout = engine.layout_index(&sid).expect("layout index");
     assert_eq!(layout.get_col_width(3).0, 0.0);
@@ -405,10 +496,5 @@ fn collapsed_outline_group_updates_layout_index_and_viewport_columns() {
         "outline collapse affects effective width, not explicit hidden state"
     );
 
-    let viewport_bytes =
-        extract_first_viewport_mutation(&collapse_patches).expect("viewport patch");
-    assert_eq!(viewport_col_width(&viewport_bytes, 3), Some(0.0));
-    assert_eq!(viewport_col_width(&viewport_bytes, 4), Some(0.0));
-    assert_eq!(viewport_col_width(&viewport_bytes, 5), Some(0.0));
-    assert_eq!(viewport_col_width(&viewport_bytes, 6), Some(0.0));
+    assert_empty_viewport_patches(&collapse_patches);
 }

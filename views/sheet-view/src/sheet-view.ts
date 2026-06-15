@@ -74,6 +74,7 @@ import type {
   SheetViewWorkbookSource,
   SheetViewEvent,
   SheetViewMountOptions,
+  SheetViewViewportInset,
   SheetViewVisibleBounds,
   SheetViewportState,
 } from './public-types';
@@ -132,6 +133,8 @@ export interface SheetViewConfig {
    * compose their own controls against SheetViewHandle.viewport when needed.
    */
   viewportChrome?: SheetViewViewportChromeOptions;
+  /** Host-owned chrome inset that should be excluded from the renderer viewport. */
+  viewportInset?: SheetViewViewportInset | (() => SheetViewViewportInset);
   /** Initial non-persistent visual skin. */
   skin?: SheetViewMountOptions['skin'];
   /** Override device pixel ratio. Default: window.devicePixelRatio. */
@@ -274,10 +277,11 @@ export class SheetView {
   // ---------------------------------------------------------------------------
 
   private readonly _config: Required<
-    Omit<SheetViewConfig, 'initialViewport' | 'dpr' | 'viewportChrome' | 'skin'>
+    Omit<SheetViewConfig, 'initialViewport' | 'dpr' | 'viewportChrome' | 'skin' | 'viewportInset'>
   > & {
     initialViewport?: SheetViewConfig['initialViewport'];
     viewportChrome: Required<SheetViewViewportChromeOptions>;
+    viewportInset?: SheetViewConfig['viewportInset'];
     dpr?: number;
   };
   private readonly _callbacks: SheetViewCallbacks;
@@ -406,6 +410,7 @@ export class SheetView {
         scrollbars: config.viewportChrome?.scrollbars ?? false,
         zoomControls: config.viewportChrome?.zoomControls ?? false,
       },
+      viewportInset: config.viewportInset,
       dpr: config.dpr,
       initialViewport: config.initialViewport,
     };
@@ -421,10 +426,10 @@ export class SheetView {
     rc.style.position = 'absolute';
     rc.style.top = '0';
     rc.style.left = '0';
-    rc.style.right = this._chromeRightInsetPx();
-    rc.style.bottom = this._chromeBottomInsetPx();
-    config.container.insertBefore(rc, config.container.firstChild);
+    rc.style.pointerEvents = 'none';
     this._rendererContainer = rc;
+    this._syncRendererContainerInset();
+    config.container.insertBefore(rc, config.container.firstChild);
 
     // Create indices (L255-260).
     this._positionIndex = new ViewportPositionIndex();
@@ -525,14 +530,10 @@ export class SheetView {
       getViewportState: () => self.getViewportState(),
       clampScrollPosition: (position) => self.clampScrollPosition(position),
       getScrollBounds: (sheetId: string) => self.coordinateSystem.getScrollBounds(sheetId),
-      getScrollToCell: (sheetId: string, cell: { row: number; col: number }) => {
-        const result = self.coordinateSystem.getScrollToCell?.(sheetId, cell);
-        if (!result) return null;
-        return {
-          x: (result as Record<string, number>).left ?? (result as Record<string, number>).x ?? 0,
-          y: (result as Record<string, number>).top ?? (result as Record<string, number>).y ?? 0,
-        };
-      },
+      getCoordinateScrollToCell: (sheetId: string, cell: { row: number; col: number }) =>
+        self.coordinateSystem.getScrollToCell?.(sheetId, cell) ?? null,
+      getPositionIndex: () => self._positionIndex,
+      getCellPageBounds: (row: number, col: number) => self._renderer.getCellPageBounds(row, col),
       getViewportBounds: (sheetId: string) => {
         const b = self.coordinateSystem.getViewportBounds?.(sheetId);
         if (!b) return { x: 0, y: 0, width: 0, height: 0 };
@@ -1171,6 +1172,7 @@ export class SheetView {
    */
   resize(width: number, height: number): void {
     if (this._disposed) return;
+    this._syncRendererContainerInset();
     this._containerSize = this._rendererSizeForHost(width, height);
     if (width > 0 && height > 0) {
       this._renderer.resize(this._containerSize.width, this._containerSize.height);
@@ -1470,9 +1472,22 @@ export class SheetView {
   // ===========================================================================
 
   private _rendererSizeForHost(width: number, height: number): Size {
+    const inset = this._rendererInset();
     return {
-      width: Math.max(0, width - this._chromeRightInset()),
-      height: Math.max(0, height - this._chromeBottomInset()),
+      width: Math.max(0, width - inset.right),
+      height: Math.max(0, height - inset.bottom),
+    };
+  }
+
+  private _rendererInset(): Required<SheetViewViewportInset> {
+    const viewportInset =
+      typeof this._config.viewportInset === 'function'
+        ? this._config.viewportInset()
+        : this._config.viewportInset;
+
+    return {
+      right: this._chromeRightInset() + Math.max(0, viewportInset?.right ?? 0),
+      bottom: this._chromeBottomInset() + Math.max(0, viewportInset?.bottom ?? 0),
     };
   }
 
@@ -1486,12 +1501,10 @@ export class SheetView {
       : 0;
   }
 
-  private _chromeRightInsetPx(): string {
-    return `${this._chromeRightInset()}px`;
-  }
-
-  private _chromeBottomInsetPx(): string {
-    return `${this._chromeBottomInset()}px`;
+  private _syncRendererContainerInset(): void {
+    const inset = this._rendererInset();
+    this._rendererContainer.style.right = `${inset.right}px`;
+    this._rendererContainer.style.bottom = `${inset.bottom}px`;
   }
 
   private _viewportBoundsForState(sheetId: string): { width: number; height: number } {
@@ -1738,6 +1751,7 @@ export function createSheetView(
       showGridlines: options.showGridlines,
       scrollable: options.scrollable,
       viewportChrome: options.viewportChrome,
+      viewportInset: options.viewportInset,
       skin: options.skin,
       dpr: options.dpr,
     },

@@ -1,7 +1,7 @@
 //! Workbook-level metadata: named ranges, tables, and dense cache access.
 
 use cell_types::SheetId;
-use domain_types::domain::table::Table as CanonicalTable;
+use domain_types::domain::table::TableCatalogEntry as CanonicalTable;
 use formula_types::{NamedRangeDef, Scope, TableDef};
 use snapshot_types::{DataTableRegionDef, PivotTableDef};
 
@@ -77,21 +77,16 @@ impl CellMirror {
 
     // ── Tables ─────────────────────────────────────────────────────────
 
-    /// Set (or replace) a canonical table (case-insensitive name matching).
-    /// Also updates the formula engine's TableDef cache and the table_range_ids index.
+    /// Set (or replace) a canonical table (stable-ID first, name as lookup).
+    /// Also updates the formula engine's TableDef cache.
     pub fn set_table(&mut self, table: CanonicalTable) {
         let table_def = crate::storage::table_format::table_to_table_def(&table);
-
-        // Phase 5E: maintain table_range_ids index
-        let range_id = format!("table:{}", table.name);
-        self.table_range_ids
-            .insert(table.name.to_ascii_lowercase(), range_id);
 
         // Update canonical table
         if let Some(existing) = self
             .tables
             .iter_mut()
-            .find(|t| t.name.eq_ignore_ascii_case(&table.name))
+            .find(|t| t.id == table.id || t.name.eq_ignore_ascii_case(&table.name))
         {
             *existing = table;
         } else {
@@ -110,14 +105,11 @@ impl CellMirror {
         }
     }
 
-    /// Remove a table by name (case-insensitive). Removes both canonical and TableDef,
-    /// and cleans up the table_range_ids index.
+    /// Remove a table by name (case-insensitive). Removes both canonical and TableDef.
     pub fn remove_table(&mut self, name: &str) {
         self.tables.retain(|t| !t.name.eq_ignore_ascii_case(name));
         self.table_defs
             .retain(|t| !t.name.eq_ignore_ascii_case(name));
-        // Phase 5E: clean up table_range_ids index
-        self.table_range_ids.remove(&name.to_ascii_lowercase());
     }
 
     /// Get a canonical table by name (case-insensitive).
@@ -125,6 +117,11 @@ impl CellMirror {
         self.tables
             .iter()
             .find(|t| t.name.eq_ignore_ascii_case(name))
+    }
+
+    /// Get a canonical table by stable ID.
+    pub fn get_table_by_id(&self, table_id: &str) -> Option<&CanonicalTable> {
+        self.tables.iter().find(|t| t.id == table_id)
     }
 
     /// Get all canonical tables.
@@ -142,15 +139,6 @@ impl CellMirror {
     /// Get all table defs for the formula engine.
     pub fn all_table_defs(&self) -> &[TableDef] {
         &self.table_defs
-    }
-
-    /// Phase 5E: get the range binding ID for a table name (case-insensitive).
-    ///
-    /// Returns `None` if the table is not registered.
-    pub fn table_range_id(&self, table_name: &str) -> Option<&str> {
-        self.table_range_ids
-            .get(&table_name.to_ascii_lowercase())
-            .map(|s| s.as_str())
     }
 
     // -----------------------------------------------------------------------

@@ -30,7 +30,12 @@ import type { CellCoord } from '@mog-sdk/contracts/rendering';
 import type { MutationResult } from '@mog-sdk/contracts/protection';
 import type { RichTextSegment } from '@mog-sdk/contracts/rich-text';
 import type { SlicerCache } from '@mog-sdk/contracts/slicers';
-import { sheetId as toSheetId, type CellRange, type SheetId } from '@mog-sdk/contracts/core';
+import {
+  sheetId as toSheetId,
+  type CellFormat,
+  type CellRange,
+  type SheetId,
+} from '@mog-sdk/contracts/core';
 
 import type { ClipboardActor } from './machines/clipboard-machine';
 import { clipboardMachine, getClipboardSnapshot } from './machines/clipboard-machine';
@@ -77,6 +82,7 @@ import {
 } from './coordination/cross-coordination';
 import { setupEditorCommitCoordination } from './coordination/editor-commit-coordination';
 import { setupClipboardPasteIntegration } from './coordination/paste-integration';
+import { compactCellFormatUpdates } from '../../domain/clipboard/paste-format-batching';
 import { setupValidationCirclesCoordination } from './features/validation';
 import { setupTableSelectionCoordination } from './features/table';
 import { setupPivotSelectionCoordination } from './features/pivot';
@@ -1496,10 +1502,18 @@ export class GridEditingSystem implements IGridEditingSystem {
           await workbook.getSheetById(sheetId).setCells(updates);
         });
       },
-      setCellFormat: (sheetId, row, col, format) => {
-        void workbook
-          .getSheetById(sheetId)
-          .formats.set(row, col, format as import('@mog-sdk/contracts/core').CellFormat);
+      setCellFormat: async (sheetId, row, col, format) => {
+        await guardBridgeMutation(async () => {
+          await workbook.getSheetById(sheetId).formats.set(row, col, format as CellFormat);
+        });
+      },
+      setCellFormatBatch: async (sheetId, updates) => {
+        await guardBridgeMutation(async () => {
+          const worksheet = workbook.getSheetById(sheetId);
+          for (const { format, ranges } of compactCellFormatUpdates(updates)) {
+            await worksheet.formats.setRanges(ranges, format as CellFormat);
+          }
+        });
       },
       getCellData: (_sheetId, row, col) => {
         const ws = workbook.getSheetById(_sheetId);
@@ -1939,6 +1953,7 @@ export class GridEditingSystem implements IGridEditingSystem {
         getActiveSheetId: () =>
           (this.config.getActiveSheetId ?? (() => this.config.initialSheetId))(),
         workbook,
+        importDurability: this.config.importDurability,
       },
       cleanups,
     );

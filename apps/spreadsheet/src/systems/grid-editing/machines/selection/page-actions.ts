@@ -18,9 +18,9 @@ import { getMovingEdge } from '../../../shared/types';
 import { buildExtendUpdate, moveInAdditive, moveTo } from './helpers';
 import type { SelectionContext, SelectionEvent } from './types';
 
-// All Shift+Page extends route through buildExtendUpdate so activeCell stays
-// pinned at the anchor (Excel parity). The moving edge lives in the range
-// geometry; getMovingEdge(range, anchor) finds it without consulting activeCell.
+// All Shift+Page extends route through buildExtendUpdate so the range geometry
+// and viewport-follow track the moving edge while activeCell stays anchored.
+// getMovingEdge(range, anchor) finds that edge without relying on activeCell.
 
 // =============================================================================
 // PAGE NAVIGATION ACTIONS (Issue 8 Wave 2B)
@@ -41,8 +41,7 @@ const pageUp = assign(
 
 /**
  * Shift+Page Up: Extend selection up by approximately one viewport height.
- * activeCell stays at the anchor (Excel parity); the range geometry tracks
- * the moving edge via getMovingEdge(range, anchor).
+ * Physical Shift-extension keeps activeCell anchored.
  */
 const pageUpExtend = assign(
   ({ context, event }: { context: SelectionContext; event: SelectionEvent }) => {
@@ -51,7 +50,8 @@ const pageUpExtend = assign(
     const movingEdge = getMovingEdge(context.pendingRange, anchor);
     const newRow = Math.max(0, movingEdge.row - event.visibleRows);
     const newEnd = { row: newRow, col: movingEdge.col };
-    return buildExtendUpdate(anchor, newEnd);
+    const activeCell = context.modes.additive || context.modes.extend ? newEnd : anchor;
+    return buildExtendUpdate(anchor, newEnd, activeCell);
   },
 );
 
@@ -70,7 +70,7 @@ const pageDown = assign(
 
 /**
  * Shift+Page Down: Extend selection down by approximately one viewport height.
- * activeCell stays at the anchor (Excel parity).
+ * Physical Shift-extension keeps activeCell anchored.
  */
 const pageDownExtend = assign(
   ({ context, event }: { context: SelectionContext; event: SelectionEvent }) => {
@@ -79,7 +79,8 @@ const pageDownExtend = assign(
     const movingEdge = getMovingEdge(context.pendingRange, anchor);
     const newRow = Math.min(movingEdge.row + event.visibleRows, MAX_ROWS - 1);
     const newEnd = { row: newRow, col: movingEdge.col };
-    return buildExtendUpdate(anchor, newEnd);
+    const activeCell = context.modes.additive || context.modes.extend ? newEnd : anchor;
+    return buildExtendUpdate(anchor, newEnd, activeCell);
   },
 );
 
@@ -98,7 +99,7 @@ const pageLeft = assign(
 
 /**
  * Shift+Page Left: Extend selection left by approximately one viewport width.
- * activeCell stays at the anchor (Excel parity).
+ * Physical Shift-extension keeps activeCell anchored.
  */
 const pageLeftExtend = assign(
   ({ context, event }: { context: SelectionContext; event: SelectionEvent }) => {
@@ -107,7 +108,8 @@ const pageLeftExtend = assign(
     const movingEdge = getMovingEdge(context.pendingRange, anchor);
     const newCol = Math.max(0, movingEdge.col - event.visibleCols);
     const newEnd = { row: movingEdge.row, col: newCol };
-    return buildExtendUpdate(anchor, newEnd);
+    const activeCell = context.modes.additive || context.modes.extend ? newEnd : anchor;
+    return buildExtendUpdate(anchor, newEnd, activeCell);
   },
 );
 
@@ -126,7 +128,7 @@ const pageRight = assign(
 
 /**
  * Shift+Page Right: Extend selection right by approximately one viewport width.
- * activeCell stays at the anchor (Excel parity).
+ * Physical Shift-extension keeps activeCell anchored.
  */
 const pageRightExtend = assign(
   ({ context, event }: { context: SelectionContext; event: SelectionEvent }) => {
@@ -135,7 +137,8 @@ const pageRightExtend = assign(
     const movingEdge = getMovingEdge(context.pendingRange, anchor);
     const newCol = Math.min(movingEdge.col + event.visibleCols, MAX_COLS - 1);
     const newEnd = { row: movingEdge.row, col: newCol };
-    return buildExtendUpdate(anchor, newEnd);
+    const activeCell = context.modes.additive || context.modes.extend ? newEnd : anchor;
+    return buildExtendUpdate(anchor, newEnd, activeCell);
   },
 );
 

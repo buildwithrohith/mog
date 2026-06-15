@@ -87,11 +87,127 @@ function mockKeyboardEvent(
   } as unknown as KeyboardEvent;
 }
 
+function createDispatchableDependencies(dispatchFn = jest.fn(() => ({ handled: true }))) {
+  const idleSnapshot = {
+    matches: () => false,
+    context: { isEditMode: false },
+  };
+  const selectionSnapshot = {
+    matches: () => false,
+    context: { modes: {} },
+  };
+
+  return {
+    workbook: {},
+    selectionActor: { getSnapshot: () => selectionSnapshot, send: jest.fn() },
+    editorActor: { getSnapshot: () => idleSnapshot, send: jest.fn() },
+    clipboardActor: { getSnapshot: () => idleSnapshot, send: jest.fn() },
+    objectInteractionActor: { getSnapshot: () => idleSnapshot, send: jest.fn() },
+    chartActor: { getSnapshot: () => idleSnapshot, send: jest.fn() },
+    findReplaceActor: { getSnapshot: () => idleSnapshot, send: jest.fn() },
+    commentActor: { getSnapshot: () => idleSnapshot, send: jest.fn() },
+    paneFocusActor: { getSnapshot: () => idleSnapshot, send: jest.fn() },
+    rendererActor: { getSnapshot: () => idleSnapshot, send: jest.fn() },
+    getActiveSheetId: () => 'sheet1',
+    uiStore: { getState: jest.fn(() => ({})) },
+    platform: {},
+    shellService: {},
+    createAccessLayer: jest.fn().mockReturnValue({ accessors: {}, commands: {} }),
+    dispatch: dispatchFn,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 describe('KeyboardCoordinator - Gap Fixes', () => {
+  describe('Editable navigation key targets', () => {
+    it('defers Enter from chrome inputs so their local handler can run', () => {
+      setTestShortcuts([
+        makeShortcut({
+          id: 'enter-navigation',
+          action: 'ENTER_NAVIGATE',
+          contexts: ['grid'],
+          matchBy: 'code',
+          bindings: { default: { code: 'Enter' as any, modifiers: [] } },
+        }),
+      ]);
+
+      const dispatchFn = jest.fn(() => ({ handled: true }));
+      const coordinator = createTestCoordinator();
+      coordinator.setDependencies(createDispatchableDependencies(dispatchFn) as any);
+
+      const formulaBar = document.createElement('div');
+      formulaBar.setAttribute('data-formula-bar', '');
+      const input = document.createElement('input');
+      input.setAttribute('data-testid', 'name-box');
+      formulaBar.appendChild(input);
+
+      const result = coordinator.handleKeyboardEvent(
+        mockKeyboardEvent({ code: 'Enter', key: 'Enter', target: input }),
+      );
+
+      expect(result.handled).toBe(false);
+      expect(result.reason).toBe('not_found');
+      expect(dispatchFn).not.toHaveBeenCalled();
+    });
+
+    it('still routes Enter from the inline cell editor through spreadsheet navigation', () => {
+      setTestShortcuts([
+        makeShortcut({
+          id: 'enter-navigation',
+          action: 'ENTER_NAVIGATE',
+          contexts: ['grid'],
+          matchBy: 'code',
+          bindings: { default: { code: 'Enter' as any, modifiers: [] } },
+        }),
+      ]);
+
+      const dispatchFn = jest.fn(() => ({ handled: true }));
+      const coordinator = createTestCoordinator();
+      coordinator.setDependencies(createDispatchableDependencies(dispatchFn) as any);
+
+      const input = document.createElement('textarea');
+      input.setAttribute('data-testid', 'inline-cell-editor');
+
+      const result = coordinator.handleKeyboardEvent(
+        mockKeyboardEvent({ code: 'Enter', key: 'Enter', target: input }),
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.action).toBe('ENTER_NAVIGATE');
+      expect(dispatchFn).toHaveBeenCalledTimes(1);
+    });
+
+    it('still routes Enter from the formula bar editor through spreadsheet navigation', () => {
+      setTestShortcuts([
+        makeShortcut({
+          id: 'enter-navigation',
+          action: 'ENTER_NAVIGATE',
+          contexts: ['grid'],
+          matchBy: 'code',
+          bindings: { default: { code: 'Enter' as any, modifiers: [] } },
+        }),
+      ]);
+
+      const dispatchFn = jest.fn(() => ({ handled: true }));
+      const coordinator = createTestCoordinator();
+      coordinator.setDependencies(createDispatchableDependencies(dispatchFn) as any);
+
+      const input = document.createElement('input');
+      input.setAttribute('data-testid', 'formula-bar-input');
+
+      const result = coordinator.handleKeyboardEvent(
+        mockKeyboardEvent({ code: 'Enter', key: 'Enter', target: input }),
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.action).toBe('ENTER_NAVIGATE');
+      expect(dispatchFn).toHaveBeenCalledTimes(1);
+    });
+  });
+
   // =========================================================================
   // Gap 1: Priority sorting
   // =========================================================================
@@ -433,6 +549,20 @@ describe('KeyboardCoordinator - Gap Fixes', () => {
 
       // Should match because 'global' is a wildcard — but will fail at dispatch (no uiStore)
       expect(result.reason).not.toBe('wrong_context');
+    });
+
+    it('should classify rich text editing through edit-mode shortcut context', () => {
+      const coordinator = createTestCoordinator();
+      const mockEditorSnapshot = {
+        matches: (state: string) => state === 'richTextEditing',
+        context: { isEditMode: true },
+      };
+      coordinator.setDependencies({
+        ...createDispatchableDependencies(),
+        editorActor: { getSnapshot: () => mockEditorSnapshot } as any,
+      });
+
+      expect(coordinator.getContext()).toBe('editMode');
     });
 
     it("should treat 'any' and 'global' both as wildcards", () => {

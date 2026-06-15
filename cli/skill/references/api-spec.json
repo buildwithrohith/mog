@@ -90221,7 +90221,7 @@
       }
     },
     "WorksheetHyperlinks": {
-      "docstring": "WorksheetHyperlinks — Sub-API for cell hyperlink operations.\n\nProvides methods to set, get, and remove hyperlinks on cells.",
+      "docstring": "Sub-API for hyperlink operations on a worksheet.",
       "source": {
         "file": "types/api/src/api/worksheet/hyperlinks.ts"
       },
@@ -90422,9 +90422,9 @@
           }
         },
         "list": {
-          "signature": "list(): Promise<Array<{ address: string; url: string }>>;",
-          "docstring": "List all hyperlinks in the worksheet.\n\n@returns Array of hyperlink entries with cell address and URL",
-          "usedTypes": [],
+          "signature": "list(): Promise<WorksheetHyperlink[]>;",
+          "docstring": "List all hyperlinks in the worksheet.\n\n@returns Array of hyperlink entries with cell address, URL, and metadata",
+          "usedTypes": ["WorksheetHyperlink"],
           "stableId": "WorksheetHyperlinks.list",
           "canonicalPath": "ws.hyperlinks.list",
           "root": "subApi",
@@ -90442,16 +90442,16 @@
                 "kind": "array",
                 "items": {
                   "kind": "objectRef",
-                  "name": "{address:string;url:string}"
+                  "name": "WorksheetHyperlink"
                 }
               }
             },
-            "typeText": "Promise<Array<{address:string;url:string}>>"
+            "typeText": "Promise<WorksheetHyperlink[]>"
           },
           "typeScript": {
-            "signature": "list(): Promise<Array<{ address: string; url: string }>>;",
+            "signature": "list(): Promise<WorksheetHyperlink[]>;",
             "parameters": [],
-            "returnTypeText": "Promise<Array<{address:string;url:string}>>"
+            "returnTypeText": "Promise<WorksheetHyperlink[]>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -90815,9 +90815,9 @@
           }
         },
         "list": {
-          "signature": "list(): Promise<Array<{ address: string; url: string }>>;",
-          "docstring": "List all hyperlinks in the worksheet.\n\n@returns Array of hyperlink entries with cell address and URL",
-          "usedTypes": [],
+          "signature": "list(): Promise<WorksheetHyperlink[]>;",
+          "docstring": "List all hyperlinks in the worksheet.\n\n@returns Array of hyperlink entries with cell address, URL, and metadata",
+          "usedTypes": ["WorksheetHyperlink"],
           "stableId": "WorksheetHyperlinks.list",
           "canonicalPath": "ws.hyperlinks.list",
           "root": "subApi",
@@ -90835,16 +90835,16 @@
                 "kind": "array",
                 "items": {
                   "kind": "objectRef",
-                  "name": "{address:string;url:string}"
+                  "name": "WorksheetHyperlink"
                 }
               }
             },
-            "typeText": "Promise<Array<{address:string;url:string}>>"
+            "typeText": "Promise<WorksheetHyperlink[]>"
           },
           "typeScript": {
-            "signature": "list(): Promise<Array<{ address: string; url: string }>>;",
+            "signature": "list(): Promise<WorksheetHyperlink[]>;",
             "parameters": [],
-            "returnTypeText": "Promise<Array<{address:string;url:string}>>"
+            "returnTypeText": "Promise<WorksheetHyperlink[]>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -148933,7 +148933,7 @@
     },
     "SlicerInfo": {
       "name": "SlicerInfo",
-      "definition": "{\n  /** Unique slicer ID */\n  id: string;\n  /** Programmatic name (unique within workbook). Falls back to caption if not set. */\n  name: string;\n  /** Display caption (header text). */\n  caption: string;\n  /** Connected table name */\n  tableName: string;\n  /** Connected column name */\n  columnName: string;\n  /** Source type — 'table' for table slicers, 'pivot' for pivot table slicers */\n  source?: { type: 'table' | 'pivot' };\n  /** Discriminator for timeline slicers (matches TimelineSlicerConfig.sourceType) */\n  sourceType?: 'timeline';\n}",
+      "definition": "{\n  /** Unique slicer ID */\n  id: string;\n  /** Programmatic name (unique within workbook). Falls back to caption if not set. */\n  name: string;\n  /** Display caption (header text). */\n  caption: string;\n  /** Connected table name */\n  tableName: string;\n  /** Connected column name */\n  columnName: string;\n  /** Stable source binding for table/pivot slicers. */\n  source?: SlicerSource;\n  /** Discriminator for timeline slicers (matches TimelineSlicerConfig.sourceType) */\n  sourceType?: 'timeline';\n}",
       "docstring": "Summary information about a slicer.",
       "source": {
         "file": "contracts/src/api/types.ts"
@@ -150749,6 +150749,18 @@
       "docstring": "",
       "source": {
         "file": "types/api/src/api/worksheet/form-controls.ts"
+      },
+      "ownership": {
+        "package": "@mog/types-api"
+      },
+      "ownerPackage": "@mog/types-api"
+    },
+    "WorksheetHyperlink": {
+      "name": "WorksheetHyperlink",
+      "definition": "{\n  /** A1-style cell address or range reference. */\n  address: string;\n  /** A1-style cell address or range reference. Alias for `address`. */\n  ref: string;\n  /** Hyperlink target URL or workbook location. */\n  url: string;\n  /** Optional display text stored with the hyperlink. */\n  display?: string;\n  /** Optional tooltip text stored with the hyperlink. */\n  tooltip?: string;\n}",
+      "docstring": "WorksheetHyperlinks — Sub-API for cell hyperlink operations.\n\nProvides methods to set, get, and remove hyperlinks on cells.",
+      "source": {
+        "file": "types/api/src/api/worksheet/hyperlinks.ts"
       },
       "ownership": {
         "package": "@mog/types-api"

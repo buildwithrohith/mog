@@ -83,17 +83,11 @@ export function useSheetTabActions(
   options: UseSheetTabActionsOptions = {},
 ): UseSheetTabActionsReturn {
   const wb = useWorkbook();
-  const importDurability = useDocumentContext().importDurability;
+  const { importDurability } = useDocumentContext();
   const storeActiveSheetId = useActiveSheetId();
   const setActiveSheet = useUIStore((s) => s.setActiveSheet);
   const openDeleteSheetConfirmDialog = useUIStore((s) => s.openDeleteSheetConfirmDialog);
-  const sheetActivationGenerationRef = useRef(0);
-
-  useEffect(() => {
-    return () => {
-      sheetActivationGenerationRef.current += 1;
-    };
-  }, []);
+  const selectSheetRequestIdRef = useRef(0);
 
   // Allow override for testing or custom use cases
   const activeSheetId = options.sheetId ?? storeActiveSheetId;
@@ -182,33 +176,26 @@ export function useSheetTabActions(
    */
   const handleSelectSheet = useCallback(
     (sheetId: SheetId) => {
-      const generation = ++sheetActivationGenerationRef.current;
-
-      const activateIfLatest = () => {
-        if (sheetActivationGenerationRef.current === generation) {
-          setActiveSheet(sheetId);
-        }
-      };
-
-      if (!importDurability?.isImportDurabilityPending || sheetId === activeSheetId) {
-        activateIfLatest();
-        return;
-      }
+      const requestId = ++selectSheetRequestIdRef.current;
 
       void (async () => {
-        try {
-          if (importDurability.awaitMaterialized) {
-            await importDurability.awaitMaterialized(sheetId);
-          } else {
-            await importDurability.awaitImportDurability();
+        if (importDurability?.isImportDurabilityPending) {
+          const awaitMaterialized =
+            importDurability.awaitMaterialized?.bind(importDurability) ??
+            importDurability.awaitImportDurability.bind(importDurability);
+          try {
+            await awaitMaterialized(sheetId);
+          } catch (error) {
+            console.warn('[SheetTabActions] Failed to materialize sheet before activation:', error);
           }
-        } catch (error) {
-          console.warn('[SheetTabs] Failed to materialize sheet before activation:', error);
         }
-        activateIfLatest();
+
+        if (requestId === selectSheetRequestIdRef.current) {
+          setActiveSheet(sheetId);
+        }
       })();
     },
-    [activeSheetId, importDurability, setActiveSheet],
+    [importDurability, setActiveSheet],
   );
 
   /**

@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use yrs::{Any, Map, MapPrelim, MapRef};
 
-use domain_types::SheetData;
 use domain_types::yrs_schema;
+use domain_types::{NamedRange, SheetData};
 
 use compute_document::hex::id_to_hex;
 use compute_document::schema::*;
@@ -14,7 +14,98 @@ use super::IdAllocator;
 
 const KEY_VOLATILE_DEPENDENCY_PACKAGE_PART: &str = "volatileDependencyPackagePart";
 const KEY_CUSTOM_WORKBOOK_VIEWS_XML: &str = "customWorkbookViewsXml";
-const KEY_THREADED_COMMENT_PERSON_ORDER: &str = "threadedCommentPersonOrder";
+
+#[derive(Debug, Clone, Default)]
+pub(super) struct ImportedTableIdentityMap {
+    tables_by_ooxml_id: std::collections::HashMap<u32, ImportedTableIdentity>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ImportedTableIdentity {
+    stable_table_id: String,
+    stable_column_ids_by_ooxml_id: std::collections::HashMap<u32, String>,
+    stable_column_ids_by_source_name: std::collections::HashMap<String, String>,
+    stable_column_ids_by_ordinal: std::collections::HashMap<u32, String>,
+}
+
+impl ImportedTableIdentityMap {
+    fn insert_table(
+        &mut self,
+        imported: &domain_types::domain::table::TableSpec,
+        canonical: &domain_types::domain::table::TableCatalogEntry,
+    ) {
+        if imported.id == 0 {
+            return;
+        }
+
+        let mut identity = ImportedTableIdentity {
+            stable_table_id: canonical.id.clone(),
+            ..Default::default()
+        };
+        for (ordinal, (imported_column, canonical_column)) in imported
+            .columns
+            .iter()
+            .zip(canonical.columns.iter())
+            .enumerate()
+        {
+            let stable_column_id = canonical_column.id.clone();
+            if imported_column.id > 0 {
+                identity
+                    .stable_column_ids_by_ooxml_id
+                    .insert(imported_column.id, stable_column_id.clone());
+            }
+            identity
+                .stable_column_ids_by_ordinal
+                .insert(ordinal as u32, stable_column_id.clone());
+            identity.insert_source_name(&imported_column.name, &stable_column_id);
+            if let Some(unique_name) = imported_column.unique_name.as_deref() {
+                identity.insert_source_name(unique_name, &stable_column_id);
+            }
+        }
+
+        self.tables_by_ooxml_id.insert(imported.id, identity);
+    }
+
+    fn stable_table_id_for_ooxml_id(&self, ooxml_table_id: u32) -> Option<&str> {
+        self.tables_by_ooxml_id
+            .get(&ooxml_table_id)
+            .map(|identity| identity.stable_table_id.as_str())
+    }
+
+    fn stable_column_id_for_slicer(
+        &self,
+        table_cache: &ooxml_types::slicers::TableSlicerCache,
+        source_name: &str,
+    ) -> Option<&str> {
+        let identity = self.tables_by_ooxml_id.get(&table_cache.table_id)?;
+        identity
+            .stable_column_ids_by_ordinal
+            .get(&table_cache.column)
+            .or_else(|| {
+                let one_based_ooxml_id = table_cache.column.saturating_add(1);
+                identity
+                    .stable_column_ids_by_ooxml_id
+                    .get(&one_based_ooxml_id)
+            })
+            .or_else(|| {
+                identity
+                    .stable_column_ids_by_source_name
+                    .get(&source_name.to_ascii_lowercase())
+            })
+            .map(String::as_str)
+    }
+}
+
+impl ImportedTableIdentity {
+    fn insert_source_name(&mut self, source_name: &str, stable_column_id: &str) {
+        if source_name.is_empty() {
+            return;
+        }
+        self.stable_column_ids_by_source_name
+            .entry(source_name.to_ascii_lowercase())
+            .or_insert_with(|| stable_column_id.to_string());
+    }
+}
 
 // ===========================================================================
 // Workbook-level hydration
@@ -27,7 +118,7 @@ const KEY_THREADED_COMMENT_PERSON_ORDER: &str = "threadedCommentPersonOrder";
 /// into structured entries with allocated IDs and resolved sheet scope.
 pub(super) fn hydrate_workbook_named_ranges(
     workbook: &MapRef,
-    named_ranges: &[domain_types::NamedRange],
+    named_ranges: &[NamedRange],
     sheet_ids: &[SheetId],
     allocator: &mut impl IdAllocator,
     txn: &mut yrs::TransactionMut,
@@ -187,32 +278,30 @@ mod tests {
 pub(super) fn hydrate_workbook_tables(
     workbook: &MapRef,
     tables: &[(domain_types::domain::table::TableSpec, String)],
+    allocator: &mut impl IdAllocator,
     txn: &mut yrs::TransactionMut,
-) {
+) -> ImportedTableIdentityMap {
+    let mut table_identity = ImportedTableIdentityMap::default();
     if tables.is_empty() {
-        return;
+        return table_identity;
     }
     // Provider Protocol lifecycle: lazy-create the tables sub-map.
     let tables_map = crate::storage::ensure_workbook_child_map(workbook, txn, KEY_TABLES);
     for (table, sheet_id) in tables {
-        let mut entries = yrs_schema::table::to_yrs_prelim(table);
-
-        // Add canonical-specific keys for from_yrs_map_to_table compatibility
-        entries.push(("sheetId", Any::String(Arc::from(sheet_id.as_str()))));
-
-        // Parse range_ref and add structured range keys
-        if let Some((sr, sc, er, ec)) =
-            domain_types::domain::table::parse_table_range_ref(&table.range_ref)
-        {
-            entries.push(("startRow", Any::Number(sr as f64)));
-            entries.push(("startCol", Any::Number(sc as f64)));
-            entries.push(("endRow", Any::Number(er as f64)));
-            entries.push(("endCol", Any::Number(ec as f64)));
-        }
-
+        let table_id = format!("tbl-{}", allocator.alloc_cell_id().to_uuid_string());
+        let column_ids = table
+            .columns
+            .iter()
+            .map(|_| format!("col-{}", allocator.alloc_cell_id().to_uuid_string()));
+        let canonical = domain_types::domain::table::xlsx_table_spec_to_catalog_entry_with_ids(
+            table, sheet_id, table_id, column_ids,
+        );
+        table_identity.insert_table(table, &canonical);
+        let entries = yrs_schema::table::to_yrs_prelim_from_table(&canonical);
         let table_prelim: MapPrelim = entries.into_iter().collect();
-        tables_map.insert(txn, &*table.name, table_prelim);
+        tables_map.insert(txn, &*canonical.id, table_prelim);
     }
+    table_identity
 }
 
 pub(super) fn hydrate_workbook_connections(
@@ -251,20 +340,16 @@ pub(super) fn hydrate_workbook_root_namespaces(
 
 pub(super) fn hydrate_workbook_table_styles(
     workbook: &MapRef,
-    table_styles: &[ooxml_types::styles::TableStyleDef],
     default_table_style: &Option<String>,
     default_pivot_style: &Option<String>,
     txn: &mut yrs::TransactionMut,
 ) {
-    if table_styles.is_empty() && default_table_style.is_none() && default_pivot_style.is_none() {
+    if default_table_style.is_none() && default_pivot_style.is_none() {
         return;
     }
 
     let styles_map =
         crate::storage::ensure_workbook_child_map(workbook, txn, KEY_XLSX_TABLE_STYLES);
-    if let Ok(json) = serde_json::to_string(table_styles) {
-        styles_map.insert(txn, "styles", Any::String(Arc::from(json.as_str())));
-    }
     if let Some(style) = default_table_style {
         styles_map.insert(
             txn,
@@ -613,11 +698,18 @@ pub(super) fn hydrate_workbook_slicers(
     sheets: &[SheetData],
     sheet_ids: &[SheetId],
     slicer_caches: &[ooxml_types::slicers::SlicerCacheDef],
+    table_identity: &ImportedTableIdentityMap,
     txn: &mut yrs::TransactionMut,
 ) {
     // Build a lookup from cache name → cache def
     let cache_by_name: std::collections::HashMap<&str, &ooxml_types::slicers::SlicerCacheDef> =
         slicer_caches.iter().map(|c| (c.name.as_str(), c)).collect();
+    let table_by_ooxml_id: std::collections::HashMap<u32, &domain_types::domain::table::TableSpec> =
+        sheets
+            .iter()
+            .flat_map(|sheet| sheet.tables.iter())
+            .filter_map(|table| (table.id > 0).then_some((table.id, table)))
+            .collect();
 
     // Early-return if no sheet has any slicer to hydrate; avoids creating
     // an empty `slicers` sub-map when there's nothing to write.
@@ -645,15 +737,49 @@ pub(super) fn hydrate_workbook_slicers(
         for slicer in &sheet.slicers {
             let cache = cache_by_name.get(slicer.cache.as_str()).copied();
             let anchor = anchor_by_name.get(slicer.name.as_str()).copied();
+            let source_table = cache
+                .and_then(|cache| cache.table_slicer_cache.as_ref())
+                .and_then(|table_cache| table_by_ooxml_id.get(&table_cache.table_id).copied());
+            let source_table_id = cache
+                .and_then(|cache| cache.table_slicer_cache.as_ref())
+                .and_then(|table_cache| {
+                    table_identity.stable_table_id_for_ooxml_id(table_cache.table_id)
+                });
+            let source_table_column_id = cache.and_then(|cache| {
+                cache.table_slicer_cache.as_ref().and_then(|table_cache| {
+                    table_identity
+                        .stable_column_id_for_slicer(table_cache, cache.source_name.as_str())
+                })
+            });
+            let table_filter_selected_values = cache
+                .and_then(|cache| cache.table_slicer_cache.as_ref())
+                .and_then(|table_cache| {
+                    source_table.map(|table| {
+                        domain_types::domain::slicer::table_filter_selected_values_for_slicer(
+                            table,
+                            table_cache.column,
+                        )
+                    })
+                });
+            let table_filter_selected_values = table_filter_selected_values
+                .as_deref()
+                .filter(|values| !values.is_empty());
 
             let stored = domain_types::domain::slicer::xlsx_import_to_stored_slicer(
-                slicer, cache, anchor, &sheet_hex,
+                slicer,
+                cache,
+                anchor,
+                domain_types::domain::slicer::XlsxSlicerImportContext {
+                    sheet_id: &sheet_hex,
+                    source_table_id,
+                    source_table_column_id,
+                    table_filter_selected_values,
+                },
             );
 
-            // SAFETY: serializing a struct with #[derive(Serialize)]; no map keys or non-finite floats.
-            let json =
-                serde_json::to_string(&stored).expect("StoredSlicer serialization should not fail");
-            slicers_map.insert(txn, &*stored.id, Any::String(Arc::from(json.as_str())));
+            let entries = yrs_schema::slicer::to_yrs_prelim(&stored);
+            let nested: MapPrelim = entries.into_iter().collect();
+            slicers_map.insert(txn, &*stored.id, nested);
         }
     }
 }

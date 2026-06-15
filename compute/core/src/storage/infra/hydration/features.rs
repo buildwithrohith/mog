@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use yrs::{Any, Array, Map, MapPrelim, MapRef};
@@ -15,13 +15,17 @@ use compute_document::cell_serde::{
 };
 
 use super::IdAllocator;
-use super::helpers::get_or_create_cell_id_for_pos;
+use super::form_controls::normalize_form_control_references_for_hydration;
+use super::helpers::{PositionMap, get_or_create_cell_id_for_pos};
 use crate::import::parse_output_to_snapshot::hyperlink_lowering::{
     HyperlinkAnchor, classify_hyperlink_anchor,
 };
 use crate::storage::sheet::schemas;
 use domain_types::domain::hyperlink::HyperlinkTargetKind;
 use formula_types::CellRef;
+
+mod comments;
+pub(super) use comments::hydrate_comments;
 
 // ===========================================================================
 // Cell hydration
@@ -34,7 +38,7 @@ use formula_types::CellRef;
 /// 2. Write cell data using `build_cell_prelim()` (the gold standard)
 ///
 /// Returns `(cell_ids, pos_map)` where `pos_map` is an in-memory position index
-/// (pos_key -> cell_hex) used by downstream hydration functions (merges, comments,
+/// (`(row, col)` -> cell_hex) used by downstream hydration functions (merges, comments,
 /// hyperlinks, styles, filters) and mirrored by the caller into the canonical
 /// Yrs `gridIndex/{posToId,idToPos}` store before the import transaction commits.
 pub(super) fn hydrate_cells(
@@ -42,9 +46,9 @@ pub(super) fn hydrate_cells(
     cells_map: &MapRef,
     cells: &[CellData],
     allocator: &mut impl IdAllocator,
-) -> (Vec<CellId>, HashMap<String, String>) {
+) -> (Vec<CellId>, PositionMap) {
     let mut allocated_ids = Vec::with_capacity(cells.len());
-    let mut pos_map = HashMap::with_capacity(cells.len());
+    let mut pos_map = PositionMap::with_capacity(cells.len());
     for cell in cells {
         let cell_id = allocator.alloc_cell_id();
         allocated_ids.push(cell_id);
@@ -73,8 +77,7 @@ pub(super) fn hydrate_cells(
         }
 
         // Track position → cell_hex in memory for downstream hydration lookups
-        let pos_key = format!("{}:{}", cell.row, cell.col);
-        pos_map.insert(pos_key, cell_hex.to_string());
+        pos_map.insert((cell.row, cell.col), cell_hex.to_string());
     }
     (allocated_ids, pos_map)
 }
@@ -96,9 +99,8 @@ pub(super) fn hydrate_cells_with_ids(
     cell_ids: &[CellId],
     ranged_positions: &std::collections::HashSet<(u32, u32)>,
     range_style_positions: &std::collections::HashSet<(u32, u32)>,
-) -> HashMap<String, String> {
-    let mut pos_map = HashMap::with_capacity(cells.len() / 2);
-    let mut pos_key_buf = String::with_capacity(16);
+) -> PositionMap {
+    let mut pos_map = PositionMap::with_capacity(cells.len() / 2);
     for (i, cell) in cells.iter().enumerate() {
         if cell.projection_role == ImportedCellProjectionRole::DynamicArraySpillTarget {
             continue;
@@ -131,10 +133,7 @@ pub(super) fn hydrate_cells_with_ids(
 
         let cell_hex = id_to_hex(cell_ids[i].as_u128());
 
-        pos_key_buf.clear();
-        use std::fmt::Write;
-        let _ = write!(pos_key_buf, "{}:{}", cell.row, cell.col);
-        pos_map.insert(pos_key_buf.clone(), cell_hex.to_string());
+        pos_map.insert((cell.row, cell.col), cell_hex.to_string());
 
         // Empty styled cells don't need a Yrs cell entry — only the
         // pos_map slot (for style hydration). Skip the Yrs write.
@@ -188,7 +187,7 @@ pub(super) fn hydrate_merges(
     txn: &mut yrs::TransactionMut,
     merges_map: &MapRef,
     cells_map: &MapRef,
-    pos_map: &mut HashMap<String, String>,
+    pos_map: &mut PositionMap,
     merges: &[MergeRegion],
     allocator: &mut impl IdAllocator,
 ) {
@@ -230,97 +229,6 @@ pub(super) fn hydrate_merges(
         let json =
             serde_json::to_string(&stored).expect("StoredMerge serialization should not fail");
         merges_map.insert(txn, &*tl_hex, Any::String(Arc::from(json.as_str())));
-    }
-}
-
-// ===========================================================================
-// Comment hydration (using yrs_schema::comment)
-// ===========================================================================
-
-/// Hydrate comments using structured Y.Map entries via `yrs_schema::comment`.
-///
-/// Each comment is stored as a Y.Map keyed by a generated comment ID.
-/// All fields are written as native Yrs keys (not a JSON blob).
-///
-/// Clones each `Comment`, assigns a hydration ID (`comment-0`, `comment-1`, …),
-/// resolves `cell_ref` from A1 notation to a CellId hex string via the in-memory
-/// `pos_map`, and ensures `resolved` is always `Some`.
-///
-/// When a comment has a `person_id` that matches a `PersonInfo` entry, attempts
-/// to extract an email address from the `PersonInfo.user_id` field (best-effort).
-pub(super) fn hydrate_comments(
-    txn: &mut yrs::TransactionMut,
-    comments_map: &MapRef,
-    pos_map: &HashMap<String, String>,
-    comments: &[domain_types::domain::comment::Comment],
-    persons: &[domain_types::domain::comment::PersonInfo],
-) {
-    // Build a lookup from person GUID → PersonInfo for email extraction.
-    let person_map: HashMap<&str, &domain_types::domain::comment::PersonInfo> =
-        persons.iter().map(|p| (p.id.as_str(), p)).collect();
-
-    for (i, comment) in comments.iter().enumerate() {
-        let comment_id = format!("comment-{}", i);
-        let mut c = comment.clone();
-        c.id = comment_id.clone();
-        // Resolve A1 cell_ref to a stable CellId hex from the import identity
-        // map. Empty comment-only targets are preallocated as identity-only
-        // gridIndex entries by sheet hydration; this path must not materialize
-        // placeholder Null cells.
-        c.cell_ref =
-            if let Some((row, col)) = crate::import::phantom::parse_cell_ref(&comment.cell_ref) {
-                let pos_key = format!("{}:{}", row, col);
-                match pos_map.get(&pos_key) {
-                    Some(cell_hex) => cell_hex.clone(),
-                    None => {
-                        tracing::warn!(
-                            row,
-                            col,
-                            original_ref = %comment.cell_ref,
-                            "comment anchor missing preallocated cell identity during hydration"
-                        );
-                        comment.cell_ref.clone()
-                    }
-                }
-            } else {
-                comment.cell_ref.clone() // not A1 — already a hex ID or unknown format
-            };
-        c.resolved = Some(comment.resolved.unwrap_or(false));
-
-        // Best-effort email extraction from PersonInfo.user_id.
-        if c.author_email.is_none()
-            && let Some(ref pid) = c.person_id
-            && let Some(person) = person_map.get(pid.as_str())
-            && let Some(ref user_id) = person.user_id
-            && let Some(email) = extract_email_from_user_id(user_id)
-        {
-            c.author_email = Some(email);
-        }
-
-        let entries = yrs_schema::comment::to_yrs_prelim(&c);
-        let comment_prelim: MapPrelim = entries.into_iter().collect();
-        comments_map.insert(txn, &*comment_id, comment_prelim);
-    }
-}
-
-/// Extract an email address from an XLSX PersonInfo `user_id` string.
-///
-/// Common formats:
-/// - `"S::user@org.onmicrosoft.com::8f2e..."` → `"user@org.onmicrosoft.com"`
-/// - `"user@example.com"` → `"user@example.com"`
-///
-/// Returns `None` if no '@' is found in the string.
-fn extract_email_from_user_id(user_id: &str) -> Option<String> {
-    for segment in user_id.split("::") {
-        let trimmed = segment.trim();
-        if trimmed.contains('@') && !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
-    }
-    if user_id.contains('@') {
-        Some(user_id.trim().to_string())
-    } else {
-        None
     }
 }
 
@@ -434,7 +342,7 @@ pub(super) fn hydrate_hidden_rows_cols(
 /// these new positions automatically.
 pub(super) fn hydrate_hyperlinks(
     txn: &mut yrs::TransactionMut,
-    pos_map: &mut HashMap<String, String>,
+    pos_map: &mut PositionMap,
     cells_map: &MapRef,
     meta_map: &MapRef,
     hyperlinks: &[domain_types::domain::hyperlink::Hyperlink],
@@ -459,12 +367,12 @@ pub(super) fn hydrate_hyperlinks(
             None => continue,
         };
 
-        // Determine URL: prefer target, fall back to location with "#" prefix.
+        // Determine URL: prefer target, fall back to inline location.
         // If neither exists but the hyperlink has a uid, store empty string so
         // the uid-only marker survives the round-trip.
         let url = match (&link.target, &link.location) {
             (Some(t), _) if !t.is_empty() => t.clone(),
-            (_, Some(loc)) if !loc.is_empty() => format!("#{}", loc),
+            (_, Some(loc)) if !loc.is_empty() => loc.clone(),
             _ if link.uid.is_some() => String::new(),
             _ => continue,
         };
@@ -679,13 +587,10 @@ pub(super) fn hydrate_conditional_formats(
 }
 
 // ===========================================================================
-// Data validation hydration (using yrs_schema::validation)
+// Data validation hydration
 // ===========================================================================
 
-/// Hydrate data validations using structured Y.Map entries via `yrs_schema::validation`.
-///
-/// Validations are preserved in `properties/dataValidations` for lossless
-/// export and written through to the live range-backed validation store.
+/// Hydrate data validations into the canonical range-backed validation store.
 pub(super) fn hydrate_data_validations(
     txn: &mut yrs::TransactionMut,
     sheets_root: &MapRef,
@@ -708,15 +613,6 @@ pub(super) fn hydrate_data_validations(
 
     if !data_validations.is_empty() {
         schemas::write_imported_validation_specs(txn, sheets_root, sheet_id, data_validations, "");
-
-        let dv_arr: yrs::ArrayRef =
-            meta_map.insert(txn, "dataValidations", yrs::ArrayPrelim::default());
-
-        for dv in data_validations.iter() {
-            let entries = yrs_schema::validation::to_yrs_prelim(dv);
-            let dv_entry_prelim: MapPrelim = entries.into_iter().collect();
-            dv_arr.push_back(txn, dv_entry_prelim);
-        }
     }
 
     // Store container-level disablePrompts flag for round-trip fidelity
@@ -764,29 +660,15 @@ pub(super) fn hydrate_x14_data_validations(
             data_validations,
             "x14-",
         );
-
-        let dv_arr: yrs::ArrayRef =
-            meta_map.insert(txn, "x14DataValidations", yrs::ArrayPrelim::default());
-
-        for dv in data_validations.iter() {
-            let entries = yrs_schema::validation::to_yrs_prelim(dv);
-            let dv_entry_prelim: MapPrelim = entries.into_iter().collect();
-            dv_arr.push_back(txn, dv_entry_prelim);
-        }
     }
 
-    if disable_prompts {
-        meta_map.insert(txn, "x14DvDisablePrompts", true);
-    }
-    if let Some(x) = x_window {
-        meta_map.insert(txn, "x14DvXWindow", x as i64);
-    }
-    if let Some(y) = y_window {
-        meta_map.insert(txn, "x14DvYWindow", y as i64);
-    }
-    if let Some(count) = declared_count {
-        meta_map.insert(txn, "x14DvDeclaredCount", count as i64);
-    }
+    let _ = (
+        meta_map,
+        disable_prompts,
+        x_window,
+        y_window,
+        declared_count,
+    );
 }
 
 // ===========================================================================
@@ -808,7 +690,7 @@ pub(super) fn hydrate_auto_filter(
     txn: &mut yrs::TransactionMut,
     meta_map: &MapRef,
     filters_map: &MapRef,
-    pos_map: &HashMap<String, String>,
+    pos_map: &PositionMap,
     auto_filter: &Option<domain_types::domain::filter::AutoFilter>,
 ) {
     use domain_types::domain::filter::auto_filter_to_filter_state;
@@ -822,10 +704,8 @@ pub(super) fn hydrate_auto_filter(
     meta_map.insert(txn, "autoFilter", af_prelim);
 
     // (2) Runtime FilterState (drives UI filter evaluation). Lossy vs (1).
-    let cell_id_resolver = |row: u32, col: u32| -> Option<String> {
-        let pos_key = format!("{}:{}", row, col);
-        pos_map.get(&pos_key).cloned()
-    };
+    let cell_id_resolver =
+        |row: u32, col: u32| -> Option<String> { pos_map.get(&(row, col)).cloned() };
     if let Some(filter_state) = auto_filter_to_filter_state(af, &cell_id_resolver) {
         crate::storage::sheet::filters::write_filter_state_to_ymap(filters_map, txn, &filter_state);
     }
@@ -891,7 +771,7 @@ pub(super) struct FloatingObjectHydrationMaps<'a> {
 pub(super) fn hydrate_floating_objects(
     txn: &mut yrs::TransactionMut,
     maps: FloatingObjectHydrationMaps<'_>,
-    pos_map: &mut HashMap<String, String>,
+    pos_map: &mut PositionMap,
     sheet_id: &cell_types::SheetId,
     objects: &[domain_types::domain::floating_object::FloatingObject],
     allocator: &mut impl IdAllocator,
@@ -900,6 +780,9 @@ pub(super) fn hydrate_floating_objects(
         let mut obj = obj.clone();
         obj.common.sheet_id = sheet_id.to_uuid_string();
         obj.common.id = sheet_unique_floating_object_id(&obj.common.id, sheet_id);
+        normalize_form_control_references_for_hydration(
+            &mut obj, maps.cells, pos_map, txn, allocator,
+        );
         let anchor = &obj.common.anchor;
         let anchor_hex = get_or_create_cell_id_for_pos(
             maps.cells,
@@ -1022,7 +905,7 @@ mod tests {
             &range_style_positions,
         );
 
-        assert_eq!(pos_map.get("4:2"), Some(&id_to_hex(0xA).to_string()));
+        assert_eq!(pos_map.get(&(4, 2)), Some(&id_to_hex(0xA).to_string()));
         assert_eq!(cells_map.len(&txn), 0);
     }
 

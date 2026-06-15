@@ -24,10 +24,6 @@ impl YrsComputeEngine {
         use crate::storage::sheet::dimensions;
         use value_types::FiniteF64;
 
-        // ── Capture pre-state from in-memory indexes (not yet rebuilt) ──
-        // Merges: snapshot current merge regions per sheet from the in-memory
-        // spatial index (NOT from Yrs, which is already updated). This lets
-        // us detect removals (unmerge) after rebuild.
         let pre_merges: HashMap<SheetId, HashSet<(u32, u32, u32, u32)>> = pre_sheet_order
             .iter()
             .map(|sid| {
@@ -46,7 +42,6 @@ impl YrsComputeEngine {
             })
             .collect();
 
-        // Grid row/col counts per sheet (for structure change detection).
         let pre_row_counts: HashMap<SheetId, usize> = pre_sheet_order
             .iter()
             .filter_map(|sid| {
@@ -66,7 +61,6 @@ impl YrsComputeEngine {
             })
             .collect();
 
-        // ── Rebuild all in-memory state (existing logic) ──
         let workbook_snap = construction::build_workbook_snapshot_from_yrs(&self.stores.storage)?;
 
         for sheet_snap in &workbook_snap.sheets {
@@ -86,11 +80,6 @@ impl YrsComputeEngine {
             .stores
             .compute
             .init_from_snapshot(&mut self.mirror, workbook_snap.clone())?;
-        // `init_from_snapshot` seeds ComputeCore with a plain high-water-mark
-        // allocator. In collaborative engines, CellIds must keep using the
-        // participant-partitioned allocator stored on EngineStores; otherwise
-        // post-sync formula/named-range identity allocation can collide across
-        // offline peers.
         self.stores
             .compute
             .set_id_alloc(self.stores.grid_id_alloc.clone());
@@ -120,11 +109,6 @@ impl YrsComputeEngine {
         self.settings = construction::derive_settings(&self.stores.storage);
         self.init_cf_caches();
 
-        // ── Build MutationResult ──
-        // Use the hydration helper for the ~19 fields it already covers
-        // (sheets, comments, settings, workbook settings, floating objects,
-        // tables, filters, CFs, sparklines, grouping, pivots, ranges,
-        // named ranges). Then add the fields hydration intentionally skips.
         let mut result = services::mutation_handlers::build_mutation_result_for_hydration(
             &self.stores,
             &self.mirror,
@@ -135,7 +119,6 @@ impl YrsComputeEngine {
         let doc = self.stores.storage.doc();
         let sheets_ref = self.stores.storage.sheets();
 
-        // ── Sheet deletions (pre had it, post doesn't) ──
         for sid in &pre_sheet_order {
             if !post_sheet_order.contains(sid) {
                 result.sheet_changes.push(SheetChange {
@@ -158,7 +141,6 @@ impl YrsComputeEngine {
             }
         }
 
-        // ── Merge changes (current state as Set + removals) ──
         for sid in &post_sheet_order {
             let current_merges = services::queries::get_all_merges_in_sheet(&self.stores, sid);
             let sheet_id_str = sid.to_uuid_string();
@@ -168,7 +150,6 @@ impl YrsComputeEngine {
                 .map(|m| (m.start_row, m.start_col, m.end_row, m.end_col))
                 .collect();
 
-            // Emit Set for each current merge
             for m in &current_merges {
                 result.merge_changes.push(MergeChange {
                     sheet_id: sheet_id_str.clone(),
@@ -180,7 +161,6 @@ impl YrsComputeEngine {
                 });
             }
 
-            // Emit Removed for merges that existed before but are gone
             if let Some(old_merges) = pre_merges.get(sid) {
                 for &(sr, sc, er, ec) in old_merges {
                     if !current_set.contains(&(sr, sc, er, ec)) {
@@ -197,7 +177,6 @@ impl YrsComputeEngine {
             }
         }
 
-        // ── Dimension changes (non-default row heights and col widths) ──
         for sid in &post_sheet_order {
             let sheet_id_str = sid.to_uuid_string();
             let grid = self.stores.grid_indexes.get(sid);
@@ -224,7 +203,6 @@ impl YrsComputeEngine {
             }
         }
 
-        // ── Visibility changes (hidden rows and columns) ──
         for sid in &post_sheet_order {
             let sheet_id_str = sid.to_uuid_string();
 
@@ -247,7 +225,6 @@ impl YrsComputeEngine {
             }
         }
 
-        // ── Structure changes (row/col count diffs) ──
         for sid in &post_sheet_order {
             let sheet_id_str = sid.to_uuid_string();
             if let Some(grid) = self.stores.grid_indexes.get(sid) {
@@ -402,11 +379,28 @@ impl YrsComputeEngine {
         }
     }
 
+    fn hydrate_table_change_metadata_from_mirror(&self, doc_changes: &mut DocumentChanges) {
+        for change in &mut doc_changes.tables {
+            if change.name.is_some() && change.sheet_id.is_some() {
+                continue;
+            }
+            let Some(table) = self.mirror.get_table_by_id(&change.key) else {
+                continue;
+            };
+            if change.name.is_none() {
+                change.name = Some(table.name.clone());
+            }
+            if change.sheet_id.is_none() {
+                change.sheet_id = SheetId::from_uuid_str(&table.sheet_id).ok();
+            }
+        }
+    }
+
     /// Drain observer changes, sync mirror + recalc, and return domain changes.
     fn apply_all_observer_changes(
         &mut self,
     ) -> Result<(RecalcResult, DocumentChanges), ComputeError> {
-        let doc_changes = self.mutation.observer.drain_all_changes();
+        let mut doc_changes = self.mutation.observer.drain_all_changes();
 
         if doc_changes.is_empty() {
             return Ok((RecalcResult::empty(), doc_changes));
@@ -416,31 +410,13 @@ impl YrsComputeEngine {
             self.sync_runtime_calculation_settings_from_storage();
         }
 
-        // --- Sheet lifecycle: additions and deletions ---
-        // Process these BEFORE structural/cell changes so that new sheets
-        // have in-memory indexes available for subsequent cell processing.
         let mut sheet_lifecycle_changed = false;
 
-        // Handle additions: bootstrap in-memory state from yrs.
-        //
-        // When a sync update merges a remote peer's changes, Yrs may deliver
-        // the sheet-level map entry as EntryChange::Updated (the local engine
-        // already has the sheet, but the remote added cells inside it). The
-        // observe_deep callback records this as a `sheet_additions` event, but
-        // the cell-level changes within the sheet are NOT reported separately
-        // in `doc_changes.cells` — they are bundled inside the sheet event.
-        //
-        // If bootstrap_sheet_from_yrs returns false (sheet already exists in
-        // grid_indexes), we still need to rebuild from Yrs to pick up the new
-        // cells. Mark sheet_lifecycle_changed unconditionally for any sheet
-        // addition event — the rebuild path reads the full workbook from Yrs
-        // and correctly materializes all cells.
         for &sheet_id in &doc_changes.sheet_additions {
             self.bootstrap_sheet_from_yrs(sheet_id);
             sheet_lifecycle_changed = true;
         }
 
-        // Handle deletions: tear down in-memory state
         for &sheet_id in &doc_changes.sheet_deletions {
             if self.stores.grid_indexes.remove(&sheet_id).is_some() {
                 sheet_lifecycle_changed = true;
@@ -449,11 +425,6 @@ impl YrsComputeEngine {
             self.stores.layout_indexes.remove(&sheet_id);
         }
 
-        // A provider/full-state replay can deliver sheet-scoped cell/grid/meta
-        // changes without a top-level `sheet_additions` event. Before the
-        // incremental handlers run, ensure every touched sheet has its in-memory
-        // grid/mirror/layout state bootstrapped from Yrs, then take the same
-        // whole-workbook rebuild path used for explicit sheet lifecycle changes.
         let deleted_sheets: HashSet<SheetId> =
             doc_changes.sheet_deletions.iter().copied().collect();
         for sheet_id in self.collect_observer_touched_sheet_ids(&doc_changes) {
@@ -465,23 +436,10 @@ impl YrsComputeEngine {
             }
         }
 
-        // If sheets were actually added or removed, rebuild ComputeCore
-        // from the full workbook snapshot (necessary for cross-sheet formulas).
-        // Read from Yrs (the CRDT source of truth) rather than in-memory state,
-        // because the old ComputeCore doesn't have formulas for newly synced sheets.
         if sheet_lifecycle_changed {
             let workbook_snap =
                 construction::build_workbook_snapshot_from_yrs(&self.stores.storage)?;
 
-            // Rebuild `grid_indexes` for every sheet from Yrs, not just the
-            // newly-added ones. Pre-existing sheets (e.g. the default Sheet1
-            // that exists on every participant at fork time, before any cells
-            // have been written) carry a stale in-memory index that misses
-            // cells arriving in the same sync batch that introduced the new
-            // sheet. Without this, a later local write on such a sheet cannot
-            // resolve the coordinator-assigned CellId from (row, col) and
-            // allocates a fresh one, orphaning any formula-graph edge that
-            // pointed at the original CellId.
             for sheet_snap in &workbook_snap.sheets {
                 if let Ok(sheet_id) = SheetId::from_uuid_str(&sheet_snap.id) {
                     let grid = build_grid_from_yrs_for_sheet(
@@ -720,6 +678,7 @@ impl YrsComputeEngine {
 
         // Sync tables from yrs if tables changed.
         if !doc_changes.tables.is_empty() {
+            self.hydrate_table_change_metadata_from_mirror(&mut doc_changes);
             self.sync_tables_from_yrs();
         }
 
@@ -864,8 +823,10 @@ impl YrsComputeEngine {
         }
 
         // 5. Produce structural viewport patches for ALL viewport positions
-        //    in affected sheets. The recalc only includes formula cells, but
-        //    non-formula cells may have shifted positions and need refresh.
+        //    in affected sheets. Observer replay currently reports only the
+        //    touched sheet id, not the axis/index/count needed to populate
+        //    MutationResult.structure_changes. Undo/redo/sync therefore still
+        //    need explicit patches for shifted-but-unchanged cells.
         for sheet_id in structural_sheets {
             let structural_patches = self.produce_structural_patches(sheet_id);
             services::structural::merge_viewport_patches_into_recalc(
@@ -907,7 +868,7 @@ impl YrsComputeEngine {
 
         // Build format viewport patches from property changes
         let format_patches = if !doc_changes.properties.is_empty() {
-            self.produce_observer_format_patches(&doc_changes.properties)
+            self.produce_observer_format_patches(&doc_changes)
         } else {
             vec![]
         };
@@ -935,35 +896,70 @@ impl YrsComputeEngine {
             patch_sets
         };
 
-        let sparkline_patch_sets = if doc_changes.sparklines.is_empty() {
-            vec![]
-        } else {
-            let mut sheets = std::collections::HashSet::new();
-            for change in &doc_changes.sparklines {
-                sheets.insert(change.sheet_id);
+        let mut full_viewport_sheets = std::collections::HashSet::new();
+        full_viewport_sheets.extend(doc_changes.sparklines.iter().map(|change| change.sheet_id));
+        let mut row_col_format_sheets =
+            std::collections::HashMap::<SheetId, (Vec<u32>, Vec<u32>)>::new();
+        for change in &doc_changes.row_formats {
+            if let Some(row) = change.key.as_deref().and_then(|key| {
+                services::mutation::resolve_hex_id_to_position(
+                    &self.stores,
+                    &change.sheet_id,
+                    key,
+                    true,
+                )
+            }) {
+                row_col_format_sheets
+                    .entry(change.sheet_id)
+                    .or_default()
+                    .0
+                    .push(row);
+            } else {
+                full_viewport_sheets.insert(change.sheet_id);
             }
+        }
+        for change in &doc_changes.col_formats {
+            if let Some(col) = change.key.as_deref().and_then(|key| {
+                services::mutation::resolve_hex_id_to_position(
+                    &self.stores,
+                    &change.sheet_id,
+                    key,
+                    false,
+                )
+            }) {
+                row_col_format_sheets
+                    .entry(change.sheet_id)
+                    .or_default()
+                    .1
+                    .push(col);
+            } else {
+                full_viewport_sheets.insert(change.sheet_id);
+            }
+        }
+        let row_col_format_patch_sets = row_col_format_sheets
+            .into_iter()
+            .map(|(sheet_id, (rows, cols))| {
+                self.produce_row_col_format_viewport_patches(&sheet_id, &rows, &cols)
+            })
+            .collect::<Vec<_>>();
+        let full_viewport_patch_sets = full_viewport_sheets
+            .into_iter()
+            .map(|sheet_id| self.produce_full_viewport_patches(&sheet_id))
+            .collect::<Vec<_>>();
 
-            sheets
-                .into_iter()
-                .map(|sheet_id| self.produce_full_viewport_patches(&sheet_id))
-                .collect::<Vec<_>>()
-        };
-
-        // Merge value + format + CF + sparkline patches into a single binary payload.
+        // Merge value + format + sheet-wide visual patches into a single binary payload.
         let mut combined_patches = viewport::service::ViewportService::merge_patch_binaries(
             &value_patches,
             &format_patches,
         );
-        for cf_patches in cf_patch_sets {
+        for patches in cf_patch_sets
+            .into_iter()
+            .chain(row_col_format_patch_sets)
+            .chain(full_viewport_patch_sets)
+        {
             combined_patches = viewport::service::ViewportService::merge_patch_binaries(
                 &combined_patches,
-                &cf_patches,
-            );
-        }
-        for sparkline_patches in sparkline_patch_sets {
-            combined_patches = viewport::service::ViewportService::merge_patch_binaries(
-                &combined_patches,
-                &sparkline_patches,
+                &patches,
             );
         }
 

@@ -41,7 +41,10 @@ function createMockDeps(overrides?: Partial<WorkbookNamesDeps>): WorkbookNamesDe
       setNamedRange: jest.fn(),
       removeNamedRange: jest.fn(),
       getAllSheetIds: jest.fn().mockResolvedValue(['sheet-1']),
+      getNamedRangeDisplayValue: jest.fn(),
       getNamedRangeTypedValue: jest.fn(),
+      getNamedRangeType: jest.fn(),
+      getNamedRangeArrayValues: jest.fn(),
       toA1Display: jest.fn(),
       toIdentityFormula: jest.fn(),
     },
@@ -167,6 +170,26 @@ describe('WorkbookNamesImpl', () => {
       expect(result).not.toBeNull();
       expect(result!.visible).toBe(false);
     });
+
+    it('exposes #REF! names as defined-name records for diagnosis', async () => {
+      mockGetByName.mockResolvedValue({
+        id: 'nr-broken',
+        name: 'BrokenName',
+        refersTo: { template: '#REF!', refs: [] },
+        scope: undefined,
+        comment: undefined,
+        visible: true,
+      });
+      mockGetRefersToA1.mockResolvedValue('=#REF!');
+
+      await expect(names.get('BrokenName')).resolves.toEqual({
+        name: 'BrokenName',
+        reference: '#REF!',
+        scope: undefined,
+        comment: undefined,
+        visible: true,
+      });
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -236,6 +259,20 @@ describe('WorkbookNamesImpl', () => {
       });
       expect(mockGetByName).toHaveBeenCalledWith(deps.ctx, 'ScopedRange', 'sheet-2');
     });
+
+    it('returns null for imported #REF! names', async () => {
+      mockGetByName.mockResolvedValue({
+        id: 'nr-broken',
+        name: 'BrokenName',
+        refersTo: { template: '#REF!', refs: [] },
+        scope: undefined,
+      });
+      mockGetRefersToA1.mockResolvedValue('=#REF!');
+
+      const result = await names.getRange('BrokenName');
+
+      expect(result).toBeNull();
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -268,6 +305,99 @@ describe('WorkbookNamesImpl', () => {
       expect(result).toHaveLength(2);
       expect(result[0].visible).toBe(true);
       expect(result[1].visible).toBe(false);
+    });
+
+    it('keeps scoped homonyms distinguishable including #REF! workbook entries', async () => {
+      mockExportNames.mockResolvedValue([
+        {
+          id: 'nr-valid',
+          name: 'Bond_Price',
+          refersToA1: "='Bond-Refinancing'!$F$13",
+          scope: 'sheet-1',
+          comment: undefined,
+          visible: true,
+        },
+        {
+          id: 'nr-broken',
+          name: 'Bond_Price',
+          refersToA1: '=#REF!',
+          scope: undefined,
+          comment: undefined,
+          visible: true,
+        },
+        {
+          id: 'nr-other-broken',
+          name: 'Discount_Rate',
+          refersToA1: '#REF!',
+          scope: undefined,
+          comment: undefined,
+          visible: true,
+        },
+      ]);
+
+      const result = await names.list();
+
+      expect(result).toEqual([
+        {
+          name: 'Bond_Price',
+          reference: "'Bond-Refinancing'!$F$13",
+          scope: 'Sheet1',
+          comment: undefined,
+          visible: true,
+        },
+        {
+          name: 'Bond_Price',
+          reference: '#REF!',
+          scope: undefined,
+          comment: undefined,
+          visible: true,
+        },
+        {
+          name: 'Discount_Rate',
+          reference: '#REF!',
+          scope: undefined,
+          comment: undefined,
+          visible: true,
+        },
+      ]);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Value helpers
+  // ---------------------------------------------------------------------------
+
+  describe('value helpers', () => {
+    it('delegate #REF! names to compute so callers can inspect error values', async () => {
+      const mockBridge = (deps.ctx as any).computeBridge;
+      mockGetByName.mockResolvedValue({
+        id: 'nr-broken',
+        name: 'BrokenName',
+        refersTo: { template: '#REF!', refs: [] },
+        scope: undefined,
+        visible: true,
+      });
+      mockGetRefersToA1.mockResolvedValue('=#REF!');
+      mockBridge.getNamedRangeDisplayValue.mockResolvedValue('#REF!');
+      mockBridge.getNamedRangeType.mockResolvedValue('Error');
+      mockBridge.getNamedRangeArrayValues.mockResolvedValue([[{ type: 'error', value: '#REF!' }]]);
+      mockBridge.getNamedRangeTypedValue.mockResolvedValue({ type: 'error', value: '#REF!' });
+
+      await expect(names.getValue('BrokenName')).resolves.toBe('#REF!');
+      await expect(names.getType('BrokenName')).resolves.toBe('Error');
+      await expect(names.getArrayValues('BrokenName')).resolves.toEqual([
+        [{ type: 'error', value: '#REF!' }],
+      ]);
+      await expect(names.getArrayTypes('BrokenName')).resolves.toEqual([['Error']]);
+      await expect(names.getValueAsJson('BrokenName')).resolves.toEqual({
+        type: 'error',
+        value: '#REF!',
+      });
+
+      expect(mockBridge.getNamedRangeDisplayValue).toHaveBeenCalledWith('BrokenName', null);
+      expect(mockBridge.getNamedRangeType).toHaveBeenCalledWith('BrokenName', null);
+      expect(mockBridge.getNamedRangeArrayValues).toHaveBeenCalledTimes(2);
+      expect(mockBridge.getNamedRangeTypedValue).toHaveBeenCalledWith('BrokenName', null);
     });
   });
 
@@ -336,6 +466,14 @@ describe('WorkbookNamesImpl', () => {
   describe('getValueAsJson()', () => {
     it('returns typed value for a named range', async () => {
       const mockBridge = (deps.ctx as any).computeBridge;
+      mockGetByName.mockResolvedValue({
+        id: 'nr-1',
+        name: 'Revenue',
+        refersTo: { template: '{0}', refs: [] },
+        scope: undefined,
+        visible: true,
+      });
+      mockGetRefersToA1.mockResolvedValue('=Sheet1!$A$1');
       mockBridge.getNamedRangeTypedValue.mockResolvedValue(42);
 
       const result = await names.getValueAsJson('Revenue');
@@ -346,25 +484,42 @@ describe('WorkbookNamesImpl', () => {
 
     it('returns null for non-existent name', async () => {
       const mockBridge = (deps.ctx as any).computeBridge;
-      mockBridge.getNamedRangeTypedValue.mockResolvedValue(null);
+      mockGetByName.mockResolvedValue(undefined);
 
       const result = await names.getValueAsJson('DoesNotExist');
 
       expect(result).toBeNull();
+      expect(mockBridge.getNamedRangeTypedValue).not.toHaveBeenCalled();
     });
 
-    it('passes scope as currentSheet parameter', async () => {
+    it('resolves sheet-name scope before passing currentSheet to compute', async () => {
       const mockBridge = (deps.ctx as any).computeBridge;
+      mockGetByName.mockResolvedValue({
+        id: 'nr-2',
+        name: 'LocalName',
+        refersTo: { template: '{0}', refs: [] },
+        scope: 'sheet-1',
+        visible: true,
+      });
+      mockGetRefersToA1.mockResolvedValue('=Sheet1!$A$1');
       mockBridge.getNamedRangeTypedValue.mockResolvedValue('hello');
 
       const result = await names.getValueAsJson('LocalName', 'Sheet1');
 
       expect(result).toBe('hello');
-      expect(mockBridge.getNamedRangeTypedValue).toHaveBeenCalledWith('LocalName', 'Sheet1');
+      expect(mockBridge.getNamedRangeTypedValue).toHaveBeenCalledWith('LocalName', 'sheet-1');
     });
 
     it('returns string value for constants', async () => {
       const mockBridge = (deps.ctx as any).computeBridge;
+      mockGetByName.mockResolvedValue({
+        id: 'nr-3',
+        name: 'MyConstant',
+        refersTo: { template: 'constant text', refs: [] },
+        scope: undefined,
+        visible: true,
+      });
+      mockGetRefersToA1.mockResolvedValue('=constant text');
       mockBridge.getNamedRangeTypedValue.mockResolvedValue('constant text');
 
       const result = await names.getValueAsJson('MyConstant');
@@ -374,6 +529,14 @@ describe('WorkbookNamesImpl', () => {
 
     it('returns boolean values', async () => {
       const mockBridge = (deps.ctx as any).computeBridge;
+      mockGetByName.mockResolvedValue({
+        id: 'nr-4',
+        name: 'BoolName',
+        refersTo: { template: 'TRUE', refs: [] },
+        scope: undefined,
+        visible: true,
+      });
+      mockGetRefersToA1.mockResolvedValue('=TRUE');
       mockBridge.getNamedRangeTypedValue.mockResolvedValue(true);
 
       const result = await names.getValueAsJson('BoolName');

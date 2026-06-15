@@ -105,6 +105,7 @@ pub(in crate::storage::engine) fn build_sheet_hydration_changes(
     for table in tables {
         result.table_changes.push(TableChange {
             name: table.name,
+            table_id: Some(table.id),
             sheet_id: sheet_id_str.clone(),
             kind: ChangeKind::Set,
         });
@@ -485,7 +486,7 @@ pub(in crate::storage::engine) fn build_sheet_hydration_changes(
     });
 }
 
-fn parse_saved_view_selection(
+pub(super) fn parse_saved_view_selection(
     active_cell: Option<&str>,
     sqref: Option<&str>,
 ) -> Option<(SheetViewCell, Vec<SheetViewRange>)> {

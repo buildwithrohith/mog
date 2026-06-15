@@ -100,6 +100,64 @@ fn test_format_cascade_all_layers() {
 }
 
 #[test]
+fn col_format_ranges_are_column_defaults_below_explicit_col_and_row_formats() {
+    let (mut storage, sid, gi, mut mirror) = storage_with_sheet_and_mirror();
+
+    insert_col_format_range(
+        &storage,
+        &sid,
+        crate::mirror::RangeId::from_raw(500),
+        1,
+        200,
+        &CellFormat {
+            number_format: Some("0.0".to_string()),
+            font_color: Some("#0000FF".to_string()),
+            background_color: Some("#EEEEEE".to_string()),
+            ..Default::default()
+        },
+        Some(9),
+    );
+    let sheet_mirror = mirror.get_sheet_mut(&sid).unwrap();
+    hydrate_col_format_ranges(&storage, &sid, sheet_mirror);
+
+    set_col_format(
+        &mut storage,
+        &sid,
+        2,
+        &CellFormat {
+            number_format: Some("0.00%".to_string()),
+            ..Default::default()
+        },
+        Some(&gi),
+    )
+    .unwrap();
+    set_row_format(
+        &mut storage,
+        &sid,
+        4,
+        &CellFormat {
+            font_color: Some("#FF0000".to_string()),
+            ..Default::default()
+        },
+        Some(&gi),
+    )
+    .unwrap();
+
+    let sheet_mirror = mirror.get_sheet(&sid).unwrap();
+    let inherited = get_positional_format(&storage, &sid, 4, 1, Some(&gi), Some(sheet_mirror));
+    assert_eq!(inherited.number_format, Some("0.0".to_string()));
+    assert_eq!(inherited.font_color, Some("#FF0000".to_string()));
+    assert_eq!(inherited.background_color, Some("#EEEEEE".to_string()));
+
+    let explicit_col = get_positional_format(&storage, &sid, 4, 2, Some(&gi), Some(sheet_mirror));
+    assert_eq!(explicit_col.number_format, Some("0.00%".to_string()));
+    assert_eq!(explicit_col.font_color, Some("#FF0000".to_string()));
+
+    let virtual_col = get_positional_format(&storage, &sid, 0, 200, Some(&gi), Some(sheet_mirror));
+    assert_eq!(virtual_col.number_format, Some("0.0".to_string()));
+}
+
+#[test]
 fn test_overlapping_format_ranges() {
     let (mut storage, sid, _gi, mut mirror) = storage_with_sheet_and_mirror();
 
@@ -351,6 +409,122 @@ fn test_format_range_update() {
     assert_eq!(result.italic, Some(true));
     // bold should come from default (false), since the update replaced the format
     assert_eq!(result.bold, Some(false));
+}
+
+#[test]
+fn test_format_range_update_rebuilds_lookup_index_for_new_bounds() {
+    let (mut storage, sid, _gi, mut mirror) = storage_with_sheet_and_mirror();
+
+    let range_id = crate::mirror::RangeId::from_raw(401);
+    let sheet_mirror = mirror.get_sheet_mut(&sid).unwrap();
+
+    add_format_range(
+        &mut storage,
+        &sid,
+        sheet_mirror,
+        range_id,
+        0,
+        0,
+        2,
+        2,
+        &CellFormat {
+            background_color: Some("#AA0000".to_string()),
+            ..Default::default()
+        },
+    );
+
+    let sheet_mirror = mirror.get_sheet_mut(&sid).unwrap();
+    add_format_range(
+        &mut storage,
+        &sid,
+        sheet_mirror,
+        range_id,
+        20,
+        20,
+        22,
+        22,
+        &CellFormat {
+            background_color: Some("#00AA00".to_string()),
+            ..Default::default()
+        },
+    );
+
+    let sheet_mirror = mirror.get_sheet(&sid).unwrap();
+    let base = default_format();
+    let old_location = apply_format_range_layer(&base, 1, 1, Some(sheet_mirror));
+    let new_location = apply_format_range_layer(&base, 21, 21, Some(sheet_mirror));
+
+    assert_eq!(old_location.background_color, None);
+    assert_eq!(new_location.background_color, Some("#00AA00".to_string()));
+}
+
+#[test]
+fn test_format_range_lookup_with_many_ranges_preserves_range_id_order() {
+    let (_storage, sid, _gi, mut mirror) = storage_with_sheet_and_mirror();
+    let sheet_mirror = mirror.get_sheet_mut(&sid).unwrap();
+
+    for idx in 0..2_000u32 {
+        let range_id = crate::mirror::RangeId::from_raw(10_000 + idx as u128);
+        sheet_mirror.format_ranges.push(crate::mirror::FormatRange {
+            id: range_id,
+            start_row: idx + 100,
+            start_col: 0,
+            end_row: idx + 100,
+            end_col: 1,
+        });
+        sheet_mirror.range_format_cache.insert(
+            range_id,
+            CellFormat {
+                italic: Some(true),
+                ..Default::default()
+            },
+        );
+    }
+
+    let low_id = crate::mirror::RangeId::from_raw(10);
+    let high_id = crate::mirror::RangeId::from_raw(20);
+    sheet_mirror.format_ranges.push(crate::mirror::FormatRange {
+        id: high_id,
+        start_row: 5,
+        start_col: 5,
+        end_row: 5,
+        end_col: 5,
+    });
+    sheet_mirror.format_ranges.push(crate::mirror::FormatRange {
+        id: low_id,
+        start_row: 5,
+        start_col: 5,
+        end_row: 5,
+        end_col: 5,
+    });
+    sheet_mirror.range_format_cache.insert(
+        low_id,
+        CellFormat {
+            background_color: Some("#111111".to_string()),
+            ..Default::default()
+        },
+    );
+    sheet_mirror.range_format_cache.insert(
+        high_id,
+        CellFormat {
+            background_color: Some("#222222".to_string()),
+            bold: Some(true),
+            ..Default::default()
+        },
+    );
+    sheet_mirror.rebuild_format_range_spatial_index();
+
+    let sheet_mirror = mirror.get_sheet(&sid).unwrap();
+    let matching_ids: Vec<_> = sheet_mirror
+        .format_ranges_at(5, 5)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(matching_ids, vec![low_id, high_id]);
+
+    let result = apply_format_range_layer(&default_format(), 5, 5, Some(sheet_mirror));
+    assert_eq!(result.background_color, Some("#222222".to_string()));
+    assert_eq!(result.bold, Some(true));
 }
 
 #[test]

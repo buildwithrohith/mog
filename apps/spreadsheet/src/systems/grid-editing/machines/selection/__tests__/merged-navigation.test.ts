@@ -106,24 +106,21 @@ describe('Arrow Keys - Basic Navigation (Machine Level)', () => {
     expect(result.pendingRange).toEqual(range(1, 0, 1, 0));
   });
 
-  it('moveActiveCell handles multi-cell selection collapse', () => {
-    // When pressing arrow on a multi-cell selection, it collapses to edge
-    // This is Excel parity behavior
-
+  it('moveActiveCell collapses a multi-cell selection after stepping from active cell', () => {
     const context = createContext({
-      activeCell: cell(1, 1), // B2
-      pendingRange: range(0, 0, 2, 2), // A1:C3
+      activeCell: cell(2, 2), // C3
+      pendingRange: range(0, 0, 4, 4), // A1:E5
     });
 
-    // Right arrow collapses to rightmost column (C), same row as activeCell (2)
+    // Right arrow steps one cell from the active cell and collapses there.
     const result = callAction('moveActiveCell', context, {
       type: 'KEY_ARROW',
       direction: 'right',
       shiftKey: false,
     });
 
-    expect(result.activeCell).toEqual(cell(1, 2)); // C2
-    expect(result.pendingRange).toEqual(range(1, 2, 1, 2)); // Single cell at C2
+    expect(result.activeCell).toEqual(cell(2, 3)); // D3
+    expect(result.pendingRange).toEqual(range(2, 3, 2, 3)); // Single cell at D3
   });
 });
 
@@ -134,8 +131,7 @@ describe('Arrow Keys - Basic Navigation (Machine Level)', () => {
 describe('Extend Selection - Shift+Arrow (Machine Level)', () => {
   it('extendSelection extends from anchor by one cell at a time', () => {
     // Start at B5, extend left with Shift+Left.
-    // anchor stays put; activeCell stays pinned at the anchor (Excel parity);
-    // the moving edge lives in the range geometry.
+    // anchor stays put as activeCell while the range edge moves.
 
     const context = createContext({
       activeCell: cell(4, 1), // B5
@@ -149,7 +145,7 @@ describe('Extend Selection - Shift+Arrow (Machine Level)', () => {
       shiftKey: true,
     });
 
-    // Anchor at B5, activeCell stays at B5, moving edge lives in range geometry (A5).
+    // Anchor at B5; the moving edge is A5.
     expect(result.activeCell).toEqual(cell(4, 1)); // B5 (anchor)
     expect(result.anchor).toEqual(cell(4, 1)); // B5
     expect(result.pendingRange).toEqual(range(4, 0, 4, 1)); // A5:B5
@@ -157,8 +153,7 @@ describe('Extend Selection - Shift+Arrow (Machine Level)', () => {
 
   it('extendSelection preserves anchor across multiple extends', () => {
     // Scenario: B5, Shift+Left (→A5:B5), then Shift+Up.
-    // The moving edge moves through the range geometry; anchor stays;
-    // activeCell stays pinned at the anchor (Excel parity).
+    // The moving edge moves through range geometry while the anchor stays fixed.
 
     // First extend: B5 → A5
     const context1 = createContext({
@@ -175,7 +170,7 @@ describe('Extend Selection - Shift+Arrow (Machine Level)', () => {
 
     // Second extend: from A5 (moving edge in range) up to A4.
     const context2 = createContext({
-      activeCell: result1.activeCell!, // B5 (anchor — pinned)
+      activeCell: result1.activeCell!, // B5 (anchor)
       pendingRange: result1.pendingRange!, // A5:B5
       anchor: result1.anchor!, // B5
     });
@@ -186,7 +181,7 @@ describe('Extend Selection - Shift+Arrow (Machine Level)', () => {
       shiftKey: true,
     });
 
-    // Anchor stays at B5; activeCell stays at B5; range geometry tracks A4:B5.
+    // Anchor stays at B5 while the moving edge reaches A4.
     expect(result2.activeCell).toEqual(cell(4, 1)); // B5 (anchor)
     expect(result2.anchor).toEqual(cell(4, 1)); // B5
     expect(result2.pendingRange).toEqual(range(3, 0, 4, 1)); // A4:B5
@@ -194,10 +189,10 @@ describe('Extend Selection - Shift+Arrow (Machine Level)', () => {
 
   it('extendSelection uses getMovingEdge to find correct extend point', () => {
     // Rectangular selection preservation: starting from A1:B2 with anchor at A1,
-    // Shift+Right extends from B2 (moving edge) → C2. activeCell stays at anchor.
+    // Shift+Right extends from B2 (moving edge) to C2.
 
     const context = createContext({
-      activeCell: cell(0, 0), // A1 (anchor — pinned)
+      activeCell: cell(0, 0), // A1 (anchor)
       pendingRange: range(0, 0, 1, 1), // A1:B2
       anchor: cell(0, 0), // A1
     });
@@ -208,7 +203,7 @@ describe('Extend Selection - Shift+Arrow (Machine Level)', () => {
       shiftKey: true,
     });
 
-    // Moving edge moves from B2 → C2 in the range geometry; activeCell stays at A1.
+    // Moving edge moves from B2 to C2 while the anchor stays at A1.
     expect(result.activeCell).toEqual(cell(0, 0)); // A1 (anchor)
     expect(result.pendingRange).toEqual(range(0, 0, 1, 2)); // A1:C2
   });
@@ -254,10 +249,10 @@ describe('Home/End Keys - Navigation', () => {
   it('extendToHome extends to column A on moving edge row', () => {
     // Uses moving edge row, not anchor row.
     // Starting at C3, after extend up to C1, Home extends to A1:C3.
-    // activeCell stays pinned at anchor (C3) — Excel parity.
+    // activeCell remains anchored at C3 while followCell can track A1.
 
     const context = createContext({
-      activeCell: cell(2, 2), // C3 (anchor — pinned)
+      activeCell: cell(2, 2), // C3 (anchor)
       pendingRange: range(0, 2, 2, 2), // C1:C3
       anchor: cell(2, 2), // C3
     });
@@ -269,7 +264,6 @@ describe('Home/End Keys - Navigation', () => {
     });
 
     // Moving edge is C1 (row 0), so Home extends to A1 in range geometry.
-    // activeCell stays at the anchor (C3).
     expect(result.activeCell).toEqual(cell(2, 2)); // C3 (anchor)
     expect(result.pendingRange).toEqual(range(0, 0, 2, 2)); // A1:C3
   });
@@ -330,7 +324,7 @@ describe('Page Navigation - With Merged Cells', () => {
     expect(result.pendingRange).toEqual(range(0, 3, 0, 3));
   });
 
-  it('pageDownExtend preserves anchor and extends by page size', () => {
+  it('pageDownExtend preserves activeCell at the anchor while moving range edge by page size', () => {
     const context = createContext({
       activeCell: cell(5, 3), // D6
       pendingRange: range(5, 3, 5, 3),
@@ -343,8 +337,7 @@ describe('Page Navigation - With Merged Cells', () => {
       shiftKey: true,
     });
 
-    // Anchor stays at D6; activeCell stays pinned at the anchor (Excel parity);
-    // the moving edge (D16) lives in the range geometry.
+    // Anchor stays at D6; range geometry and viewport-follow track D16.
     expect(result.activeCell).toEqual(cell(5, 3)); // D6 (anchor)
     expect(result.pendingRange).toEqual(range(5, 3, 15, 3)); // D6:D16
   });

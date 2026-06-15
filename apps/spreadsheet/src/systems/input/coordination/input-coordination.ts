@@ -16,6 +16,7 @@
  */
 
 import type {
+  ColDimensionInfo,
   ISheetViewCommands,
   ISheetViewGeometry,
   ISheetViewHitTest,
@@ -51,6 +52,9 @@ import { ZoomPhysics } from '../physics/zoom-physics';
 // =============================================================================
 
 export type InputActor = InputMachineActor;
+
+const DIRECT_PIXEL_SCROLL_THRESHOLD = 500;
+const LARGE_HORIZONTAL_PIXEL_SCROLL_SCALE = 0.5;
 
 // =============================================================================
 // DEPENDENCIES
@@ -296,7 +300,15 @@ export class InputCoordinator {
     // Scroll gesture — detect input source BEFORE normalization (raw event data)
     this.isTrackpadInput = this.detectTrackpadInput(event);
 
-    const { deltaX, deltaY } = this.normalizeDelta(event);
+    let { deltaX, deltaY } = this.normalizeDelta(event);
+    if (!this.isTrackpadInput) {
+      const constrained = this.constrainHorizontalWheelDeltaForHiddenColumns(deltaX, deltaY);
+      deltaX = constrained.deltaX;
+      deltaY = constrained.deltaY;
+      if (constrained.suppressMomentum) {
+        this.isTrackpadInput = true;
+      }
+    }
 
     // Apply scroll immediately to physics
     this.scrollPhysics.applyDelta(deltaX, deltaY);
@@ -444,6 +456,7 @@ export class InputCoordinator {
 
     // Left-click: hit test and route to sheet
     if (event.button === 0) {
+      this.interrupt();
       const hit = this.hitTest(event.clientX, event.clientY);
       this.routePointerToSheet(hit, event);
     }
@@ -786,7 +799,7 @@ export class InputCoordinator {
    *
    * Heuristic (applied to RAW event data before normalization):
    * - deltaMode !== 0 → discrete wheel (line/page mode; trackpads always send pixel mode)
-   * - deltaMode === 0 + very large pixel delta → direct pixel scroll / trackpad-like
+   * - deltaMode === 0 + large pixel delta → direct pixel scroll / trackpad-like
    * (programmatic pixel scrolls have already supplied the full distance,
    * so app-generated mouse-wheel momentum must not amplify them)
    * - deltaMode === 0 + fractional deltas → trackpad (discrete wheels produce integers)
@@ -799,7 +812,8 @@ export class InputCoordinator {
     if (event.deltaMode !== 0) return false;
 
     // Large pixel-mode deltas are direct scroll distances, not physical wheel ticks.
-    if (Math.max(Math.abs(event.deltaX), Math.abs(event.deltaY)) >= 1000) return true;
+    if (Math.max(Math.abs(event.deltaX), Math.abs(event.deltaY)) >= DIRECT_PIXEL_SCROLL_THRESHOLD)
+      return true;
 
     // Fractional deltas are a strong trackpad signal — discrete wheels produce integers
     if (event.deltaX % 1 !== 0 || event.deltaY % 1 !== 0) return true;
@@ -829,6 +843,10 @@ export class InputCoordinator {
       deltaY *= window.innerHeight * 0.9;
     }
 
+    if (event.deltaMode === 0 && Math.abs(event.deltaX) >= DIRECT_PIXEL_SCROLL_THRESHOLD) {
+      deltaX *= LARGE_HORIZONTAL_PIXEL_SCROLL_SCALE;
+    }
+
     // Shift+Wheel Horizontal Scroll
     // When Shift is held and there's only vertical scroll, swap to horizontal
     if (event.shiftKey && deltaY !== 0 && deltaX === 0) {
@@ -836,6 +854,77 @@ export class InputCoordinator {
     }
 
     return { deltaX, deltaY };
+  }
+
+  private constrainHorizontalWheelDeltaForHiddenColumns(
+    deltaX: number,
+    deltaY: number,
+  ): { deltaX: number; deltaY: number; suppressMomentum: boolean } {
+    if (deltaX === 0 || !this.geometry || !this.viewport) {
+      return { deltaX, deltaY, suppressMomentum: false };
+    }
+
+    const currentX = this.scrollPhysics.position.x;
+    const requestedX = currentX + deltaX;
+    if (!Number.isFinite(currentX) || !Number.isFinite(requestedX)) {
+      return { deltaX, deltaY, suppressMomentum: false };
+    }
+
+    const snapshot = this.viewport.getSnapshot?.();
+    const visibleRange = snapshot?.visibleRange;
+    if (!visibleRange) {
+      return { deltaX, deltaY, suppressMomentum: false };
+    }
+    const startCol = Math.max(0, Math.floor(visibleRange.startCol));
+    const endCol = Math.max(startCol, Math.floor(visibleRange.endCol));
+    const viewportOriginX = this.getFrozenColumnsWidth(snapshot.frozenPanes?.cols ?? 0);
+    const currentDocumentX = currentX + viewportOriginX;
+    const requestedDocumentX = requestedX + viewportOriginX;
+
+    let sawHiddenRun = false;
+    for (let col = startCol; col <= endCol; col += 1) {
+      const dimension = this.readColumnDimension(col);
+      if (!dimension) continue;
+
+      if (dimension.hidden || dimension.width <= 0) {
+        sawHiddenRun = true;
+        continue;
+      }
+
+      if (sawHiddenRun) {
+        const anchorX = dimension.left;
+        if (crossesScrollAnchor(currentDocumentX, requestedDocumentX, anchorX)) {
+          const targetDocumentX = stopBeforeScrollAnchor(currentDocumentX, anchorX);
+          return {
+            deltaX: Math.max(0, targetDocumentX - viewportOriginX) - currentX,
+            deltaY,
+            suppressMomentum: true,
+          };
+        }
+        sawHiddenRun = false;
+      }
+    }
+
+    return { deltaX, deltaY, suppressMomentum: false };
+  }
+
+  private getFrozenColumnsWidth(frozenCols: number): number {
+    if (!Number.isFinite(frozenCols) || frozenCols <= 0) return 0;
+
+    let width = 0;
+    for (let col = 0; col < frozenCols; col += 1) {
+      const dimension = this.readColumnDimension(col);
+      if (!dimension || dimension.hidden || dimension.width <= 0) continue;
+      width += dimension.width;
+    }
+    return width;
+  }
+
+  private readColumnDimension(col: number): ColDimensionInfo | null {
+    const dimensions = this.geometry?.getDimensions({ row: 0, col }) ?? [];
+    return (
+      dimensions.find((dimension): dimension is ColDimensionInfo => 'col' in dimension) ?? null
+    );
   }
 
   /**
@@ -1146,6 +1235,7 @@ export class InputCoordinator {
   interrupt(): void {
     this.assertNotDisposed();
     this.stopAllAnimations();
+    this.isMomentumScroll = false;
     this.inputActor.send({ type: 'INTERRUPT' });
   }
 
@@ -1262,6 +1352,18 @@ function adaptPositionDimensions(
       return null;
     },
   };
+}
+
+function crossesScrollAnchor(fromX: number, toX: number, anchorX: number): boolean {
+  if (!Number.isFinite(anchorX) || fromX === toX) return false;
+  const minX = Math.min(fromX, toX);
+  const maxX = Math.max(fromX, toX);
+  return anchorX > minX && anchorX <= maxX;
+}
+
+function stopBeforeScrollAnchor(fromX: number, anchorX: number): number {
+  const inset = Math.min(1, Math.abs(anchorX - fromX) / 2);
+  return anchorX > fromX ? anchorX - inset : anchorX + inset;
 }
 
 // =============================================================================

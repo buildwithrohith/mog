@@ -51,6 +51,50 @@ describe('page navigation emits', () => {
     actor.stop();
   });
 
+  it('marks mouse header selection as already visible for viewport-follow', () => {
+    const actor = createActor(selectionMachine);
+    const emitted: SelectionEmitted[] = [];
+    const subscription = actor.on('userSelectionChanged', (event) => emitted.push(event));
+
+    actor.start();
+    actor.send({ type: 'SELECT_ROW', row: 7, shiftKey: false, ctrlKey: false });
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({
+      activeCell: { row: 7, col: 0 },
+      followCell: { row: 7, col: 0 },
+      suppressViewportFollow: true,
+    });
+
+    subscription.unsubscribe();
+    actor.stop();
+  });
+
+  it('keeps keyboard header selection on normal viewport-follow', () => {
+    const actor = createActor(selectionMachine);
+    const emitted: SelectionEmitted[] = [];
+    const subscription = actor.on('userSelectionChanged', (event) => emitted.push(event));
+
+    actor.start();
+    actor.send({
+      type: 'SELECT_ROW',
+      row: 7,
+      shiftKey: false,
+      ctrlKey: false,
+      fromKeyboard: true,
+    });
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({
+      activeCell: { row: 7, col: 0 },
+      followCell: { row: 7, col: 0 },
+    });
+    expect(emitted[0].suppressViewportFollow).toBeUndefined();
+
+    subscription.unsubscribe();
+    actor.stop();
+  });
+
   it('direct range selection follows the active cell rather than the opposite corner', () => {
     const actor = createActor(selectionMachine);
     const emitted: SelectionEmitted[] = [];
@@ -121,6 +165,35 @@ describe('page navigation emits', () => {
       activeCell: { row: 0, col: 0 },
       followCell: { row: 0, col: 0 },
       scrollIntent: { type: 'origin', axis: 'both' },
+    });
+
+    subscription.unsubscribe();
+    actor.stop();
+  });
+
+  it('keeps Shift+PageDown activeCell anchored while following the moving edge', () => {
+    const actor = createActor(selectionMachine);
+    const emitted: SelectionEmitted[] = [];
+    const subscription = actor.on('userSelectionChanged', (event) => emitted.push(event));
+
+    actor.start();
+    actor.send({
+      type: 'SET_SELECTION',
+      ranges: [{ startRow: 0, startCol: 0, endRow: 0, endCol: 0 }],
+      activeCell: { row: 0, col: 0 },
+      anchor: { row: 0, col: 0 },
+      source: 'user',
+    });
+    emitted.length = 0;
+
+    actor.send({ type: 'PAGE_DOWN', visibleRows: 20, shiftKey: true });
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({
+      activeCell: { row: 0, col: 0 },
+      followCell: { row: 20, col: 0 },
+      range: { startRow: 0, startCol: 0, endRow: 20, endCol: 0 },
+      scrollIntent: { type: 'page', axis: 'vertical', direction: 'next' },
     });
 
     subscription.unsubscribe();

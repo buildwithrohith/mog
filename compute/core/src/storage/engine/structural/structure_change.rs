@@ -3,7 +3,6 @@ use super::super::construction;
 use super::super::services;
 use crate::snapshot::{FloatingObjectChange, MutationResult, RecalcResult};
 use cell_types::SheetId;
-use compute_wire::mutation::serialize_multi_viewport_patches;
 use formula_types::StructureChange;
 use value_types::ComputeError;
 
@@ -67,31 +66,43 @@ impl YrsComputeEngine {
         mut recalc: RecalcResult,
         change: Option<&StructureChange>,
     ) -> Result<(Vec<u8>, MutationResult), ComputeError> {
-        // Pass 2: Produce structural viewport patches and merge into recalc
-        let structural_patches = self.produce_structural_patches(sheet_id);
-        services::structural::merge_viewport_patches_into_recalc(&mut recalc, structural_patches);
+        // Pass 2: Row/column changes are represented by `structure_changes`
+        // below. The TS bridge invalidates structural prefetch before the
+        // mutation and force-refreshes registered viewports after it returns,
+        // so shifted-but-unchanged cells should not be expanded into a
+        // viewport-sized synthetic patch payload.
+        //
+        // Partial cell shifts use the same remap machinery but do not emit a
+        // StructureChangeResult, so they still need explicit patches for
+        // shifted-but-unchanged cells.
+        let needs_explicit_shift_patches =
+            matches!(change, None | Some(StructureChange::RemapPositions { .. }));
+        if needs_explicit_shift_patches {
+            let structural_patches = self.produce_structural_patches(sheet_id);
+            services::structural::merge_viewport_patches_into_recalc(
+                &mut recalc,
+                structural_patches,
+            );
+        }
 
         // Pass 3: Flush viewport patches, build result.
         //
         // CF re-eval through structural mutations (filter viewport finding 10):
-        // an Insert/Delete rows/cols call `metadata_shift::shift_all_metadata_ranges`
-        // to shift CF target ranges, but the incremental recalc patch path
-        // emits CF colors only for cells in `recalc.changed_cells`. Cells
-        // that *moved* into / out of a (now-shifted) CF range without their
-        // value changing — the dominant case for an insert-row-then-evaluate
-        // flow — would render with stale CF colors. Force the CF cache to
-        // re-evaluate on the affected sheet, then rebuild full viewport
-        // binaries (the CF path) instead of incremental patches whenever
-        // the sheet carries any CF format.
+        // row/column Insert/Delete shifts CF target ranges, while the
+        // incremental recalc patch path only covers `recalc.changed_cells`.
+        // Refresh the CF cache at the new positions and return a full viewport
+        // rebuild when CF is active. Incremental recalc patches only cover
+        // value changes, while structural shifts can move unchanged cells into
+        // or out of a CF range.
         self.prepare_recalc_for_flush(&mut recalc);
         let cf_active = !services::formatting::get_all_cf_rules(&self.stores, sheet_id).is_empty();
+        if cf_active {
+            self.refresh_cf_cache(sheet_id);
+        }
         let patches = if cf_active {
             // Discard the pending incremental recalc — the full-viewport
-            // rebuild below subsumes it. The metadata_shift step in
-            // apply_structure_change already moved CF range geometry, and
-            // refresh_cf_cache re-evaluates rules at the new positions.
+            // rebuild below subsumes it.
             self.mutation.pending_recalc = None;
-            self.refresh_cf_cache(sheet_id);
             self.produce_cf_viewport_patches(sheet_id)
         } else {
             self.flush_viewport_patches()

@@ -35,7 +35,6 @@ import {
   createFullColumnRangeSpan,
   createFullRowRangeSpan,
   getMovingEdge,
-  moveCell,
   moveCellSkipHidden,
   normalizeRange,
   rangeFromAnchorAndCell,
@@ -60,8 +59,7 @@ import type { SelectionContext, SelectionEvent } from './types';
 
 /**
  * Move active cell in direction.
- * L0.5: Use moveCellSkipHidden to skip hidden rows/cols during navigation
- * Excel parity - Arrow collapse to directional edge of selection
+ * L0.5: Use moveCellSkipHidden to skip hidden rows/cols during navigation.
  *
  * When `modes.additive` is on, the active cell moves and
  * `pendingRange` collapses to a single cell at the new position;
@@ -71,61 +69,8 @@ const moveActiveCell = assign(
   ({ context, event }: { context: SelectionContext; event: SelectionEvent }) => {
     if (event.type !== 'KEY_ARROW') return {};
 
-    const lastRange = context.pendingRange;
-    const isMultiCellSelection =
-      lastRange.startRow !== lastRange.endRow || lastRange.startCol !== lastRange.endCol;
-
-    // If there's a multi-cell selection, collapse to the directional edge
-    // This matches Excel behavior where arrow keys collapse the selection to the edge
-    // in the direction pressed, using the active cell's row/col for the other axis.
-    //
-    // skip the directional-collapse heuristic in additive mode —
-    // Excel's additive arrow always moves the active cell to a single cell,
-    // regardless of pending range size.
-    if (isMultiCellSelection && !context.modes.additive) {
-      const hasDistinctAnchor =
-        context.anchor !== null &&
-        (context.activeCell.row !== context.anchor.row ||
-          context.activeCell.col !== context.anchor.col);
-      if (hasDistinctAnchor) {
-        const stepped = moveCellSkipHidden(
-          context.activeCell,
-          event.direction,
-          1,
-          context.isRowHidden,
-          context.isColHidden,
-        );
-        const newCell = escapeMergeOnMove(stepped, event.direction, context.getMergedRegionAt);
-        return moveTo(newCell);
-      }
-
-      let newCell: { row: number; col: number };
-      const normalizedRange = normalizeRange(lastRange);
-
-      switch (event.direction) {
-        case 'left':
-          // Collapse to leftmost column, same row as activeCell
-          newCell = { row: context.activeCell.row, col: normalizedRange.startCol };
-          break;
-        case 'right':
-          // Collapse to rightmost column, same row as activeCell
-          newCell = { row: context.activeCell.row, col: normalizedRange.endCol };
-          break;
-        case 'up':
-          // Collapse to topmost row, same column as activeCell
-          newCell = { row: normalizedRange.startRow, col: context.activeCell.col };
-          break;
-        case 'down':
-          // Collapse to bottommost row, same column as activeCell
-          newCell = { row: normalizedRange.endRow, col: context.activeCell.col };
-          break;
-      }
-
-      const escapedCell = escapeMergeOnMove(newCell, event.direction, context.getMergedRegionAt);
-      return moveTo(escapedCell);
-    }
-
-    // Single cell selection: normal arrow key navigation
+    // Plain arrows move one visible cell from the active cell. If a multi-cell
+    // range is selected, the range collapses at that destination.
     const stepped = moveCellSkipHidden(
       context.activeCell,
       event.direction,
@@ -147,8 +92,12 @@ const moveActiveCell = assign(
 
 /**
  * Extend selection in direction (shift+arrow).
- * activeCell stays at the anchor (Excel parity); the range geometry tracks
- * the moving edge via getMovingEdge(range, anchor).
+ * In normal Shift+Arrow selection, the anchor stays fixed as activeCell while
+ * the moving edge lives in range geometry and the emitted viewport-follow
+ * target. Sticky/additive extend modes keep their legacy edge-active behavior
+ * for mode bookkeeping.
+ * getMovingEdge(range, anchor) keeps repeated extends independent from
+ * activeCell, so edge-crossing and perpendicular extends remain stable.
  *
  * writes only to `pendingRange`. `committedRanges` is untouched
  * (empty in non-additive flows by invariant; preserved verbatim in additive).
@@ -183,10 +132,9 @@ const extendSelection = assign(
             ).row
           : movingEdge.row;
       const activeCell =
-        context.modes.extend && !event.shiftKey
+        context.modes.additive || context.modes.extend
           ? { row: targetRow, col: anchorCell.col }
           : anchorCell;
-
       return {
         pendingRange: createFullRowRangeSpan(anchorCell.row, targetRow),
         activeCell,
@@ -211,10 +159,9 @@ const extendSelection = assign(
             ).col
           : movingEdge.col;
       const activeCell =
-        context.modes.extend && !event.shiftKey
+        context.modes.additive || context.modes.extend
           ? { row: anchorCell.row, col: targetCol }
           : anchorCell;
-
       return {
         pendingRange: createFullColumnRangeSpan(anchorCell.col, targetCol),
         activeCell,
@@ -242,7 +189,7 @@ const extendSelection = assign(
     // sit on the merge interior — matches the same machine-internal escape
     // used by `moveActiveCell`.
     const newEnd = escapeMergeOnMove(stepped, event.direction, context.getMergedRegionAt);
-    const activeCell = context.modes.extend && !event.shiftKey ? newEnd : anchor;
+    const activeCell = context.modes.additive || context.modes.extend ? newEnd : anchor;
     return buildExtendUpdate(anchor, newEnd, activeCell);
   },
 );
@@ -348,8 +295,9 @@ const jumpToEdge = assign(
 /**
  * Extend selection to edge in direction (Ctrl+Shift+Arrow).
  * Fallback implementation for unit tests - extends by JUMP_AMOUNT or to boundary.
- * activeCell stays at the anchor (Excel parity); the range geometry tracks
- * the moving edge via getMovingEdge(range, anchor).
+ * Physical Shift-extension keeps activeCell at the anchor while range geometry
+ * and viewport-follow track the moving edge. Sticky/additive extend modes keep
+ * the moving edge active for mode bookkeeping.
  */
 const jumpToEdgeExtend = assign(
   ({ context, event }: { context: SelectionContext; event: SelectionEvent }) => {
@@ -365,7 +313,8 @@ const jumpToEdgeExtend = assign(
       context.isColHidden,
     );
     const newEnd = escapeMergeOnMove(stepped, event.direction, context.getMergedRegionAt);
-    return buildExtendUpdate(anchor, newEnd);
+    const activeCell = context.modes.additive || context.modes.extend ? newEnd : anchor;
+    return buildExtendUpdate(anchor, newEnd, activeCell);
   },
 );
 
@@ -411,7 +360,8 @@ const endModeExtendToEdge = assign(
       context.isColHidden,
     );
     const newEnd = escapeMergeOnMove(stepped, event.direction, context.getMergedRegionAt);
-    return buildExtendUpdate(anchor, newEnd);
+    const activeCell = context.modes.additive || context.modes.extend ? newEnd : anchor;
+    return buildExtendUpdate(anchor, newEnd, activeCell);
   },
 );
 
@@ -441,8 +391,8 @@ const moveToHome = assign(
 /**
  * Shift+Home or Ctrl+Shift+Home: Extend selection to beginning.
  * Shift+Home extends to column 0 on the moving edge's row;
- * Ctrl+Shift+Home extends to A1. activeCell stays at the anchor (Excel parity);
- * the range geometry tracks the moving edge via getMovingEdge(range, anchor).
+ * Ctrl+Shift+Home extends to A1. Physical Shift-extension keeps activeCell
+ * anchored while range geometry and viewport-follow track the moving edge.
  */
 const extendToHome = assign(
   ({ context, event }: { context: SelectionContext; event: SelectionEvent }) => {
@@ -453,7 +403,8 @@ const extendToHome = assign(
       ? { row: 0, col: 0 } // Ctrl+Shift+Home = extend to A1
       : { row: movingEdge.row, col: 0 }; // Shift+Home = extend to column A on moving edge's row
     const newEnd = escapeMergeOnMove(target, 'left', context.getMergedRegionAt);
-    return buildExtendUpdate(anchor, newEnd);
+    const activeCell = context.modes.additive || context.modes.extend ? newEnd : anchor;
+    return buildExtendUpdate(anchor, newEnd, activeCell);
   },
 );
 
@@ -486,8 +437,8 @@ const moveToEnd = assign(
  * NOTE: Ctrl+Shift+End is properly handled by KeyboardCoordinator which dispatches
  * EXTEND_TO_LAST_USED_CELL action. This fallback uses MAX constants for safety.
  * Shift+End (without Ctrl) extends to last column of current row.
- * activeCell stays at the anchor (Excel parity); the range geometry tracks
- * the moving edge via getMovingEdge(range, anchor).
+ * Physical Shift-extension keeps activeCell anchored while range geometry and
+ * viewport-follow track the moving edge.
  */
 const extendToEnd = assign(
   ({ context, event }: { context: SelectionContext; event: SelectionEvent }) => {
@@ -500,7 +451,8 @@ const extendToEnd = assign(
       ? { row: MAX_ROWS - 1, col: MAX_COLS - 1 }
       : { row: movingEdge.row, col: MAX_COLS - 1 };
     const newEnd = escapeMergeOnMove(target, 'right', context.getMergedRegionAt);
-    return buildExtendUpdate(anchor, newEnd);
+    const activeCell = context.modes.additive || context.modes.extend ? newEnd : anchor;
+    return buildExtendUpdate(anchor, newEnd, activeCell);
   },
 );
 

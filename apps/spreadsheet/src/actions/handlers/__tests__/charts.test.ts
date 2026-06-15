@@ -1254,21 +1254,18 @@ describe('Chart Handlers - Current-Region Auto-Expansion', () => {
       expect(addedConfig.dataRange).toBe('A1:D10');
     });
 
-    it('preserves single-cell range when cell is empty (no surrounding data)', async () => {
-      // getCurrentRegion returns same 1x1 cell → expandToDataRegion returns null
-      // → handler keeps original range as-is.
+    it('does not create a chart when the source is a blank single cell', async () => {
       const deps = createDepsWithSelection({
         ranges: [{ startRow: 4, startCol: 4, endRow: 4, endCol: 4 }],
       });
+      const ws = (deps.workbook as any).activeSheet;
+      ws.getValue = jest.fn(async () => null);
 
       const result = await ChartHandlers.CREATE_EMBEDDED_CHART(deps);
       expect(result.handled).toBe(true);
 
-      const ws = (deps.workbook as any).activeSheet;
-      expect(ws.charts.add).toHaveBeenCalledTimes(1);
-      const addedConfig = ws.charts.add.mock.calls[0][0];
-      // Original single cell (E5) preserved
-      expect(addedConfig.dataRange).toBe('E5');
+      expect(ws.getValue).toHaveBeenCalledWith(4, 4);
+      expect(ws.charts.add).not.toHaveBeenCalled();
     });
 
     it('uses multi-cell selection as-is without expansion', async () => {
@@ -1285,6 +1282,33 @@ describe('Chart Handlers - Current-Region Auto-Expansion', () => {
 
       const addedConfig = ws.charts.add.mock.calls[0][0];
       expect(addedConfig.dataRange).toBe('A1:D6');
+    });
+
+    it('adds explicit series references for first-column label ranges', async () => {
+      const deps = createDepsWithSelection({
+        ranges: [{ startRow: 0, startCol: 0, endRow: 4, endCol: 3 }],
+      });
+      const sourceValues = [
+        ['Revenue', 100500, 100900, 100000],
+        ['yoy', null, 0.003980099502487455, -0.008919722497522264],
+        ['OP', 4400, 7800, 7400],
+        ['yoy', null, 0.7727272727272727, -0.05128205128205132],
+        ['OPM', 0.04378109452736319, 0.07730426164519326, 0.074],
+      ];
+      const ws = (deps.workbook as any).activeSheet;
+      ws.getValue = jest.fn(async (row: number, col: number) => sourceValues[row]?.[col] ?? null);
+
+      const result = await ChartHandlers.CREATE_EMBEDDED_CHART(deps);
+      expect(result.handled).toBe(true);
+
+      const addedConfig = ws.charts.add.mock.calls[0][0];
+      expect(addedConfig.dataRange).toBe('A1:D5');
+      expect(addedConfig.seriesOrientation).toBe('rows');
+      expect(addedConfig.series).toEqual([
+        { values: 'B1:B5', categories: 'A1:A5' },
+        { values: 'C1:C5', categories: 'A1:A5' },
+        { values: 'D1:D5', categories: 'A1:A5' },
+      ]);
     });
 
     it('uses edit-start multi-cell selection when active selection collapsed during enter-mode', async () => {

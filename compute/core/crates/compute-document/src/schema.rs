@@ -56,6 +56,7 @@ pub const KEY_COL_ORDER: &str = "colOrder";
 /// Per-sheet feature maps
 pub const KEY_ROW_FORMATS: &str = "rowFormats";
 pub const KEY_COL_FORMATS: &str = "colFormats";
+pub const KEY_COL_FORMAT_RANGES: &str = "colFormatRanges";
 pub const KEY_COMMENTS: &str = "comments";
 pub const KEY_FILTERS: &str = "filters";
 pub const KEY_FILTER_METADATA_BINDINGS: &str = "filterMetadataBindings";
@@ -120,6 +121,7 @@ pub const KEY_FILE_SHARING: &str = "fileSharing";
 pub const KEY_WEB_PUBLISHING: &str = "webPublishing";
 pub const KEY_THREADED_COMMENT_PERSONS: &str = "threadedCommentPersons";
 pub const KEY_THREADED_COMMENT_PERSONS_PART_PRESENT: &str = "threadedCommentPersonsPartPresent";
+pub const KEY_THREADED_COMMENT_PERSON_ORDER: &str = "threadedCommentPersonOrder";
 
 /// Meta map keys
 pub const KEY_NAME: &str = "name";
@@ -308,7 +310,6 @@ pub fn init_canonical_schema(doc: &Doc) -> (MapRef, MapRef, crate::hex::SmallHex
     workbook.insert(&mut txn, KEY_EXTENDED_DOCUMENT_PROPERTIES, empty());
     workbook.insert(&mut txn, KEY_XLSX_METADATA, empty());
     workbook.insert(&mut txn, KEY_CUSTOM_CELL_STYLES, empty());
-    workbook.insert(&mut txn, KEY_RANGE_BINDINGS, empty());
 
     // ------------------------------------------------------------------
     // Security sub-structures
@@ -389,6 +390,7 @@ pub fn init_canonical_schema(doc: &Doc) -> (MapRef, MapRef, crate::hex::SmallHex
     sheet_map.insert(&mut txn, KEY_HIDDEN_COLS, empty());
     sheet_map.insert(&mut txn, KEY_ROW_FORMATS, empty());
     sheet_map.insert(&mut txn, KEY_COL_FORMATS, empty());
+    sheet_map.insert(&mut txn, KEY_COL_FORMAT_RANGES, empty());
     sheet_map.insert(&mut txn, KEY_COMMENTS, empty());
     sheet_map.insert(&mut txn, KEY_FILTERS, empty());
     sheet_map.insert(&mut txn, KEY_FILTER_METADATA_BINDINGS, empty());
@@ -509,7 +511,6 @@ mod tests {
             KEY_IMPORTED_PIVOT_ASSOCIATIONS,
             KEY_PIVOT_CACHE_SOURCES,
             KEY_PIVOT_CACHE_RECORDS,
-            KEY_RANGE_BINDINGS,
         ] {
             assert!(
                 matches!(wb.get(&txn, key), Some(Out::YMap(_))),
@@ -557,6 +558,7 @@ mod tests {
             KEY_HIDDEN_COLS,
             KEY_ROW_FORMATS,
             KEY_COL_FORMATS,
+            KEY_COL_FORMAT_RANGES,
             KEY_COMMENTS,
             KEY_FILTERS,
             KEY_FILTER_METADATA_BINDINGS,

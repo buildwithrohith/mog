@@ -3,8 +3,10 @@
  *
  * Handlers for extending the current selection using Shift+Arrow keys.
  * In sticky F8 Extend mode, the action is still routed here for bare arrows,
- * but the machine must see shiftKey=false so it can keep the active cell on
- * the moving edge instead of pinning it to the anchor like physical Shift+Arrow.
+ * but the machine must see shiftKey=false so it can distinguish sticky extend
+ * from physical Shift+Arrow for mode handling. Normal Shift+Arrow keeps the
+ * anchor as activeCell while the viewport-follow target tracks the moving
+ * edge; sticky/additive extend modes keep their legacy edge-active behavior.
  *
  */
 

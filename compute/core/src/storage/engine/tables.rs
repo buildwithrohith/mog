@@ -4,7 +4,7 @@ use bridge_core as bridge;
 use cell_types::SheetId;
 use compute_wire::mutation::serialize_multi_viewport_patches;
 use domain_types::CellFormat;
-use domain_types::domain::table::Table as CanonicalTable;
+use domain_types::domain::table::TableCatalogEntry as CanonicalTable;
 use formula_types::{StructureChange, TableDef};
 use value_types::ComputeError;
 
@@ -236,6 +236,7 @@ impl YrsComputeEngine {
                 }
             }
 
+            let created_table_name = table_name.clone();
             let create_result = services::tables::create_table(
                 &mut self.stores,
                 &mut self.mirror,
@@ -251,7 +252,10 @@ impl YrsComputeEngine {
             )?;
             merge_mutation_result(&mut combined, create_result);
 
-            let patches = if combined.recalc.changed_cells.is_empty()
+            let table_style_patches = self.build_table_style_viewport_patches(&created_table_name);
+            let patches = if !table_style_patches.is_empty() {
+                table_style_patches
+            } else if combined.recalc.changed_cells.is_empty()
                 && combined.recalc.projection_changes.is_empty()
                 && combined.recalc.errors.is_empty()
             {
@@ -518,14 +522,19 @@ impl YrsComputeEngine {
         column_name: &str,
         position: u32,
     ) -> Result<(Vec<u8>, MutationResult), ComputeError> {
-        let result = services::tables::add_table_column(
-            &mut self.stores,
-            &mut self.mirror,
-            table_name,
-            column_name,
-            position,
-        )?;
-        Ok((serialize_multi_viewport_patches(&[]), result))
+        let mut result = self.with_undo_group_if(true, |engine| {
+            services::tables::add_table_column(
+                &mut engine.stores,
+                &mut engine.mirror,
+                &mut engine.mutation,
+                table_name,
+                column_name,
+                position,
+            )
+        })?;
+        self.prepare_recalc_for_flush(&mut result.recalc);
+        let patches = self.flush_viewport_patches();
+        Ok((patches, result))
     }
 
     /// Rename a column in a table.

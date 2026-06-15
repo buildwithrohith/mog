@@ -5,13 +5,12 @@
 //! parsed pivot tables.
 
 use cell_types::SheetId;
-use compute_document::hex::hex_to_id;
 use compute_document::schema::*;
 use compute_document::workbook_metadata::{
     read_imported_external_cache_records, read_workbook_link_records,
 };
 use domain_types::{
-    CellFormat, DocumentFormat, NamedRange, PersonInfo,
+    CellFormat, DocumentFormat, PersonInfo,
     domain::external_link::ExternalLink,
     domain::pivot::ParsedPivotTable,
     domain::theme::ThemeData,
@@ -22,18 +21,14 @@ use domain_types::{
 };
 use yrs::{Any, Map, Out, Transact};
 
-use crate::mirror::CellMirror;
 use crate::snapshot::{CalcMode, CalculationSettings};
 use crate::storage::engine::stores::EngineStores;
 use crate::storage::sheet::pivots;
-use crate::storage::workbook::{
-    named_ranges as workbook_named_ranges, settings as workbook_settings,
-};
+use crate::storage::workbook::settings as workbook_settings;
 
 use super::pivot_cache_reconciliation::{
     read_pivot_cache_sources, reconcile_promoted_import_cache_for_export,
 };
-
 const KEY_STYLE_REGISTRY_NUMBER_FORMATS: &str = "numberFormats";
 const KEY_STYLE_REGISTRY_FONTS: &str = "fonts";
 const KEY_STYLE_REGISTRY_FILLS: &str = "fills";
@@ -42,8 +37,6 @@ const KEY_STYLE_REGISTRY_CELL_STYLE_XFS: &str = "cellStyleXfs";
 const KEY_STYLE_REGISTRY_CELL_XFS: &str = "cellXfs";
 const KEY_STYLE_REGISTRY_NAMED_CELL_STYLES: &str = "namedCellStyles";
 const KEY_STYLE_REGISTRY_DXFS: &str = "differentialFormats";
-const KEY_STYLE_REGISTRY_TABLE_STYLES: &str = "tableStyles";
-const KEY_THREADED_COMMENT_PERSON_ORDER: &str = "threadedCommentPersonOrder";
 const KEY_STYLE_REGISTRY_INDEXED_COLORS: &str = "indexedColors";
 const KEY_STYLE_REGISTRY_DEFAULT_TABLE_STYLE: &str = "defaultTableStyle";
 const KEY_STYLE_REGISTRY_DEFAULT_PIVOT_STYLE: &str = "defaultPivotStyle";
@@ -294,7 +287,7 @@ pub(super) fn export_workbook_stylesheet(
                 KEY_STYLE_REGISTRY_NAMED_CELL_STYLES,
             ),
             differential_formats: read_style_registry_vec(&txn, &map, KEY_STYLE_REGISTRY_DXFS),
-            table_styles: read_style_registry_vec(&txn, &map, KEY_STYLE_REGISTRY_TABLE_STYLES),
+            table_styles: Vec::new(),
             indexed_colors: read_style_registry_value(
                 &txn,
                 &map,
@@ -426,20 +419,16 @@ pub(super) fn export_workbook_table_styles(
     Vec<ooxml_types::styles::TableStyleDef>,
     Option<String>,
     Option<String>,
+    Vec<domain_types::DxfDef>,
 ) {
     let doc = stores.storage.doc();
     let txn = doc.transact();
     let workbook = stores.storage.workbook_map();
 
-    let mut styles = Vec::<ooxml_types::styles::TableStyleDef>::new();
     let mut default_table_style = None;
     let mut default_pivot_style = None;
 
     if let Some(Out::YMap(styles_map)) = workbook.get(&txn, KEY_XLSX_TABLE_STYLES) {
-        if let Some(Out::Any(Any::String(json))) = styles_map.get(&txn, "styles") {
-            styles = serde_json::from_str::<Vec<ooxml_types::styles::TableStyleDef>>(&json)
-                .unwrap_or_default();
-        }
         if let Some(Out::Any(Any::String(value))) = styles_map.get(&txn, "defaultTableStyle") {
             default_table_style = Some(value.to_string());
         }
@@ -448,25 +437,28 @@ pub(super) fn export_workbook_table_styles(
         }
     }
 
-    let mut existing_names: std::collections::HashSet<String> = styles
+    let existing_dxf_registry = export_dxf_registry_from_txn(&txn, &workbook);
+    let mut next_dxf_id = existing_dxf_registry
         .iter()
-        .map(|style| style.name.to_lowercase())
-        .collect();
-    for style in stores.custom_table_styles.values() {
-        if existing_names.insert(style.name.to_lowercase()) {
-            styles.push(ooxml_types::styles::TableStyleDef {
-                name: style.name.clone(),
-                pivot: Some(false),
-                table: Some(true),
-                count: Some(0),
-                elements: Vec::new(),
-                xr_uid: None,
-            });
-        }
+        .map(|dxf| dxf.id)
+        .max()
+        .map_or(0, |id| id.saturating_add(1));
+    let mut styles = Vec::new();
+    let mut generated_dxfs = Vec::new();
+    let mut custom_styles: Vec<_> = stores.custom_table_styles.values().collect();
+    custom_styles.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    for style in custom_styles {
+        let exported = style.to_ooxml_table_style(&mut next_dxf_id);
+        generated_dxfs.extend(exported.dxfs);
+        styles.push(exported.style);
     }
-    styles.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
-    (styles, default_table_style, default_pivot_style)
+    (
+        styles,
+        default_table_style,
+        default_pivot_style,
+        generated_dxfs,
+    )
 }
 
 pub(super) fn export_extended_document_properties(
@@ -526,88 +518,6 @@ fn calculation_properties_from_settings(settings: &CalculationSettings) -> Calcu
         has_explicit_iterate_delta: settings.has_explicit_iterate_delta,
         ..CalculationProperties::default()
     }
-}
-
-/// Export all modeled defined names from Yrs storage.
-///
-/// Hidden names are included here because they are workbook state, not UI query
-/// output. Unsupported or opaque references must be present in
-/// `DefinedName.raw_refers_to`.
-pub(super) fn export_workbook_named_ranges(
-    stores: &EngineStores,
-    mirror: &CellMirror,
-    sheet_ids: &[SheetId],
-) -> Vec<NamedRange> {
-    workbook_named_ranges::get_all_named_ranges(
-        stores.storage.doc(),
-        stores.storage.workbook_map(),
-    )
-    .into_iter()
-    .filter_map(|dn| {
-        let local_sheet_id = dn.scope.as_ref().and_then(|scope_hex| {
-            let raw = hex_to_id(scope_hex)?;
-            let scope_sid = SheetId::from_raw(raw);
-            sheet_ids
-                .iter()
-                .position(|sid| *sid == scope_sid)
-                .map(|i| i as u32)
-        });
-
-        let refers_to = if let Some(raw_refers_to) = dn.raw_refers_to.clone() {
-            raw_refers_to
-        } else {
-            let identity = match serde_json::from_str::<formula_types::IdentityFormula>(&dn.refers_to) {
-                Ok(id) => id,
-                Err(e) => {
-                    tracing::warn!(
-                        name = %dn.name,
-                        error = %e,
-                        "Yrs DefinedName.refers_to is not a valid IdentityFormula JSON and has no raw_refers_to; \
-                         omitting from XLSX export. Typed formula boundary: made IdentityFormula JSON \
-                         the single canonical on-disk format."
-                    );
-                    return None;
-                }
-            };
-
-            if identity.refs.is_empty() {
-                identity.template
-            } else {
-                let a1 = stores.compute.to_a1_display_qualified(
-                    mirror,
-                    &SheetId::from_raw(0),
-                    &identity,
-                );
-                let a1 = a1.strip_prefix('=').unwrap_or(&a1);
-                if a1.is_empty() {
-                    dn.refers_to.clone()
-                } else {
-                    a1.to_string()
-                }
-            }
-        };
-
-        Some(NamedRange {
-            name: dn.name,
-            refers_to,
-            local_sheet_id,
-            hidden: !dn.visible,
-            comment: dn.comment,
-            custom_menu: dn.custom_menu,
-            description: dn.description,
-            help: dn.help,
-            status_bar: dn.status_bar,
-            xlm: dn.xlm,
-            function_group_id: None,
-            shortcut_key: None,
-            function: dn.function,
-            vb_procedure: dn.vb_procedure,
-            publish_to_server: dn.publish_to_server,
-            workbook_parameter: dn.workbook_parameter,
-            xml_space_preserve: dn.xml_space_preserve,
-        })
-    })
-    .collect()
 }
 
 /// Export workbook properties from the `workbookSettings` Y.Map.
@@ -848,44 +758,6 @@ pub(super) fn export_external_links(stores: &EngineStores) -> Vec<ExternalLink> 
             .unwrap_or(u32::MAX)
     });
     links
-}
-
-/// Export slicer caches from the workbook-level slicers map.
-pub(in crate::storage::engine) fn export_workbook_slicer_caches(
-    stores: &EngineStores,
-) -> Vec<ooxml_types::slicers::SlicerCacheDef> {
-    let doc = stores.storage.doc();
-    let txn = doc.transact();
-    let workbook = stores.storage.workbook_map();
-
-    let slicers_map = match workbook.get(&txn, KEY_SLICERS) {
-        Some(Out::YMap(m)) => m,
-        _ => return vec![],
-    };
-
-    let mut caches = Vec::new();
-    for (_, value) in slicers_map.iter(&txn) {
-        if let Out::Any(Any::String(json_str)) = value {
-            if let Ok(stored) =
-                serde_json::from_str::<domain_types::domain::slicer::StoredSlicer>(&json_str)
-            {
-                caches.push(domain_types::domain::slicer::stored_slicer_to_cache_def(
-                    &stored,
-                ));
-                continue;
-            }
-            match serde_json::from_str::<ooxml_types::slicers::SlicerCacheDef>(&json_str) {
-                Ok(cache_def) => caches.push(cache_def),
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "Failed to deserialize slicer entry during export, skipping"
-                    );
-                }
-            }
-        }
-    }
-    caches
 }
 
 pub(in crate::storage::engine) fn export_workbook_timeline_caches(

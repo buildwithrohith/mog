@@ -62,7 +62,7 @@ function cellDataValue(value: string | number | boolean | null): unknown {
   if (value === null) return null;
   const type =
     typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : 'text';
-  return { value: { type, value } };
+  return { raw: { type, value } };
 }
 
 function undefinedPaths(value: unknown, path = '$'): string[] {
@@ -328,6 +328,33 @@ describe('WorksheetChartsImpl chart title inference', () => {
   });
 });
 
+describe('WorksheetChartsImpl chart title substrings', () => {
+  it('reads substrings from a plain chart title', async () => {
+    const charts = createChartsApi([makeChart({ title: 'Revenue by Month' })]);
+
+    await expect(charts.getTitleSubstring('chart-1', 0, 16)).resolves.toEqual({
+      text: 'Revenue by Month',
+    });
+    await expect(charts.getTitleSubstring('chart-1', 8, 2)).resolves.toEqual({ text: 'by' });
+  });
+
+  it('reads substrings from rich chart title runs', async () => {
+    const charts = createChartsApi([
+      makeChart({
+        titleRichText: [
+          { text: 'Revenue', font: { bold: true } },
+          { text: ' by Month', font: { italic: true } },
+        ],
+      }),
+    ]);
+
+    await expect(charts.getTitleSubstring('chart-1', 2, 8)).resolves.toEqual({
+      text: 'venue by',
+      font: { bold: true },
+    });
+  });
+});
+
 describe('WorksheetChartsImpl chart create payloads', () => {
   it('omits undefined optional chart fields before sending payloads to compute', async () => {
     const { charts, getCreatedConfig } = createPieChartAddApi();
@@ -355,6 +382,101 @@ describe('WorksheetChartsImpl chart create payloads', () => {
     expect(createdConfig).not.toHaveProperty('showLines');
     expect(createdConfig).not.toHaveProperty('plotVisibleOnly');
     expect(undefinedPaths(createdConfig)).toEqual([]);
+  });
+});
+
+describe('WorksheetChartsImpl range-backed series overrides', () => {
+  function createMutableChartsApi(initialChart: ChartFloatingObject) {
+    let chart = initialChart;
+    const updateChart = jest.fn(
+      async (_sheetId: string, _chartId: string, updates: Partial<ChartFloatingObject>) => {
+        chart = {
+          ...chart,
+          ...updates,
+          anchor: updates.anchor ? { ...chart.anchor, ...updates.anchor } : chart.anchor,
+        };
+      },
+    );
+    const charts = new WorksheetChartsImpl(
+      {
+        computeBridge: {
+          getChart: jest.fn(async () => chart),
+          updateChart,
+        },
+      } as any,
+      SHEET_ID,
+    );
+    return { charts, updateChart, getChart: () => chart };
+  }
+
+  it('materializes point data-label dimensions for implicit dataRange series', async () => {
+    const { charts, getChart } = createMutableChartsApi(
+      makeChart({
+        chartType: 'bar',
+        dataRange: 'D1:E3',
+        dataLabels: { show: true },
+      }),
+    );
+
+    await charts.setDataLabelHeight('chart-1', 0, 0, 18);
+    await charts.setDataLabelWidth('chart-1', 0, 0, 48);
+
+    expect(getChart().series?.[0]?.points?.[0]?.dataLabel).toEqual(
+      expect.objectContaining({ show: true, height: 18, width: 48 }),
+    );
+  });
+
+  it('round-trips statistical options on implicit dataRange series', async () => {
+    const { charts } = createMutableChartsApi(
+      makeChart({
+        chartType: 'bar',
+        dataRange: 'A1:B5',
+      }),
+    );
+
+    await charts.setSeriesBinOptions('chart-1', 0, {
+      binCount: 4,
+      overflowBin: true,
+      overflowBinValue: 35,
+    });
+    await charts.setSeriesBoxwhiskerOptions('chart-1', 0, {
+      showMeanMarkers: true,
+      showMeanLine: true,
+      quartileMethod: 'exclusive',
+      whiskerType: 'tukey',
+    });
+
+    await expect(charts.getSeriesBinOptions('chart-1', 0)).resolves.toEqual(
+      expect.objectContaining({ binCount: 4, overflowBin: true, overflowBinValue: 35 }),
+    );
+    await expect(charts.getSeriesBoxwhiskerOptions('chart-1', 0)).resolves.toEqual(
+      expect.objectContaining({
+        showMeanMarkers: true,
+        showMeanLine: true,
+        quartileMethod: 'exclusive',
+        whiskerType: 'tukey',
+      }),
+    );
+  });
+
+  it('does not expose inferred dataRange series after explicit series are present', async () => {
+    const { charts } = createMutableChartsApi(
+      makeChart({
+        chartType: 'bar',
+        dataRange: 'A1:C5',
+        series: [{ name: 'Revenue', values: 'B2:B5', categories: 'A2:A5' }],
+      }),
+    );
+
+    await expect(charts.getSeriesCount('chart-1')).resolves.toBe(1);
+    await expect(charts.getSeries('chart-1', 1)).rejects.toThrow(
+      'Series index 1 out of range (0-0)',
+    );
+    await expect(
+      charts.setSeriesBinOptions('chart-1', 1, {
+        binCount: 4,
+      }),
+    ).rejects.toThrow('Series index 1 out of range (0-0)');
   });
 });
 

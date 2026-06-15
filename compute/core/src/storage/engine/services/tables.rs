@@ -7,7 +7,9 @@
 use cell_types::{SheetId, SheetPos};
 use compute_document::hex::id_to_hex;
 use domain_types::CellFormat;
-use domain_types::domain::table::{Table as CanonicalTable, TableColumn};
+use domain_types::domain::table::{
+    TableCatalogColumn as TableColumn, TableCatalogEntry as CanonicalTable,
+};
 use formula_types::TableDef;
 use value_types::ComputeError;
 use yrs::{Map, Origin, Out, Transact};
@@ -19,19 +21,19 @@ use crate::storage::cells::structured_ref_updater;
 use crate::storage::engine::stores::EngineStores;
 use crate::storage::sheet::filters;
 
+mod filter_delete;
 mod mutations;
 mod options;
 mod persistence;
 mod queries;
-mod range_ids;
 #[cfg(test)]
 mod tests;
 
+pub(in crate::storage::engine) use filter_delete::*;
 pub(in crate::storage::engine) use mutations::*;
 pub(in crate::storage::engine) use options::*;
 pub(in crate::storage::engine) use persistence::*;
 pub(in crate::storage::engine) use queries::*;
-pub(in crate::storage::engine) use range_ids::*;
 
 pub(in crate::storage::engine) fn normalize_table_style_id(
     stores: &EngineStores,
@@ -78,4 +80,12 @@ fn canonical_builtin_style_id(style_name: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn next_table_id(stores: &EngineStores) -> String {
+    format!("tbl-{}", stores.next_id_uuid_string())
+}
+
+fn next_table_column_id(stores: &EngineStores) -> String {
+    format!("col-{}", stores.next_id_uuid_string())
 }

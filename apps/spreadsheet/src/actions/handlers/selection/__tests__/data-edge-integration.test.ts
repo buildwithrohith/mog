@@ -21,6 +21,8 @@ import {
   EXTEND_TO_EDGE_LEFT,
   EXTEND_TO_EDGE_RIGHT,
   EXTEND_TO_EDGE_UP,
+  MOVE_TO_EDGE_LEFT,
+  MOVE_TO_EDGE_RIGHT,
 } from '../data-edge';
 import type { ActionDependencies, CellCoord, CellRange } from '../helpers';
 import { createMockPlatform, createMockShellService } from '../../__tests__/test-helpers';
@@ -60,6 +62,69 @@ function createMockFindDataEdge(testData: Map<string, unknown>) {
   };
 }
 
+function createMoveMockDeps(options: {
+  activeCell: CellCoord;
+  hiddenRows?: number[];
+  hiddenCols?: number[];
+  findDataEdge: (
+    row: number,
+    col: number,
+    direction: 'up' | 'down' | 'left' | 'right',
+  ) => Promise<CellCoord>;
+}): {
+  deps: ActionDependencies;
+  goTo: jest.Mock;
+  getActiveCell: () => CellCoord;
+} {
+  let activeCell = options.activeCell;
+  const activeSheet = {
+    findDataEdge: options.findDataEdge,
+    layout: {
+      getHiddenRowsBitmap: jest.fn(async () => new Set(options.hiddenRows ?? [])),
+      getHiddenColumnsBitmap: jest.fn(async () => new Set(options.hiddenCols ?? [])),
+    },
+  };
+  const goTo = jest.fn((cell: CellCoord) => {
+    activeCell = cell;
+  });
+
+  const deps: ActionDependencies = {
+    workbook: {
+      activeSheet,
+      getSheetById: jest.fn(() => activeSheet),
+      setPendingUndoDescription: jest.fn(),
+    } as any,
+    uiStore: {} as any,
+    coordinator: {} as any,
+    getActiveSheetId: () => sheetId('sheet-1'),
+    onUIAction: jest.fn(),
+    accessors: {
+      selection: {
+        getActiveCell: () => activeCell,
+        getRanges: () => [
+          {
+            startRow: activeCell.row,
+            startCol: activeCell.col,
+            endRow: activeCell.row,
+            endCol: activeCell.col,
+          },
+        ],
+        getAnchor: () => activeCell,
+      },
+    } as any,
+    commands: {
+      selection: {
+        goTo,
+        setSelection: jest.fn(),
+      },
+    } as any,
+    platform: createMockPlatform(),
+    shellService: createMockShellService(),
+  };
+
+  return { deps, goTo, getActiveCell: () => activeCell };
+}
+
 /**
  * Create mock ActionDependencies for testing.
  */
@@ -70,9 +135,19 @@ function createMockDeps(
   anchor: CellCoord | null,
 ): {
   deps: ActionDependencies;
-  getCapturedSelection: () => { ranges: CellRange[]; activeCell: CellCoord } | null;
+  getCapturedSelection: () => {
+    ranges: CellRange[];
+    activeCell: CellCoord;
+    anchor: CellCoord | null | undefined;
+  } | null;
 } {
-  const captureBox: { value: { ranges: CellRange[]; activeCell: CellCoord } | null } = {
+  const captureBox: {
+    value: {
+      ranges: CellRange[];
+      activeCell: CellCoord;
+      anchor: CellCoord | null | undefined;
+    } | null;
+  } = {
     value: null,
   };
 
@@ -88,8 +163,16 @@ function createMockDeps(
 
   const mockCommands = {
     selection: {
-      setSelection: (newRanges: CellRange[], newActiveCell: CellCoord) => {
-        captureBox.value = { ranges: newRanges, activeCell: newActiveCell };
+      setSelection: (
+        newRanges: CellRange[],
+        newActiveCell: CellCoord,
+        newAnchor?: CellCoord | null,
+      ) => {
+        captureBox.value = {
+          ranges: newRanges,
+          activeCell: newActiveCell,
+          anchor: newAnchor,
+        };
       },
       goTo: jest.fn(),
     },
@@ -122,6 +205,28 @@ function createMockDeps(
 // =============================================================================
 
 describe('extendToDataEdge - Integration tests with ACTUAL handlers', () => {
+  describe('moveToDataEdge', () => {
+    it('delegates opposite commands to findDataEdge from the current active cell', async () => {
+      const findEdge = jest.fn(
+        async (_row: number, _col: number, direction: 'up' | 'down' | 'left' | 'right') =>
+          direction === 'right' ? { row: 463, col: 9 } : { row: 463, col: 4 },
+      );
+      const { deps, goTo } = createMoveMockDeps({
+        activeCell: { row: 463, col: 6 },
+        findDataEdge: findEdge,
+      });
+
+      await MOVE_TO_EDGE_RIGHT(deps);
+      await MOVE_TO_EDGE_LEFT(deps);
+
+      expect(goTo).toHaveBeenNthCalledWith(1, { row: 463, col: 9 });
+      expect(goTo).toHaveBeenNthCalledWith(2, { row: 463, col: 4 });
+      expect(findEdge).toHaveBeenCalledTimes(2);
+      expect(findEdge).toHaveBeenNthCalledWith(1, 463, 6, 'right');
+      expect(findEdge).toHaveBeenNthCalledWith(2, 463, 9, 'left');
+    });
+  });
+
   describe('Cmd+Shift+Left then Cmd+Shift+Up creates rectangular selection', () => {
     const testData = createTestData();
 
@@ -147,6 +252,7 @@ describe('extendToDataEdge - Integration tests with ACTUAL handlers', () => {
       expect(range.endCol).toBe(1);
 
       expect(capturedSelection!.activeCell).toEqual({ row: 4, col: 1 });
+      expect(capturedSelection!.anchor).toEqual({ row: 4, col: 1 });
     });
 
     it('Step 2: Cmd+Shift+Up from A5:B5 creates A1:B5 (rectangular)', async () => {
@@ -172,6 +278,7 @@ describe('extendToDataEdge - Integration tests with ACTUAL handlers', () => {
       expect(range.endCol).toBe(1);
 
       expect(capturedSelection!.activeCell).toEqual({ row: 4, col: 1 });
+      expect(capturedSelection!.anchor).toEqual({ row: 4, col: 1 });
     });
   });
 
@@ -197,6 +304,8 @@ describe('extendToDataEdge - Integration tests with ACTUAL handlers', () => {
       expect(range.endRow).toBe(4);
       expect(range.startCol).toBe(1);
       expect(range.endCol).toBe(1);
+      expect(capturedSelection!.activeCell).toEqual({ row: 4, col: 1 });
+      expect(capturedSelection!.anchor).toEqual({ row: 4, col: 1 });
     });
 
     it('Step 2: Cmd+Shift+Left from B1:B5 creates A1:B5 (rectangular)', async () => {
@@ -219,6 +328,8 @@ describe('extendToDataEdge - Integration tests with ACTUAL handlers', () => {
       expect(range.endCol).toBe(1);
       expect(range.startRow).toBe(0);
       expect(range.endRow).toBe(4);
+      expect(capturedSelection!.activeCell).toEqual({ row: 4, col: 1 });
+      expect(capturedSelection!.anchor).toEqual({ row: 4, col: 1 });
     });
   });
 
@@ -243,6 +354,8 @@ describe('extendToDataEdge - Integration tests with ACTUAL handlers', () => {
       const rangeAfterRight = captured1!.ranges[0];
       expect(rangeAfterRight.startCol).toBe(0);
       expect(rangeAfterRight.endCol).toBe(1);
+      expect(captured1!.activeCell).toEqual(activeCell);
+      expect(captured1!.anchor).toEqual(activeCell);
 
       ranges = [rangeAfterRight];
       anchor = activeCell;
@@ -263,6 +376,8 @@ describe('extendToDataEdge - Integration tests with ACTUAL handlers', () => {
       expect(finalRange.endRow).toBe(4);
       expect(finalRange.startCol).toBe(0);
       expect(finalRange.endCol).toBe(1);
+      expect(captured2!.activeCell).toEqual(activeCell);
+      expect(captured2!.anchor).toEqual(activeCell);
     });
   });
 });

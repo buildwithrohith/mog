@@ -486,6 +486,16 @@ function appendPropertyChanges(result: MutationResult, extra: MutationResult): M
   };
 }
 
+const UI_STATE_WORKBOOK_SETTINGS_KEYS = new Set<keyof RustWorkbookSettingsPatch>([
+  'customSettings',
+  'selectedSheetIds',
+]);
+
+function isUiStateWorkbookSettingsPatch(settings: RustWorkbookSettingsPatch): boolean {
+  const keys = Object.keys(settings) as Array<keyof RustWorkbookSettingsPatch>;
+  return keys.length > 0 && keys.every((key) => UI_STATE_WORKBOOK_SETTINGS_KEYS.has(key));
+}
+
 // =============================================================================
 // ComputeBridge Class — Thin Composition Root
 // =============================================================================
@@ -885,37 +895,32 @@ export class ComputeBridge extends GeneratedBridgeBase {
     this._updateDispatchInFlight = true;
     const run = (async () => {
       try {
-        let updates: Uint8Array[];
-        try {
-          updates = await this.drainPendingUpdates();
-        } catch (err) {
-          // The underlying engine instance is gone — destroyed by another path
-          // racing this tick (compute_destroy resolves before _phase flips), or
-          // wiped by trap-recovery's resetWasmModule() without going through
-          // our destroy(). In either case the bridge is orphaned and there's
-          // nothing left to drain. Stop the loop permanently; otherwise every
-          // subsequent setTimeout(0) tick re-throws the same error and the
-          // recentErrors ring fills with the same unhandled rejection.
-          if (
-            err instanceof TransportError &&
-            err.message.startsWith('[compute_drain_pending_updates] instance not found')
-          ) {
-            this._updateSubscribers.clear();
-            return;
-          }
-          throw err;
-        }
-        if (updates.length === 0) return;
         // Snapshot subscribers to preserve no-reentrancy: a callback
         // that subscribes/unsubscribes during dispatch must not affect the
-        // current batch's recipient set.
+        // current flush's recipient set.
         const callbacks = Array.from(this._updateSubscribers);
-        for (const update of updates) {
-          for (const cb of callbacks) {
-            try {
-              cb(update);
-            } catch (err) {
-              console.warn('[ComputeBridge] update_v1 subscriber threw:', err);
+        while (true) {
+          let updates: Uint8Array[];
+          try {
+            updates = await this.drainPendingUpdates();
+          } catch (err) {
+            if (
+              err instanceof TransportError &&
+              err.message.startsWith('[compute_drain_pending_updates] instance not found')
+            ) {
+              this._updateSubscribers.clear();
+              return;
+            }
+            throw err;
+          }
+          if (updates.length === 0) return;
+          for (const update of updates) {
+            for (const cb of callbacks) {
+              try {
+                cb(update);
+              } catch (err) {
+                console.warn('[ComputeBridge] update_v1 subscriber threw:', err);
+              }
             }
           }
         }
@@ -1392,9 +1397,8 @@ export class ComputeBridge extends GeneratedBridgeBase {
   //
   // The structural CF re-eval gap (structural dependency gap) — insert/delete
   // rows/cols not re-evaluating CF on shifted ranges — is also now wired
-  // through `YrsComputeEngine::structure_change`, which calls
-  // `produce_cf_viewport_patches` whenever the affected sheet has any CF
-  // format.
+  // through `YrsComputeEngine::structure_change`, which refreshes the CF cache
+  // before the bridge-level structural viewport refresh reads fresh buffers.
   // ===========================================================================
 
   async getCFPresets(): Promise<CFPresetsWire> {
@@ -1696,6 +1700,14 @@ export class ComputeBridge extends GeneratedBridgeBase {
   /** Patch Rust-owned workbook settings through the generated Rust bridge. */
   async patchWorkbookSettings(settings: RustWorkbookSettingsPatch): Promise<MutationResult> {
     this.core.ensureInitialized();
+    if (isUiStateWorkbookSettingsPatch(settings)) {
+      return this.core.mutatePublicUiState('compute_patch_workbook_settings', () =>
+        this.core.transport.call<[Uint8Array, MutationResult]>('compute_patch_workbook_settings', {
+          docId: this.core.docId,
+          patch: settings,
+        }),
+      );
+    }
     return super.patchWorkbookSettings(settings);
   }
 

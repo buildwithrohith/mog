@@ -7,7 +7,7 @@ use crate::projection::{
     RegionKind, RegionRef,
 };
 use cell_types::{CellId, ColId, RowId, SheetId};
-use domain_types::domain::table::Table as CanonicalTable;
+use domain_types::domain::table::TableCatalogEntry as CanonicalTable;
 use formula_types::TableDef;
 use snapshot_types::{DataTableRegionDef, PivotTableDef};
 
@@ -67,12 +67,6 @@ pub struct CellMirror {
     /// degenerate case and lives here too — populated via XLSX hydration
     /// and via `set_array_formula` for in-app entries.
     pub(crate) cse_anchors: FxHashSet<CellId>,
-    /// Phase 5E: table name -> range binding ID index.
-    ///
-    /// Maps lowercased table names to their `rangeBindings` key (e.g., `"table:T1"`).
-    /// Used for O(1) lookup of the range binding ID for structured ref resolution.
-    /// Updated whenever a table is added/removed/renamed.
-    pub(super) table_range_ids: FxHashMap<String, String>,
 }
 
 impl Default for CellMirror {
@@ -105,7 +99,6 @@ impl CellMirror {
             col_versions: FxHashMap::default(),
             cse_single_cell: FxHashSet::default(),
             cse_anchors: FxHashSet::default(),
-            table_range_ids: FxHashMap::default(),
         }
     }
 

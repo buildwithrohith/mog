@@ -9,6 +9,8 @@ use domain_types::{CellData, DocumentFormat, SheetData, WorkbookStylesheet};
 use compute_document::hex::{SmallHex, id_to_hex};
 use compute_document::schema::*;
 
+use super::helpers::PositionMap;
+
 const KEY_STYLE_REGISTRY_NUMBER_FORMATS: &str = "numberFormats";
 const KEY_STYLE_REGISTRY_FONTS: &str = "fonts";
 const KEY_STYLE_REGISTRY_FILLS: &str = "fills";
@@ -17,7 +19,6 @@ const KEY_STYLE_REGISTRY_CELL_STYLE_XFS: &str = "cellStyleXfs";
 const KEY_STYLE_REGISTRY_CELL_XFS: &str = "cellXfs";
 const KEY_STYLE_REGISTRY_NAMED_CELL_STYLES: &str = "namedCellStyles";
 const KEY_STYLE_REGISTRY_DXFS: &str = "differentialFormats";
-const KEY_STYLE_REGISTRY_TABLE_STYLES: &str = "tableStyles";
 const KEY_STYLE_REGISTRY_INDEXED_COLORS: &str = "indexedColors";
 const KEY_STYLE_REGISTRY_DEFAULT_TABLE_STYLE: &str = "defaultTableStyle";
 const KEY_STYLE_REGISTRY_DEFAULT_PIVOT_STYLE: &str = "defaultPivotStyle";
@@ -94,6 +95,48 @@ pub(super) fn hydrate_col_styles(
     }
 }
 
+/// Hydrate sparse authored column-default style ranges.
+pub(super) fn hydrate_col_style_ranges(
+    txn: &mut yrs::TransactionMut,
+    sheet_map: &MapRef,
+    col_style_ranges: &[domain_types::ColStyleRange],
+    style_palette: &[DocumentFormat],
+) {
+    if col_style_ranges.is_empty() {
+        return;
+    }
+
+    let ranges_map: MapRef = match sheet_map.get(txn, KEY_COL_FORMAT_RANGES) {
+        Some(Out::YMap(map)) => map,
+        _ => sheet_map.insert(
+            txn,
+            KEY_COL_FORMAT_RANGES,
+            MapPrelim::from([] as [(&str, Any); 0]),
+        ),
+    };
+
+    for range in col_style_ranges {
+        if range.start_col > range.end_col {
+            continue;
+        }
+        let Some(format) = style_palette.get(range.style_id as usize) else {
+            continue;
+        };
+        let cell_fmt = document_format_to_cell_format(format);
+        let mut entries = yrs_schema::cell_format::to_yrs_prelim(&cell_fmt);
+        entries.push(("_sc", Any::Number(range.start_col as f64)));
+        entries.push(("_ec", Any::Number(range.end_col as f64)));
+        entries.push((
+            yrs_schema::cell_format::KEY_XLSX_STYLE_ID,
+            Any::Number(range.style_id as f64),
+        ));
+        let range_id = cell_types::RangeId::from_raw(crate::storage::STORAGE_ID_ALLOC.next_u128());
+        let range_hex = id_to_hex(range_id.as_u128());
+        let nested: MapPrelim = entries.into_iter().collect();
+        ranges_map.insert(txn, range_hex.as_str(), nested);
+    }
+}
+
 /// Convert a `DocumentFormat` (nested, from parser) to a flat `CellFormat` (runtime).
 pub(super) fn document_format_to_cell_format(doc: &DocumentFormat) -> domain_types::CellFormat {
     domain_types::CellFormat::from(doc)
@@ -164,12 +207,6 @@ pub(super) fn hydrate_workbook_stylesheet(
             &map,
             KEY_STYLE_REGISTRY_DXFS,
             &stylesheet.differential_formats,
-        );
-        hydrate_style_registry_vec(
-            txn,
-            &map,
-            KEY_STYLE_REGISTRY_TABLE_STYLES,
-            &stylesheet.table_styles,
         );
         hydrate_style_registry_value(
             txn,
@@ -351,6 +388,11 @@ pub(crate) fn remap_sheet_style_ids(sheet: &mut SheetData, remap: &HashMap<u32, 
             cs.style_id = *new_sid;
         }
     }
+    for range in &mut sheet.col_style_ranges {
+        if let Some(new_sid) = remap.get(&range.style_id) {
+            range.style_id = *new_sid;
+        }
+    }
     for run in &mut sheet.authored_style_runs {
         if let Some(new_sid) = remap.get(&run.style_id) {
             run.style_id = *new_sid;
@@ -465,7 +507,7 @@ pub(super) fn hydrate_authored_style_runs(
 /// `properties::resolve_compact_props` can deserialize it directly.
 pub(super) fn hydrate_cell_styles(
     txn: &mut yrs::TransactionMut,
-    pos_map: &HashMap<String, String>,
+    pos_map: &PositionMap,
     sheet_map: &MapRef,
     cells: &[CellData],
     range_style_positions: &std::collections::HashSet<(u32, u32)>,
@@ -508,8 +550,7 @@ pub(super) fn hydrate_cell_styles(
         }
 
         // Look up cell_id from in-memory pos_map
-        let pos_key = format!("{}:{}", cell.row, cell.col);
-        let cell_hex = match pos_map.get(&pos_key) {
+        let cell_hex = match pos_map.get(&(cell.row, cell.col)) {
             Some(s) => s.clone(),
             _ => continue,
         };

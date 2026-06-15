@@ -49,6 +49,54 @@ describe('compute wire filter converters', () => {
       includeBlanks: true,
     });
   });
+
+  it('serializes color filters using generated compute wire fields', () => {
+    const criteria: ColumnFilterCriteria = {
+      type: 'color',
+      colorFilter: {
+        type: 'font',
+        color: '#00ff00',
+      },
+    };
+
+    expect(columnFilterCriteriaToCompute(criteria)).toEqual({
+      type: 'color',
+      color: '#00ff00',
+      byFont: true,
+    });
+  });
+
+  it('serializes icon filters using generated compute wire fields', () => {
+    const criteria: ColumnFilterCriteria = {
+      type: 'icon',
+      iconFilter: {
+        iconSet: '3TrafficLights1',
+        iconIndex: 0,
+      },
+    };
+
+    expect(columnFilterCriteriaToCompute(criteria)).toEqual({
+      type: 'icon',
+      iconSetName: '3TrafficLights1',
+      iconIndex: 0,
+    });
+  });
+
+  it('accepts icon filter fields from compute', () => {
+    expect(
+      computeColumnFilterToCriteria({
+        type: 'icon',
+        iconSetName: '3TrafficLights1',
+        iconIndex: 1,
+      }),
+    ).toEqual({
+      type: 'icon',
+      iconFilter: {
+        iconSet: '3TrafficLights1',
+        iconIndex: 1,
+      },
+    });
+  });
 });
 
 describe('compute wire identity formula converters', () => {

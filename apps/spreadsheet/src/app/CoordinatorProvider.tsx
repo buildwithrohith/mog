@@ -34,6 +34,10 @@ import type { SelectionCheckpoint } from '@mog-sdk/contracts/selection';
 import { dispatch } from '../actions/dispatcher';
 import { createActorAccessLayerFromBundle } from '../coordinator/actor-access';
 import { createKeyUpCapture } from './coordinator-keyup-capture';
+import {
+  GENERAL_NUMBER_FORMAT,
+  shouldNormalizeEnteredZeroFormat,
+} from './interactive-format-normalization';
 import type { EditorDependencies } from '../coordinator/types';
 import { checkCalculatedColumnAutoFill } from '../coordinator/mutations/tables';
 import {
@@ -60,7 +64,13 @@ import {
 } from '../infra/context';
 import { setupRangeSelectionCoordination } from '../systems/grid-editing/coordination';
 import { setupUndoSelectionCoordination } from '../systems/grid-editing/coordination/undo-selection-coordination';
-import { isGlobalShortcut } from '../systems/shared/utils/focus-utils';
+import {
+  isDialogKeyboardTarget,
+  isEditableKeyboardTarget,
+  isGlobalShortcut,
+  keyboardEventTargetElement,
+  shouldDeferNavigationKeyToEditableTarget,
+} from '../systems/shared/utils/focus-utils';
 import { useCollabPresence, useSelectionPresenceBroadcast } from '../hooks/collab';
 
 // =============================================================================
@@ -84,28 +94,26 @@ interface PaneNavigationContextValue {
 
 const PaneNavigationContext = createContext<PaneNavigationContextValue | null>(null);
 
-function keyboardEventTargetElement(e: KeyboardEvent): HTMLElement | null {
-  return e.target instanceof HTMLElement ? e.target : null;
-}
-
-function isEditableKeyboardTarget(target: HTMLElement | null): boolean {
-  if (!target) return false;
-  return Boolean(
-    target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]'),
-  );
-}
-
-function isDialogKeyboardTarget(target: HTMLElement | null): boolean {
-  if (!target) return false;
-  return Boolean(target.closest('[role="dialog"]'));
-}
-
 function isNativeEditableShortcut(e: KeyboardEvent, target: HTMLElement | null): boolean {
   if (!isEditableKeyboardTarget(target)) return false;
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return false;
 
   const key = e.key.toLowerCase();
   return key === 'c' || key === 'x' || key === 'v' || key === 'z' || key === 'y';
+}
+
+export function shouldCommitFormulaBarEnterInPlace(
+  e: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'ctrlKey' | 'metaKey' | 'altKey'>,
+  currentLayerType: string,
+): boolean {
+  return (
+    currentLayerType === 'formulaBar' &&
+    e.key === 'Enter' &&
+    !e.shiftKey &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey
+  );
 }
 
 /**
@@ -412,6 +420,10 @@ function KeyboardCaptureSetup({
         return;
       }
 
+      if (shouldDeferNavigationKeyToEditableTarget(e, target)) {
+        return;
+      }
+
       // Only intercept navigation keys during editing
       const isNavigationKey = ['Enter', 'Tab', 'Escape'].includes(e.key);
       // Sheet switching (Ctrl/Cmd+PageDown/Up) should also be intercepted during editing
@@ -480,6 +492,19 @@ function KeyboardCaptureSetup({
       const { isSuggestionsOpen, isPickerOpen } = editorSnapshot.context;
       if (isSuggestionsOpen || isPickerOpen) {
         return;
+      }
+
+      if (shouldCommitFormulaBarEnterInPlace(e, currentLayerType)) {
+        const result = keyboardCoordinator.dispatchAction('COMMIT_IN_PLACE');
+        const handledInPlace = result instanceof Promise ? true : result?.handled === true;
+
+        if (handledInPlace) {
+          coordinator.input.access.commands.paneFocus?.resetToGrid();
+          coordinator.input.resetFocusToGrid();
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
       }
 
       // Route to KeyboardCoordinator
@@ -722,9 +747,22 @@ export function SpreadsheetCoordinatorProvider({
           return;
         }
 
-        await withSelectionCheckpoint(cellCheckpoint(sheetId, row, col), () =>
-          ws.setCell(row, col, value),
-        );
+        const previousCell = ws.viewport.getCellData(row, col);
+        const normalizeEnteredZeroFormat = shouldNormalizeEnteredZeroFormat(value, previousCell);
+        const commitValue = () =>
+          withSelectionCheckpoint(cellCheckpoint(sheetId, row, col), async () => {
+            await ws.setCell(row, col, value);
+            if (normalizeEnteredZeroFormat) {
+              await ws.formats.set(row, col, { numberFormat: GENERAL_NUMBER_FORMAT });
+            }
+          });
+
+        if (normalizeEnteredZeroFormat) {
+          await workbook.undoGroup(commitValue);
+        } else {
+          await commitValue();
+        }
+
         if (value.startsWith('=')) {
           const autoFill = await checkCalculatedColumnAutoFill(sheetId, row, col, value, workbook);
           if (autoFill) {

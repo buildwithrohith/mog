@@ -30,19 +30,26 @@ use value_types::{CellValue, FiniteF64};
 /// Helper: insert a `DefinedName` into Yrs with a caller-supplied
 /// `refers_to` byte string. Bypasses `set_named_range`'s canonicalization
 /// so the test can plant a pre-W5-shaped entry directly.
-fn plant_refers_to_with_id(engine: &YrsComputeEngine, id: u64, name: &str, refers_to: String) {
+fn plant_defined_name(
+    engine: &YrsComputeEngine,
+    id: u64,
+    name: &str,
+    refers_to: String,
+    raw_refers_to: Option<String>,
+    visible: bool,
+) {
     let defined_name = DefinedName {
         id: format!("{id:032x}"),
         name: name.to_string(),
         refers_to,
-        raw_refers_to: None,
+        raw_refers_to,
         scope: None,
         comment: None,
         custom_menu: None,
         description: None,
         help: None,
         status_bar: None,
-        visible: true,
+        visible,
         xlm: false,
         function: false,
         vb_procedure: false,
@@ -57,6 +64,10 @@ fn plant_refers_to_with_id(engine: &YrsComputeEngine, id: u64, name: &str, refer
         engine.storage().workbook_map(),
         &defined_name,
     );
+}
+
+fn plant_refers_to_with_id(engine: &YrsComputeEngine, id: u64, name: &str, refers_to: String) {
+    plant_defined_name(engine, id, name, refers_to, None, true);
 }
 
 fn plant_refers_to(engine: &YrsComputeEngine, name: &str, refers_to: String) {
@@ -172,6 +183,82 @@ fn w5_raw_a1_refers_to_is_rejected_not_silently_wrapped() {
          A non-None result here means the dual-decoder fallback has \
          regressed."
     );
+}
+
+#[test]
+fn preserved_opaque_hidden_imported_name_round_trips_to_wire() {
+    let snap = simple_snapshot();
+    let (engine, _) = YrsComputeEngine::from_snapshot(snap).unwrap();
+
+    let raw_refers_to = "'[1]1601 Detail information'!$H$97:$H$129".to_string();
+    plant_defined_name(
+        &engine,
+        0x7357_0001u64,
+        "HiddenImported",
+        raw_refers_to.clone(),
+        Some(raw_refers_to.clone()),
+        false,
+    );
+
+    let wire = engine.get_all_named_ranges_wire();
+    let found = wire
+        .iter()
+        .find(|dn| dn.name == "HiddenImported")
+        .expect("preserved opaque imported names should be visible to the all-names wire query");
+    assert!(!found.visible);
+    assert_eq!(found.refers_to.template, raw_refers_to);
+    assert!(found.refers_to.refs.is_empty());
+}
+
+#[test]
+fn visible_preserved_opaque_broken_ref_import_is_omitted_from_wire() {
+    let snap = simple_snapshot();
+    let (engine, _) = YrsComputeEngine::from_snapshot(snap).unwrap();
+
+    plant_defined_name(
+        &engine,
+        0x7357_0002u64,
+        "ImportedBroken",
+        "#REF!".to_string(),
+        Some("#REF!".to_string()),
+        true,
+    );
+
+    let wire = engine.get_all_named_ranges_wire();
+    assert!(
+        wire.iter().all(|dn| dn.name != "ImportedBroken"),
+        "visible preserved opaque #REF! imports should be storage/export metadata, not API wire names"
+    );
+}
+
+#[test]
+fn canonical_json_broken_ref_name_round_trips_to_wire() {
+    let snap = simple_snapshot();
+    let (engine, _) = YrsComputeEngine::from_snapshot(snap).unwrap();
+
+    let identity = IdentityFormula {
+        template: "#REF!".to_string(),
+        refs: vec![],
+        is_dynamic_array: false,
+        is_volatile: false,
+        is_aggregate: false,
+    };
+    plant_defined_name(
+        &engine,
+        0x7357_0003u64,
+        "ApiCreatedBroken",
+        serde_json::to_string(&identity).expect("serialize"),
+        None,
+        true,
+    );
+
+    let wire = engine.get_all_named_ranges_wire();
+    let found = wire
+        .iter()
+        .find(|dn| dn.name == "ApiCreatedBroken")
+        .expect("canonical JSON #REF! names should stay API-visible");
+    assert_eq!(found.refers_to.template, "#REF!");
+    assert!(found.refers_to.refs.is_empty());
 }
 
 #[test]

@@ -300,8 +300,7 @@ impl YrsComputeEngine {
         super::services::export::export_dv_window_attr(&self.stores, sheet_id, key)
     }
 
-    /// Export data validations from the structured Y.Array<Y.Map> in sheet meta
-    /// using `yrs_schema::validation::from_yrs_map`. Falls back to legacy JSON string.
+    /// Export data validations from the canonical range-backed validation store.
     fn export_data_validations_for_sheet(&self, sheet_id: &SheetId) -> Vec<ValidationSpec> {
         super::services::export::export_data_validations_for_sheet(&self.stores, sheet_id)
     }
@@ -357,7 +356,11 @@ impl YrsComputeEngine {
         Vec<ooxml_types::timelines::TimelineDef>,
         Vec<ooxml_types::timelines::TimelineAnchor>,
     ) {
-        super::services::export::export_floating_objects_for_sheet(&self.stores, sheet_id)
+        super::services::export::export_floating_objects_for_sheet(
+            &self.stores,
+            &self.mirror,
+            sheet_id,
+        )
     }
 
     /// Export theme data from the workbook-level theme map.
@@ -372,7 +375,7 @@ impl YrsComputeEngine {
 
     /// Export slicer caches from the workbook-level slicers map.
     fn export_workbook_slicer_caches(&self) -> Vec<ooxml_types::slicers::SlicerCacheDef> {
-        super::services::export::export_workbook_slicer_caches(&self.stores)
+        super::services::export::export_workbook_slicer_caches(&self.stores, None)
     }
 
     /// Export parsed pivot tables from workbook-level pivotSpecs map.

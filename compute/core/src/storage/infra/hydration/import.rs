@@ -27,8 +27,10 @@ use crate::storage::workbook::imported_pivots::{
 
 use super::data_tables::hydrate_data_table_regions_from_parse_output;
 use super::imported_pivot_classification::{ImportedPivotClassification, classify_imported_pivot};
+use super::print_defined_names::hydrate_workbook_print_defined_names;
 use super::sheet::{SheetIdAllocation, hydrate_sheet, hydrate_sheet_with_allocation};
 use super::styles::{ImportedRangeStyle, hydrate_style_palette, hydrate_workbook_stylesheet};
+use super::table_styles::hydrate_custom_table_styles_from_ooxml;
 use super::workbook::{
     hydrate_custom_workbook_views_xml, hydrate_package_fidelity_metadata,
     hydrate_shared_string_hints, hydrate_volatile_dependency_part, hydrate_workbook_calculation,
@@ -185,6 +187,12 @@ impl YrsStorage {
         // every reader already handles `None` gracefully.
 
         // Populate workbook-level data
+        hydrate_workbook_print_defined_names(
+            &self.sheets,
+            &output.named_ranges,
+            &id_map.sheet_ids,
+            &mut txn,
+        );
         hydrate_workbook_named_ranges(
             &self.workbook,
             &output.named_ranges,
@@ -204,7 +212,8 @@ impl YrsStorage {
                     .map(move |t| (t.clone(), sheet_hex.to_string()))
             })
             .collect();
-        hydrate_workbook_tables(&self.workbook, &all_tables, &mut txn);
+        let imported_table_identity =
+            hydrate_workbook_tables(&self.workbook, &all_tables, allocator, &mut txn);
         hydrate_workbook_connections(&self.workbook, &output.connections, &mut txn);
         hydrate_workbook_root_namespaces(
             &self.workbook,
@@ -213,9 +222,15 @@ impl YrsStorage {
         );
         hydrate_workbook_table_styles(
             &self.workbook,
-            &output.custom_table_styles,
             &output.default_table_style,
             &output.default_pivot_style,
+            &mut txn,
+        );
+        hydrate_custom_table_styles_from_ooxml(
+            &self.workbook,
+            &output.custom_table_styles,
+            &output.workbook_stylesheet,
+            &output.theme,
             &mut txn,
         );
         hydrate_workbook_theme(&self.workbook, &output.theme, &mut txn);
@@ -228,6 +243,7 @@ impl YrsStorage {
             &output.sheets,
             &id_map.sheet_ids,
             &output.slicer_caches,
+            &imported_table_identity,
             &mut txn,
         );
         hydrate_workbook_timelines(
@@ -450,6 +466,12 @@ impl YrsStorage {
 
         tracing::info!(target: "deferred_hydration", "hydrate: all sheets done, workbook-level data");
         // Workbook-level data (identical to hydrate_from_parse_output)
+        hydrate_workbook_print_defined_names(
+            &self.sheets,
+            &output.named_ranges,
+            &id_map.sheet_ids,
+            &mut txn,
+        );
         hydrate_workbook_named_ranges(
             &self.workbook,
             &output.named_ranges,
@@ -468,10 +490,24 @@ impl YrsStorage {
                     .map(move |t| (t.clone(), sheet_hex.to_string()))
             })
             .collect();
-        hydrate_workbook_tables(&self.workbook, &all_tables, &mut txn);
+        let imported_table_identity =
+            hydrate_workbook_tables(&self.workbook, &all_tables, allocator, &mut txn);
         hydrate_workbook_root_namespaces(
             &self.workbook,
             &output.workbook_root_namespaces,
+            &mut txn,
+        );
+        hydrate_workbook_table_styles(
+            &self.workbook,
+            &output.default_table_style,
+            &output.default_pivot_style,
+            &mut txn,
+        );
+        hydrate_custom_table_styles_from_ooxml(
+            &self.workbook,
+            &output.custom_table_styles,
+            &output.workbook_stylesheet,
+            &output.theme,
             &mut txn,
         );
         hydrate_workbook_theme(&self.workbook, &output.theme, &mut txn);
@@ -481,6 +517,7 @@ impl YrsStorage {
             &output.sheets,
             &id_map.sheet_ids,
             &output.slicer_caches,
+            &imported_table_identity,
             &mut txn,
         );
         hydrate_workbook_timelines(

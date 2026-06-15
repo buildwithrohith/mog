@@ -159,17 +159,65 @@ fn delete_table_clears_owned_table_filter_visibility() {
 }
 
 #[test]
+fn delete_filtered_table_is_single_undo_step() {
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(table_filter_snapshot()).unwrap();
+    let sheet_id = sid();
+    create_filtered_table(&mut engine);
+    let table_id = engine
+        .get_table_by_name("People")
+        .expect("created table")
+        .id
+        .clone();
+    let before_depth = engine.get_undo_state().undo_depth;
+
+    engine.delete_table("People").expect("delete table");
+
+    assert_eq!(
+        engine.get_undo_state().undo_depth,
+        before_depth + 1,
+        "table, filter, and filter-hidden-row removal must be one undoable edit"
+    );
+
+    engine.undo().expect("undo delete table");
+    assert_eq!(
+        engine
+            .get_table_by_name("People")
+            .expect("restored table")
+            .id,
+        table_id
+    );
+    assert!(
+        engine
+            .get_filters_in_sheet(&sheet_id)
+            .iter()
+            .any(|filter| filter.table_id.as_deref() == Some(table_id.as_str())),
+        "one undo must restore the table-owned filter"
+    );
+    assert_eq!(
+        engine.get_hidden_rows(&sheet_id),
+        vec![2],
+        "one undo must restore the table filter's row visibility ownership"
+    );
+}
+
+#[test]
 fn redo_delete_table_emits_sheet_scoped_table_removal() {
     let (mut engine, _) = YrsComputeEngine::from_snapshot(table_filter_snapshot()).unwrap();
     let sheet_id = sid();
     let expected_sheet_id = sheet_id.to_uuid_string();
     create_filtered_table(&mut engine);
+    let expected_table_id = engine
+        .get_table_by_name("People")
+        .expect("created table")
+        .id
+        .clone();
 
     engine.delete_table("People").expect("delete table");
 
     let (_, undo_result) = engine.undo().expect("undo delete table");
     assert!(undo_result.table_changes.iter().any(|change| {
         change.name == "People"
+            && change.table_id.as_deref() == Some(expected_table_id.as_str())
             && change.sheet_id == expected_sheet_id
             && change.kind == ChangeKind::Set
     }));
@@ -180,11 +228,16 @@ fn redo_delete_table_emits_sheet_scoped_table_removal() {
     }));
 
     let (_, redo_result) = engine.redo().expect("redo delete table");
-    assert!(redo_result.table_changes.iter().any(|change| {
-        change.name == "People"
-            && change.sheet_id == expected_sheet_id
-            && change.kind == ChangeKind::Removed
-    }));
+    assert!(
+        redo_result.table_changes.iter().any(|change| {
+            change.name == "People"
+                && change.table_id.as_deref() == Some(expected_table_id.as_str())
+                && change.sheet_id == expected_sheet_id
+                && change.kind == ChangeKind::Removed
+        }),
+        "redo table changes: {:?}",
+        redo_result.table_changes
+    );
     assert!(!redo_result.table_changes.iter().any(|change| {
         change.name == "People"
             && change.sheet_id == expected_sheet_id
@@ -335,5 +388,49 @@ fn convert_table_to_range_clears_owned_table_filter_visibility() {
             .visibility_changes
             .iter()
             .any(|change| { change.axis == Axis::Row && change.index == 2 && !change.hidden })
+    );
+}
+
+#[test]
+fn convert_filtered_table_to_range_is_single_undo_step() {
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(table_filter_snapshot()).unwrap();
+    let sheet_id = sid();
+    create_filtered_table(&mut engine);
+    let table_id = engine
+        .get_table_by_name("People")
+        .expect("created table")
+        .id
+        .clone();
+    let before_depth = engine.get_undo_state().undo_depth;
+
+    engine
+        .convert_table_to_range("People")
+        .expect("convert table");
+
+    assert_eq!(
+        engine.get_undo_state().undo_depth,
+        before_depth + 1,
+        "table conversion must remove table, filter, and filter-hidden rows in one undoable edit"
+    );
+
+    engine.undo().expect("undo convert table");
+    assert_eq!(
+        engine
+            .get_table_by_name("People")
+            .expect("restored table")
+            .id,
+        table_id
+    );
+    assert!(
+        engine
+            .get_filters_in_sheet(&sheet_id)
+            .iter()
+            .any(|filter| filter.table_id.as_deref() == Some(table_id.as_str())),
+        "one undo must restore the table-owned filter"
+    );
+    assert_eq!(
+        engine.get_hidden_rows(&sheet_id),
+        vec![2],
+        "one undo must restore the table filter's row visibility ownership"
     );
 }

@@ -14,9 +14,9 @@ use yrs::{
 use cell_types::{IdAllocator, SheetId};
 use compute_document::hex::{hex_to_id, id_to_hex};
 use compute_document::schema::{
-    KEY_BINDINGS, KEY_CELL_PROPERTIES, KEY_CELLS, KEY_CF_RULES, KEY_COL_FORMATS, KEY_COL_ORDER,
-    KEY_COL_WIDTHS, KEY_COMMENTS, KEY_CONDITIONAL_FORMAT, KEY_FILTER_HIDDEN_ROWS,
-    KEY_FILTER_METADATA_BINDINGS, KEY_FILTERS, KEY_FLOATING_OBJECT_GROUPS,
+    KEY_BINDINGS, KEY_CELL_PROPERTIES, KEY_CELLS, KEY_CF_RULES, KEY_COL_FORMAT_RANGES,
+    KEY_COL_FORMATS, KEY_COL_ORDER, KEY_COL_WIDTHS, KEY_COMMENTS, KEY_CONDITIONAL_FORMAT,
+    KEY_FILTER_HIDDEN_ROWS, KEY_FILTER_METADATA_BINDINGS, KEY_FILTERS, KEY_FLOATING_OBJECT_GROUPS,
     KEY_FLOATING_OBJECT_ORDER, KEY_FLOATING_OBJECTS, KEY_FORMULA_REFS, KEY_GRID_ID_TO_POS,
     KEY_GRID_INDEX, KEY_GRID_POS_TO_ID, KEY_GROUPING, KEY_HIDDEN_COLS, KEY_HIDDEN_ROWS,
     KEY_MANUAL_HIDDEN_ROWS, KEY_MERGES, KEY_NAME, KEY_PIVOT_TABLES, KEY_PROPERTIES,
@@ -474,9 +474,9 @@ impl YrsStorage {
 
         // Pass 2: Write the tree into the new sheet. `cells` and `gridIndex`
         // get bespoke handling for CellId-hex remapping; everything else uses
-        // the generic recursive writer, which correctly preserves Y.Array<Y.Map>
-        // structures (e.g. `properties/dataValidations`, CF rules) that the
-        // previous flat-representation path silently dropped.
+        // the generic recursive writer, which correctly preserves structured
+        // Yrs subtrees (e.g. CF rules) that the previous flat-representation
+        // path silently dropped.
         {
             let mut txn = self.doc.transact_mut_with(Origin::from(ORIGIN_USER_EDIT));
 
@@ -645,14 +645,7 @@ impl YrsStorage {
                     ),
                 ),
             ]);
-            let meta_map: MapRef = sheet_map.insert(&mut txn, KEY_PROPERTIES, meta);
-
-            // Pre-create the `dataValidations` Y.Array so its CRDT id is
-            // identical across peers that fork this state. Without this, two
-            // peers each calling `set_range_schema` for the first time would
-            // race on `properties.insert("dataValidations", ...)` and LWW at
-            // the parent-map key would drop one side's entire array.
-            meta_map.insert(&mut txn, "dataValidations", ArrayPrelim::default());
+            sheet_map.insert(&mut txn, KEY_PROPERTIES, meta);
 
             // YArray-based row/column ordering (CRDT-safe, insert_range for O(n) bulk insert)
             let id_alloc = IdAllocator::new();
@@ -696,6 +689,7 @@ impl YrsStorage {
                 KEY_HIDDEN_COLS,
                 KEY_ROW_FORMATS,
                 KEY_COL_FORMATS,
+                KEY_COL_FORMAT_RANGES,
                 KEY_COMMENTS,
                 KEY_FILTERS,
                 KEY_FILTER_METADATA_BINDINGS,

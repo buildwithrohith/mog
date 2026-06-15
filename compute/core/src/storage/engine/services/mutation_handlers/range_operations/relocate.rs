@@ -3,11 +3,12 @@ use compute_document::hex::id_to_hex;
 use value_types::{CellValue, ComputeError};
 
 use crate::mirror::CellMirror;
-use crate::snapshot::RecalcResult;
+use crate::snapshot::{CellChange, CellPosition, RecalcResult};
 use crate::snapshot::{ChangeKind, PivotTableChange, TableChange};
 use crate::storage::engine::mutation_coordinator::MutationCoordinator;
 use crate::storage::engine::services::metadata_shift;
 use crate::storage::engine::stores::EngineStores;
+use yrs::{Origin, Transact};
 
 use super::patches::{merge_recalc_results, synthetic_null_change};
 
@@ -175,7 +176,9 @@ pub(in crate::storage::engine) fn mutation_relocate_cells(
     // 2. Sync mirror and compute for all affected cells. The GridIndex is
     //    already in its final state post-relocation, so we can look up
     //    target positions straight from it.
-    let mut edits: Vec<(SheetId, CellId, u32, u32, CellValue, Option<String>)> = Vec::new();
+    let mut moved_validation_edits: Vec<(SheetId, CellId, u32, u32, CellValue, Option<String>)> =
+        Vec::new();
+    let mut moved_cell_ids = Vec::new();
     let mut clear_ids: Vec<CellId> = Vec::new();
 
     for &cell_id in &result.target_cells_cleared {
@@ -185,9 +188,11 @@ pub(in crate::storage::engine) fn mutation_relocate_cells(
     for &cell_id in &result.moved_cell_ids {
         if let Some(grid) = stores.grid_indexes.get(target_sheet_id)
             && let Some((new_row, new_col)) = grid.cell_position(&cell_id)
-            && let Some((value, formula, identity_formula)) =
+            && let Some((value, _formula, identity_formula)) =
                 stores.storage.read_cell_from_yrs(target_sheet_id, &cell_id)
         {
+            let identity_formula =
+                identity_formula.or_else(|| mirror.get_formula(&cell_id).cloned());
             mirror.apply_edit(
                 target_sheet_id,
                 cell_id,
@@ -195,7 +200,8 @@ pub(in crate::storage::engine) fn mutation_relocate_cells(
                 value.clone(),
                 identity_formula,
             );
-            edits.push((*target_sheet_id, cell_id, new_row, new_col, value, formula));
+            moved_validation_edits.push((*target_sheet_id, cell_id, new_row, new_col, value, None));
+            moved_cell_ids.push(cell_id);
         }
     }
 
@@ -211,17 +217,25 @@ pub(in crate::storage::engine) fn mutation_relocate_cells(
         stores.compute.clear_cells(mirror, &clear_ids)?
     };
 
-    let mut recalc = if edits.is_empty() {
+    if !moved_validation_edits.is_empty() {
+        stores
+            .compute
+            .validate_raw_user_edit_region_writes(mirror, &moved_validation_edits)?;
+    }
+
+    let mut recalc = if moved_cell_ids.is_empty() {
         clear_recalc
     } else {
-        let mut write_recalc = stores.compute.set_cells_raw_with_trust(
-            mirror,
-            &edits,
-            true,
-            crate::scheduler::WriteTrust::UserEdit,
-        )?;
-        merge_recalc_results(&mut write_recalc, clear_recalc);
-        write_recalc
+        // Recalculate moved cells from their CellIds. Replaying formula text
+        // through set_cells_raw reparses stale A1 strings after structural
+        // shifts and can drop identity references that were already correct.
+        stores
+            .compute
+            .regenerate_formula_strings_and_cell_formula_text(mirror);
+        let mut moved_recalc = stores.compute.recalc(mirror, &moved_cell_ids)?;
+        append_moved_cell_target_changes(stores, mirror, &mut moved_recalc, &moved_cell_ids);
+        merge_recalc_results(&mut moved_recalc, clear_recalc);
+        moved_recalc
     };
 
     // 3. Source-position clear pass.
@@ -321,6 +335,53 @@ pub(in crate::storage::engine) fn mutation_relocate_cells(
     Ok((recalc, relocate_result, table_changes, pivot_changes))
 }
 
+fn append_moved_cell_target_changes(
+    stores: &EngineStores,
+    mirror: &CellMirror,
+    recalc: &mut RecalcResult,
+    moved_cell_ids: &[CellId],
+) {
+    for cell_id in moved_cell_ids {
+        let Some(sheet_id) = mirror.sheet_for_cell(cell_id) else {
+            continue;
+        };
+        let Some(pos) = mirror.resolve_position(cell_id) else {
+            continue;
+        };
+        let sheet_id_str = sheet_id.to_uuid_string();
+        let value = stores
+            .compute
+            .get_cell_value(mirror, cell_id)
+            .cloned()
+            .or_else(|| mirror.get_cell_value(cell_id).cloned())
+            .unwrap_or(CellValue::Null);
+        let mut change = CellChange {
+            cell_id: cell_id.to_uuid_string(),
+            sheet_id: sheet_id_str,
+            position: Some(CellPosition {
+                row: pos.row(),
+                col: pos.col(),
+            }),
+            value,
+            display_text: None,
+            format_idx: None,
+            extra_flags: 0,
+            old_value: None,
+        };
+        if let Some(existing) = recalc.changed_cells.iter_mut().find(|existing| {
+            existing.sheet_id == change.sheet_id
+                && existing.position.as_ref().is_some_and(|existing_pos| {
+                    existing_pos.row == pos.row() && existing_pos.col == pos.col()
+                })
+        }) {
+            change.old_value = existing.old_value.take();
+            *existing = change;
+        } else {
+            recalc.changed_cells.push(change);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn relocate_whole_tables(
     stores: &mut EngineStores,
@@ -350,6 +411,7 @@ fn relocate_whole_tables(
         .collect();
 
     let mut changes = Vec::with_capacity(tables_to_move.len());
+    let mut moved_tables = Vec::with_capacity(tables_to_move.len());
     for mut table in tables_to_move {
         let row_offset = table.range.start_row().saturating_sub(src_start_row);
         let col_offset = table.range.start_col().saturating_sub(src_start_col);
@@ -372,12 +434,24 @@ fn relocate_whole_tables(
             target_start_col + table_col_span,
         );
         stores.compute.set_table(mirror, table.clone());
-        super::super::super::tables::persist_table_to_yrs(stores, &table);
+        moved_tables.push(table.clone());
         changes.push(TableChange {
             name: table.name,
+            table_id: Some(table.id),
             sheet_id: target_sheet_hex.clone(),
             kind: ChangeKind::Set,
         });
+    }
+
+    if !moved_tables.is_empty() {
+        let workbook = stores.storage.workbook_map().clone();
+        let mut txn = stores
+            .storage
+            .doc()
+            .transact_mut_with(Origin::from(compute_document::undo::ORIGIN_USER_EDIT));
+        for table in &moved_tables {
+            super::super::super::tables::persist_table_to_yrs_in_txn(&workbook, &mut txn, table);
+        }
     }
 
     changes

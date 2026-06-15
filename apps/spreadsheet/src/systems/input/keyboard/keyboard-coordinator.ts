@@ -41,6 +41,11 @@ import {
 } from '@mog-sdk/kernel/keyboard';
 import { sheetId as toSheetId } from '@mog-sdk/contracts/core';
 import { KEYBOARD_SHORTCUTS, type KeyboardShortcut, type ShortcutContext } from '../../../keyboard';
+import {
+  isEditableChromeKeyboardTarget,
+  keyboardEventTargetElement,
+  shouldDeferNavigationKeyToEditableTarget,
+} from '../../shared/utils/focus-utils';
 
 import type { ActionDependencies, ActionType } from '@mog-sdk/contracts/actions';
 import type { ActorAccessors, ActorCommands } from '@mog-sdk/contracts/actors';
@@ -644,7 +649,7 @@ export class KeyboardCoordinator {
    * The cascade order, top-down, is:
    * 1. editing inside object text
    * 2. formulaEditMode / formulaEnterMode
-   * 3. editMode / enterMode
+   * 3. editMode / enterMode, including rich text editing
    * 4. flashFillPreview
    * 5. **keyTipMode** — when a chord is pending and no editing/dialog-like
    * mode is active. Plain object/chart selection does not block Excel
@@ -677,6 +682,10 @@ export class KeyboardCoordinator {
     // Regular editing - check mode first for more specific context
     if (editorState.matches('editing')) {
       // Check isEditMode to distinguish enterMode vs editMode
+      return isEditMode ? 'editMode' : 'enterMode';
+    }
+
+    if (editorState.matches('richTextEditing')) {
       return isEditMode ? 'editMode' : 'enterMode';
     }
 
@@ -1034,11 +1043,19 @@ export class KeyboardCoordinator {
       return { handled: false, reason: 'ime_composing' };
     }
 
+    if (isEditableChromeKeyboardTarget(keyboardEventTargetElement(e))) {
+      return { handled: false, reason: 'not_found' };
+    }
+
     // Layer 2: Check editor machine state (defensive fallback)
     // Cross-machine access via injected dependency (coordinator pattern)
     // This catches edge cases where browser events might be missed
     if (this.deps?.editorActor.getSnapshot().matches('imeComposing') && e.key !== 'Escape') {
       return { handled: false, reason: 'ime_composing' };
+    }
+
+    if (shouldDeferNavigationKeyToEditableTarget(e)) {
+      return { handled: false, reason: 'not_found' };
     }
 
     // =========================================================================

@@ -180,7 +180,7 @@ function decodeRangeMeta(data: RangeChange['data']): RangeMeta {
 
 function normalizeSheetSettingsChangedKey(changedKey: string): string {
   // Rust storage uses a nested `protectionDetails` Y.Map, while the public
-  // SheetSettings snapshot exposes those values as `protectionOptions`.
+  // SheetSettings snapshot exposes protection through derived public fields.
   return changedKey === 'protectionDetails' ? 'protectionOptions' : changedKey;
 }
 
@@ -1073,12 +1073,14 @@ export class MutationResultHandler {
     const eventSource = source === 'user' ? 'user' : 'remote';
 
     for (const change of changes) {
+      const tableId = change.tableId;
+      if (!tableId) continue;
       if (change.kind === 'Set') {
         this.eventBus.emit({
           type: 'table:updated',
           timestamp,
           sheetId: change.sheetId,
-          tableId: change.name,
+          tableId,
           changes: {},
           source: eventSource,
         });
@@ -1087,7 +1089,7 @@ export class MutationResultHandler {
           type: 'table:deleted',
           timestamp,
           sheetId: change.sheetId,
-          tableId: change.name,
+          tableId,
           source: eventSource,
         });
       }

@@ -16,7 +16,7 @@ use compute_document::hex::id_to_hex;
 use compute_wire::PaletteSnapshot;
 use compute_wire::mutation::CfColorOverrides;
 use domain_types::CellFormat;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use snapshot_types::RecalcResult;
 use value_types::CellValue;
 
@@ -268,6 +268,131 @@ impl YrsComputeEngine {
         compute_wire::mutation::serialize_multi_viewport_patches(&patches)
     }
 
+    /// Produce targeted viewport patches for row/column format mutations.
+    ///
+    /// Row/column formats affect virtual cells too, so this cannot enumerate
+    /// only allocated cell IDs. Instead, synthesize format changes for the
+    /// visible strips intersecting registered viewports.
+    pub(crate) fn produce_row_col_format_viewport_patches(
+        &mut self,
+        sheet_id: &SheetId,
+        rows: &[u32],
+        cols: &[u32],
+    ) -> Vec<u8> {
+        let mut positions: FxHashSet<(u32, u32)> = FxHashSet::default();
+
+        for (_viewport_id, bounds) in self.viewport.viewports_for_sheet(sheet_id) {
+            for &row in rows {
+                if row < bounds.start_row || row > bounds.end_row {
+                    continue;
+                }
+                for col in bounds.start_col..=bounds.end_col {
+                    positions.insert((row, col));
+                }
+            }
+
+            for &col in cols {
+                if col < bounds.start_col || col > bounds.end_col {
+                    continue;
+                }
+                for row in bounds.start_row..=bounds.end_row {
+                    positions.insert((row, col));
+                }
+            }
+        }
+
+        if positions.is_empty() {
+            return compute_wire::mutation::serialize_multi_viewport_patches(&[]);
+        }
+
+        let mut positions: Vec<(u32, u32)> = positions.into_iter().collect();
+        positions.sort_unstable();
+
+        let sheet_id_str = sheet_id.to_uuid_string();
+
+        // Pass 1: collect value + effective format without holding the
+        // mutable palette borrow needed for interning.
+        let mut cell_data: Vec<(String, u32, u32, CellValue, CellFormat)> =
+            Vec::with_capacity(positions.len());
+
+        for (row, col) in positions {
+            let pos = SheetPos::new(row, col);
+            let resolved_cell_id = self.mirror.resolve_cell_id(sheet_id, pos);
+            let value = resolved_cell_id
+                .as_ref()
+                .and_then(|cell_id| self.stores.compute.get_cell_value(&self.mirror, cell_id))
+                .cloned()
+                .unwrap_or_else(|| {
+                    self.mirror
+                        .get_cell_value_at(sheet_id, pos)
+                        .cloned()
+                        .unwrap_or(CellValue::Null)
+                });
+            let cell_id_str = resolved_cell_id
+                .as_ref()
+                .map(|cell_id| cell_id.to_uuid_string())
+                .unwrap_or_default();
+            let cell_hex = resolved_cell_id
+                .as_ref()
+                .map(|cell_id| id_to_hex(cell_id.as_u128()))
+                .unwrap_or_default();
+            let table_fmt =
+                services::tables::resolve_table_format_at_cell(&self.mirror, sheet_id, row, col);
+            let effective = properties::get_effective_format(
+                &self.stores.storage,
+                sheet_id,
+                &cell_hex,
+                row,
+                col,
+                table_fmt.as_ref(),
+                self.stores.grid_indexes.get(sheet_id),
+                self.mirror.get_sheet(sheet_id),
+            );
+
+            cell_data.push((cell_id_str, row, col, value, effective));
+        }
+
+        // Pass 2: intern effective formats into the sheet palette.
+        let mut palettes = self.viewport.format_palettes_mut();
+        let palette = palettes.entry(*sheet_id).or_default();
+        let palette_len_before = palette.len() as u16;
+        let theme_palette = &self.settings.theme_palette;
+
+        let mut changed_cells: Vec<snapshot_types::CellChange> =
+            Vec::with_capacity(cell_data.len());
+        for (cell_id, row, col, value, mut effective) in cell_data {
+            domain_types::theme_color::resolve_theme_refs(&mut effective, theme_palette);
+            let format_idx = palette.intern(&effective).unwrap_or(0);
+            changed_cells.push(snapshot_types::CellChange {
+                cell_id,
+                sheet_id: sheet_id_str.clone(),
+                position: Some(snapshot_types::CellPosition { row, col }),
+                value,
+                display_text: None,
+                format_idx: Some(format_idx),
+                extra_flags: 0,
+                old_value: None,
+            });
+        }
+
+        let delta_formats = palette.formats_since(palette_len_before);
+        let palette_bytes = compute_wire::palette_binary::serialize_palette_binary(
+            delta_formats,
+            palette_len_before,
+        );
+        drop(palettes);
+
+        let mut recalc = RecalcResult::empty();
+        recalc.changed_cells = changed_cells;
+
+        self.produce_format_viewport_patches(
+            &mut recalc,
+            sheet_id,
+            palette_len_before,
+            &palette_bytes,
+        )
+    }
+
     /// Produce multi-viewport patches for a recalc result (possibly multi-sheet).
     ///
     /// Refreshes CF caches, enriches display text, then iterates all registered
@@ -337,6 +462,10 @@ impl YrsComputeEngine {
         if sheet_ids.len() == 1 {
             return self.produce_viewport_patches(recalc, &sheet_ids[0], 0);
         }
+
+        // Multi-sheet recalc does not delegate to `produce_viewport_patches`,
+        // so it must run the same metadata enrichment before serialization.
+        self.enrich_metadata_flags(recalc);
 
         // Enrich format_idx for all changed cells across all sheets.
         let theme_palette = &self.settings.theme_palette;
@@ -422,9 +551,18 @@ impl YrsComputeEngine {
 
     /// Pull viewport patches for the stashed pending recalc result.
     pub fn flush_viewport_patches(&mut self) -> Vec<u8> {
-        match self.mutation.pending_recalc.take() {
+        let format_patches = self.mutation.pending_format_patches.take();
+        let value_patches = match self.mutation.pending_recalc.take() {
             Some(mut recalc) => self.produce_viewport_patches_for_recalc(&mut recalc),
             None => compute_wire::mutation::serialize_multi_viewport_patches(&[]),
+        };
+
+        match format_patches {
+            Some(format_patches) => compute_wire::mutation::concat_multi_viewport_patches(&[
+                format_patches,
+                value_patches,
+            ]),
+            None => value_patches,
         }
     }
 
@@ -540,15 +678,13 @@ impl YrsComputeEngine {
         )
     }
 
-    /// Produce structural viewport patches after insert/delete rows/cols.
+    /// Produce viewport patches for remap-style partial cell shifts.
     ///
-    /// After a structural change (insert/delete rows/cols), cells move to new
-    /// `(row, col)` positions but the TS viewport buffer is stale. The recalc
-    /// pipeline only emits *value* changes (via `values_equal`), so moved-but-
-    /// unchanged cells are invisible. This produces a full refresh of all viewport
-    /// positions.
-    ///
-    /// Cost: O(viewport_size) per viewport — typically ~1000 cells.
+    /// Row/column structure changes carry `StructureChangeResult` and are
+    /// followed by a bridge-level forced viewport refresh, so they should not
+    /// call this. Partial cell shifts do not carry that structural signal; the
+    /// recalc pipeline only emits *value* changes, so moved-but-unchanged cells
+    /// still need explicit patches.
     pub(crate) fn produce_structural_patches(
         &self,
         sheet_id: &SheetId,
@@ -602,7 +738,7 @@ impl YrsComputeEngine {
     /// patches.
     pub(crate) fn produce_observer_format_patches(
         &mut self,
-        property_changes: &[compute_document::observe::PropertyCellChange],
+        doc_changes: &compute_document::observe::DocumentChanges,
     ) -> Vec<u8> {
         // ── Borrow splitting ────────────────────────────────────────────
         // We must take shared refs to stores/mirror/settings BEFORE taking
@@ -636,12 +772,51 @@ impl YrsComputeEngine {
         };
 
         // ── Pass 0: Group affected cells by sheet ──────────────────────
+        //
+        // Undoing a format on a previously-empty cell removes both the
+        // property payload and the sparse gridIndex cell binding. At this
+        // point apply_all_observer_changes has already applied the gridIndex
+        // removal, so cell_id -> (row, col) can be gone. The observer's
+        // gridIndex change still carries row/col identity hexes; use them as
+        // the authoritative fallback for the matching property change.
+        let mut grid_position_fallbacks: FxHashMap<(SheetId, CellId), (u32, u32)> =
+            FxHashMap::default();
+        for change in &doc_changes.grid_index {
+            let Some(row) = services::mutation::resolve_hex_id_to_position(
+                stores,
+                &change.sheet_id,
+                &change.row_hex,
+                true,
+            ) else {
+                continue;
+            };
+            let Some(col) = services::mutation::resolve_hex_id_to_position(
+                stores,
+                &change.sheet_id,
+                &change.col_hex,
+                false,
+            ) else {
+                continue;
+            };
+            grid_position_fallbacks
+                .entry((change.sheet_id, change.cell_id))
+                .or_insert((row, col));
+        }
+
         let mut by_sheet: FxHashMap<SheetId, Vec<(u128, u32, u32)>> = FxHashMap::default();
 
-        for pch in property_changes {
-            if let Some(grid) = stores.grid_indexes.get(&pch.sheet_id)
-                && let Some((row, col)) = grid.cell_position(&pch.cell_id)
-            {
+        for pch in &doc_changes.properties {
+            let position = stores
+                .grid_indexes
+                .get(&pch.sheet_id)
+                .and_then(|grid| grid.cell_position(&pch.cell_id))
+                .or_else(|| {
+                    grid_position_fallbacks
+                        .get(&(pch.sheet_id, pch.cell_id))
+                        .copied()
+                });
+
+            if let Some((row, col)) = position {
                 by_sheet
                     .entry(pch.sheet_id)
                     .or_default()

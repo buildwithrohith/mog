@@ -424,7 +424,9 @@ describe('refreshViewportForRegion — sheet-scoped viewport IDs', () => {
       Promise.resolve([
         new Uint8Array(),
         {
-          tableChanges: [{ sheetId: 'sheet-1', name: 'Table1', kind: 'Removed' }],
+          tableChanges: [
+            { sheetId: 'sheet-1', name: 'Table1', tableId: 'table-1', kind: 'Removed' },
+          ],
         } as unknown as MutationResult,
       ]),
     );
@@ -445,7 +447,7 @@ describe('refreshViewportForRegion — sheet-scoped viewport IDs', () => {
       expect.objectContaining({
         type: 'table:deleted',
         sheetId: 'sheet-1',
-        tableId: 'Table1',
+        tableId: 'table-1',
       }),
     );
     const refreshOrder = transport.call.mock.invocationCallOrder.find((_, index) => {
@@ -552,6 +554,53 @@ describe('refreshViewportForRegion — sheet-scoped viewport IDs', () => {
     );
   });
 
+  it('undo skips full viewport refresh for property-only history replay', async () => {
+    const initialBuffer = buildTestViewportBuffer({
+      rows: 100,
+      cols: 40,
+      startRow: 0,
+      startCol: 0,
+      cells: [{ display: 'centered vendor' }],
+    });
+    const transport = {
+      call: jest.fn(async (command: string): Promise<any> => {
+        if (command === 'compute_get_viewport_binary') {
+          return initialBuffer;
+        }
+        if (command === 'compute_undo') {
+          return [
+            new Uint8Array(),
+            {
+              recalc: makeRecalcResult(),
+              propertyChanges: [
+                {
+                  sheetId: 'sheet-1',
+                  cellId: 'cell-1',
+                  position: { row: 0, col: 2 },
+                  kind: 'Set',
+                  format: { horizontalAlign: 'center' },
+                },
+              ],
+            },
+          ];
+        }
+        return undefined;
+      }) as any,
+    } as BridgeTransport & { call: jest.Mock };
+    const core = createStartedCore(transport);
+
+    await core.refreshViewportForRegion('main:sheet-1', sheetId('sheet-1'), bounds);
+    transport.call.mockClear();
+
+    await core.undo();
+
+    expect(transport.call).toHaveBeenCalledWith('compute_undo', { docId: 'test-doc' });
+    expect(transport.call).not.toHaveBeenCalledWith(
+      'compute_get_viewport_binary',
+      expect.anything(),
+    );
+  });
+
   it('undo refreshes registered viewports for table history replay', async () => {
     const initialBuffer = buildTestViewportBuffer({
       rows: 100,
@@ -579,7 +628,9 @@ describe('refreshViewportForRegion — sheet-scoped viewport IDs', () => {
             new Uint8Array(),
             {
               recalc: makeRecalcResult(),
-              tableChanges: [{ name: 'Table1', sheetId: 'sheet-1', kind: 'Removed' }],
+              tableChanges: [
+                { name: 'Table1', tableId: 'table-1', sheetId: 'sheet-1', kind: 'Removed' },
+              ],
             },
           ];
         }

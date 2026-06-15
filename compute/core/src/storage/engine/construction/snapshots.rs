@@ -372,7 +372,8 @@ pub fn build_workbook_snapshot_from_yrs(
     });
 
     // 3. Tables and Data Table regions from Yrs workbook maps.
-    // Tables are stored as JSON strings in the workbook.tables map.
+    // Tables are stored in the workbook table catalog plus range-backed
+    // runtime bindings.
     let tables = read_tables_from_yrs(storage);
     let data_table_regions = crate::storage::workbook::data_tables::get_all_data_table_regions(
         storage.doc(),
@@ -501,13 +502,10 @@ fn pivot_field_indices_for_area(
 
 /// Read table definitions from Yrs.
 ///
-/// Primary path: `rangeBindings[table:<name>]` entries (where runtime-created
-/// tables are persisted by `persist_table_to_yrs`).
+/// The workbook table catalog is the only table source. Workbook-level range
+/// bindings are never used to reconstruct tables.
 ///
-/// Fallback: the legacy `workbook.tables` map (used by XLSX imports that
-/// haven't migrated to rangeBindings).
-///
-/// This mirrors the two-tier read in `services::tables::sync_tables_from_yrs`
+/// This mirrors the read in `services::tables::sync_tables_from_yrs`
 /// but returns lightweight `TableDef`s for the snapshot rather than full
 /// `CanonicalTable`s.
 pub(in crate::storage::engine) fn read_tables_from_yrs(
@@ -518,64 +516,27 @@ pub(in crate::storage::engine) fn read_tables_from_yrs(
     let workbook = storage.workbook_map();
 
     let mut tables = Vec::new();
-    let mut seen_names = std::collections::HashSet::new();
-
-    // Tier 1: rangeBindings (primary path for runtime-created tables).
-    let binding_entries = compute_document::range::all_range_bindings_wb(workbook, &txn);
-    for (range_id, json) in &binding_entries {
-        if let Some(_tname) =
-            crate::storage::engine::services::tables::table_name_from_range_id(range_id)
-            && let Some(ct) = domain_types::yrs_schema::table::from_binding_json_standalone(json)
-            && let Ok(sheet) = SheetId::from_uuid_str(&ct.sheet_id)
-        {
-            seen_names.insert(ct.name.clone());
-            tables.push(formula_types::TableDef {
-                name: ct.name,
-                sheet,
-                start_row: ct.range.start_row(),
-                start_col: ct.range.start_col(),
-                end_row: ct.range.end_row(),
-                end_col: ct.range.end_col(),
-                columns: ct.columns.iter().map(|c| c.name.clone()).collect(),
-                has_headers: ct.has_header_row,
-                has_totals: ct.has_totals_row,
-            });
-        }
-    }
-
-    // Tier 2: legacy workbook.tables map (XLSX-imported tables).
-    if let Some(Out::YMap(tables_map)) = workbook.get(&txn, "tables") {
+    // Canonical catalog entries, including imported and runtime-created tables.
+    if let Some(Out::YMap(tables_map)) = workbook.get(&txn, compute_document::schema::KEY_TABLES) {
         for (key, value) in tables_map.iter(&txn) {
-            if seen_names.contains(key) {
+            let Out::YMap(inner) = value else {
                 continue;
-            }
-            match value {
-                Out::Any(Any::String(json_str)) => {
-                    if let Ok(table_def) =
-                        serde_json::from_str::<formula_types::TableDef>(&json_str)
-                    {
-                        tables.push(table_def);
-                    }
-                }
-                Out::YMap(inner) => {
-                    if let Some(ct) =
-                        domain_types::yrs_schema::table::from_yrs_map_to_table(&inner, &txn)
-                        && let Ok(sheet) = SheetId::from_uuid_str(&ct.sheet_id)
-                    {
-                        tables.push(formula_types::TableDef {
-                            name: ct.name,
-                            sheet,
-                            start_row: ct.range.start_row(),
-                            start_col: ct.range.start_col(),
-                            end_row: ct.range.end_row(),
-                            end_col: ct.range.end_col(),
-                            columns: ct.columns.iter().map(|c| c.name.clone()).collect(),
-                            has_headers: ct.has_header_row,
-                            has_totals: ct.has_totals_row,
-                        });
-                    }
-                }
-                _ => {}
+            };
+            if let Some(ct) = domain_types::yrs_schema::table::from_yrs_map_to_table(&inner, &txn)
+                && ct.id == key
+                && let Ok(sheet) = SheetId::from_uuid_str(&ct.sheet_id)
+            {
+                tables.push(formula_types::TableDef {
+                    name: ct.name,
+                    sheet,
+                    start_row: ct.range.start_row(),
+                    start_col: ct.range.start_col(),
+                    end_row: ct.range.end_row(),
+                    end_col: ct.range.end_col(),
+                    columns: ct.columns.iter().map(|c| c.name.clone()).collect(),
+                    has_headers: ct.has_header_row,
+                    has_totals: ct.has_totals_row,
+                });
             }
         }
     }

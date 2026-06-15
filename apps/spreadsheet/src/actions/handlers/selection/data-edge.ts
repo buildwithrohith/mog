@@ -19,10 +19,6 @@ import type {
 } from './helpers';
 import { handled } from './helpers';
 
-// =============================================================================
-// Data-Edge Navigation Handlers (Ctrl+Arrow)
-// =============================================================================
-
 /**
  * Move to data edge in a direction.
  * Uses Rust bridge findDataEdge to find target cell, then dispatches GO_TO.
@@ -34,9 +30,7 @@ async function moveToDataEdge(
 ): Promise<ActionResult> {
   const activeCell = deps.accessors.selection.getActiveCell();
   const ws = deps.workbook.activeSheet;
-
   const targetCell = await ws.findDataEdge(activeCell.row, activeCell.col, direction);
-
   deps.commands.selection.goTo(targetCell);
   return handled();
 }
@@ -77,8 +71,8 @@ async function extendToDataEdge(
 
   const newRange = rangeFromAnchorAndCell(anchorCell, targetCell);
 
-  // activeCell stays at the anchor (Excel parity) — matches EXTEND_TO_ROW_END
-  // and EXTEND_TO_LAST_USED_CELL in home-end.ts.
+  // Physical Shift-extension keeps the anchor as the active cell. The moving
+  // edge still drives range growth and viewport-follow through the range shape.
   deps.commands.selection.setSelection([newRange], anchorCell, anchorCell);
   return handled();
 }

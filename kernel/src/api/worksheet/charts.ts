@@ -36,7 +36,9 @@ import {
   assertSupportedNativeXlsxChartConfig,
   awaitChartReadScope,
   awaitSheetMaterialized,
+  chartSeriesCount,
   requireChart,
+  requireChartSeriesForMutation,
   requireChartWithSeries,
   resolveChartIdInput,
 } from './chart-api-helpers';
@@ -47,6 +49,7 @@ import {
 } from '../../domain/charts/chart-public-api-converters';
 import { ensurePointsArray } from '../../domain/charts/chart-series-mutations';
 import { withInferredChartTitle } from '../../domain/charts/chart-title-inference';
+import { sliceChartTitle } from './chart-title-substring';
 import { chartNotFound, invalidChartConfig, operationFailed } from '../../errors/api';
 import { KernelError } from '../../errors';
 import { type CallableDisposable, toDisposable } from '@mog/spreadsheet-utils/disposable';
@@ -318,14 +321,15 @@ export class WorksheetChartsImpl implements WorksheetCharts {
   }
 
   async getSeries(chartId: string, index: number): Promise<SeriesConfig> {
-    const { series } = await requireChartWithSeries(this.ctx, this.sheetId, chartId);
-    if (index < 0 || index >= series.length) {
+    const { chart, series } = await requireChartWithSeries(this.ctx, this.sheetId, chartId);
+    const seriesCount = chartSeriesCount(chart);
+    if (index < 0 || index >= seriesCount) {
       throw operationFailed(
         'getChartSeries',
-        `Series index ${index} out of range (0-${series.length - 1})`,
+        `Series index ${index} out of range (0-${seriesCount - 1})`,
       );
     }
-    return series[index];
+    return series[index] ?? {};
   }
 
   async updateSeries(
@@ -333,20 +337,20 @@ export class WorksheetChartsImpl implements WorksheetCharts {
     index: number,
     updates: Partial<SeriesConfig>,
   ): Promise<void> {
-    const { series } = await requireChartWithSeries(this.ctx, this.sheetId, chartId);
-    if (index < 0 || index >= series.length) {
-      throw operationFailed(
-        'updateChartSeries',
-        `Series index ${index} out of range (0-${series.length - 1})`,
-      );
-    }
+    const { series } = await requireChartSeriesForMutation(
+      this.ctx,
+      this.sheetId,
+      chartId,
+      index,
+      'updateChartSeries',
+    );
     series[index] = { ...series[index], ...updates };
     await applyUpdate(this.ctx, this.sheetId, chartId, { series });
   }
 
   async getSeriesCount(chartId: string): Promise<number> {
-    const { series } = await requireChartWithSeries(this.ctx, this.sheetId, chartId);
-    return series.length;
+    const { chart } = await requireChartWithSeries(this.ctx, this.sheetId, chartId);
+    return chartSeriesCount(chart);
   }
 
   async reorderSeries(chartId: string, fromIndex: number, toIndex: number): Promise<void> {
@@ -386,13 +390,13 @@ export class WorksheetChartsImpl implements WorksheetCharts {
     pointIndex: number,
     format: { fill?: string; border?: ChartBorder },
   ): Promise<void> {
-    const { series } = await requireChartWithSeries(this.ctx, this.sheetId, chartId);
-    if (seriesIndex < 0 || seriesIndex >= series.length) {
-      throw operationFailed(
-        'formatChartPoint',
-        `Series index ${seriesIndex} out of range (0-${series.length - 1})`,
-      );
-    }
+    const { series } = await requireChartSeriesForMutation(
+      this.ctx,
+      this.sheetId,
+      chartId,
+      seriesIndex,
+      'formatChartPoint',
+    );
 
     const points = ensurePointsArray(series[seriesIndex], pointIndex);
     points[pointIndex] = { ...points[pointIndex], ...format };
@@ -407,13 +411,13 @@ export class WorksheetChartsImpl implements WorksheetCharts {
     pointIndex: number,
     config: DataLabelConfig,
   ): Promise<void> {
-    const { series } = await requireChartWithSeries(this.ctx, this.sheetId, chartId);
-    if (seriesIndex < 0 || seriesIndex >= series.length) {
-      throw operationFailed(
-        'setChartPointDataLabel',
-        `Series index ${seriesIndex} out of range (0-${series.length - 1})`,
-      );
-    }
+    const { series } = await requireChartSeriesForMutation(
+      this.ctx,
+      this.sheetId,
+      chartId,
+      seriesIndex,
+      'setChartPointDataLabel',
+    );
 
     const points = ensurePointsArray(series[seriesIndex], pointIndex);
     points[pointIndex] = { ...points[pointIndex], dataLabel: config };
@@ -431,13 +435,13 @@ export class WorksheetChartsImpl implements WorksheetCharts {
     seriesIndex: number,
     trendline: TrendlineConfig,
   ): Promise<number> {
-    const { series } = await requireChartWithSeries(this.ctx, this.sheetId, chartId);
-    if (seriesIndex < 0 || seriesIndex >= series.length) {
-      throw operationFailed(
-        'addTrendline',
-        `Series index ${seriesIndex} out of range (0-${series.length - 1})`,
-      );
-    }
+    const { series } = await requireChartSeriesForMutation(
+      this.ctx,
+      this.sheetId,
+      chartId,
+      seriesIndex,
+      'addTrendline',
+    );
     const trendlines = [...(series[seriesIndex].trendlines ?? [])];
     trendlines.push(trendline);
     series[seriesIndex] = { ...series[seriesIndex], trendlines };
@@ -474,26 +478,26 @@ export class WorksheetChartsImpl implements WorksheetCharts {
     seriesIndex: number,
     trendlineIndex: number,
   ): Promise<TrendlineConfig | null> {
-    const { series } = await requireChartWithSeries(this.ctx, this.sheetId, chartId);
-    if (seriesIndex < 0 || seriesIndex >= series.length) {
-      throw operationFailed(
-        'getTrendline',
-        `Series index ${seriesIndex} out of range (0-${series.length - 1})`,
-      );
-    }
+    const { series } = await requireChartSeriesForMutation(
+      this.ctx,
+      this.sheetId,
+      chartId,
+      seriesIndex,
+      'getTrendline',
+    );
     const trendlines = series[seriesIndex].trendlines ?? [];
     if (trendlineIndex < 0 || trendlineIndex >= trendlines.length) return null;
     return trendlines[trendlineIndex] ?? null;
   }
 
   async getTrendlineCount(chartId: string, seriesIndex: number): Promise<number> {
-    const { series } = await requireChartWithSeries(this.ctx, this.sheetId, chartId);
-    if (seriesIndex < 0 || seriesIndex >= series.length) {
-      throw operationFailed(
-        'getTrendlineCount',
-        `Series index ${seriesIndex} out of range (0-${series.length - 1})`,
-      );
-    }
+    const { series } = await requireChartSeriesForMutation(
+      this.ctx,
+      this.sheetId,
+      chartId,
+      seriesIndex,
+      'getTrendlineCount',
+    );
     return (series[seriesIndex].trendlines ?? []).length;
   }
 
@@ -530,14 +534,15 @@ export class WorksheetChartsImpl implements WorksheetCharts {
   // ===========================================================================
 
   async getSeriesBinOptions(chartId: string, seriesIndex: number): Promise<HistogramConfig | null> {
-    const { series } = await requireChartWithSeries(this.ctx, this.sheetId, chartId);
-    if (seriesIndex < 0 || seriesIndex >= series.length) {
+    const { chart, series } = await requireChartWithSeries(this.ctx, this.sheetId, chartId);
+    const seriesCount = chartSeriesCount(chart);
+    if (seriesIndex < 0 || seriesIndex >= seriesCount) {
       throw operationFailed(
         'getSeriesBinOptions',
-        `Series index ${seriesIndex} out of range (0-${series.length - 1})`,
+        `Series index ${seriesIndex} out of range (0-${seriesCount - 1})`,
       );
     }
-    return series[seriesIndex].binOptions ?? null;
+    return series[seriesIndex]?.binOptions ?? null;
   }
 
   async setSeriesBinOptions(
@@ -552,14 +557,15 @@ export class WorksheetChartsImpl implements WorksheetCharts {
     chartId: string,
     seriesIndex: number,
   ): Promise<BoxplotConfig | null> {
-    const { series } = await requireChartWithSeries(this.ctx, this.sheetId, chartId);
-    if (seriesIndex < 0 || seriesIndex >= series.length) {
+    const { chart, series } = await requireChartWithSeries(this.ctx, this.sheetId, chartId);
+    const seriesCount = chartSeriesCount(chart);
+    if (seriesIndex < 0 || seriesIndex >= seriesCount) {
       throw operationFailed(
         'getSeriesBoxwhiskerOptions',
-        `Series index ${seriesIndex} out of range (0-${series.length - 1})`,
+        `Series index ${seriesIndex} out of range (0-${seriesCount - 1})`,
       );
     }
-    return series[seriesIndex].boxwhiskerOptions ?? null;
+    return series[seriesIndex]?.boxwhiskerOptions ?? null;
   }
 
   async setSeriesBoxwhiskerOptions(
@@ -803,14 +809,15 @@ export class WorksheetChartsImpl implements WorksheetCharts {
     seriesIndex: number,
     dimension: ChartSeriesDimension,
   ): Promise<string> {
-    const { series } = await requireChartWithSeries(this.ctx, this.sheetId, chartId);
-    if (seriesIndex < 0 || seriesIndex >= series.length) {
+    const { chart, series } = await requireChartWithSeries(this.ctx, this.sheetId, chartId);
+    const seriesCount = chartSeriesCount(chart);
+    if (seriesIndex < 0 || seriesIndex >= seriesCount) {
       throw operationFailed(
         'getSeriesDimensionDataSourceString',
-        `Series index ${seriesIndex} out of range (0-${series.length - 1})`,
+        `Series index ${seriesIndex} out of range (0-${seriesCount - 1})`,
       );
     }
-    const s = series[seriesIndex];
+    const s = series[seriesIndex] ?? {};
     switch (dimension) {
       case 'categories':
         return s.categories ?? '';
@@ -855,23 +862,21 @@ export class WorksheetChartsImpl implements WorksheetCharts {
   }
 
   async setDataLabelHeight(
-    _chartId: string,
-    _seriesIndex: number,
-    _pointIndex: number,
-    _value: number,
+    chartId: string,
+    seriesIndex: number,
+    pointIndex: number,
+    value: number,
   ): Promise<void> {
-    // Stub: layout dimensions interact with the render engine.
-    throw operationFailed('setDataLabelHeight', 'Not implemented');
+    await this.setDataLabelDimension(chartId, seriesIndex, pointIndex, 'height', value);
   }
 
   async setDataLabelWidth(
-    _chartId: string,
-    _seriesIndex: number,
-    _pointIndex: number,
-    _value: number,
+    chartId: string,
+    seriesIndex: number,
+    pointIndex: number,
+    value: number,
   ): Promise<void> {
-    // Stub: layout dimensions interact with the render engine.
-    throw operationFailed('setDataLabelWidth', 'Not implemented');
+    await this.setDataLabelDimension(chartId, seriesIndex, pointIndex, 'width', value);
   }
 
   async getDataLabelTailAnchor(
@@ -883,22 +888,69 @@ export class WorksheetChartsImpl implements WorksheetCharts {
     return { row: 0, col: 0 };
   }
 
+  private async setDataLabelDimension(
+    chartId: string,
+    seriesIndex: number,
+    pointIndex: number,
+    dimension: 'height' | 'width',
+    value: number,
+  ): Promise<void> {
+    if (!Number.isFinite(value) || value < 0) {
+      throw operationFailed(
+        dimension === 'height' ? 'setDataLabelHeight' : 'setDataLabelWidth',
+        `${dimension} must be a non-negative finite number`,
+      );
+    }
+    if (!Number.isInteger(pointIndex) || pointIndex < 0) {
+      throw operationFailed(
+        dimension === 'height' ? 'setDataLabelHeight' : 'setDataLabelWidth',
+        `Point index ${pointIndex} out of range`,
+      );
+    }
+
+    const { series } = await requireChartSeriesForMutation(
+      this.ctx,
+      this.sheetId,
+      chartId,
+      seriesIndex,
+      dimension === 'height' ? 'setDataLabelHeight' : 'setDataLabelWidth',
+    );
+
+    const updatedSeries = [...series];
+    const targetSeries = { ...updatedSeries[seriesIndex] };
+    const points = ensurePointsArray(targetSeries, pointIndex);
+    const currentPoint = points[pointIndex];
+    points[pointIndex] = {
+      ...currentPoint,
+      dataLabel: {
+        show: currentPoint.dataLabel?.show ?? true,
+        ...currentPoint.dataLabel,
+        [dimension]: value,
+      },
+    };
+    targetSeries.points = points;
+    updatedSeries[seriesIndex] = targetSeries;
+    await applyUpdate(this.ctx, this.sheetId, chartId, { series: updatedSeries });
+  }
+
   // ===========================================================================
   // Title Methods
   // ===========================================================================
 
   async setTitleFormula(chartId: string, formula: string): Promise<void> {
-    // Store formula as title text. Display value resolution requires compute bridge.
-    await applyUpdate(this.ctx, this.sheetId, chartId, { title: formula });
+    // Keep the formula in the dedicated metadata field. Until chart-title
+    // formula evaluation is available, do not expose the raw formula as
+    // rendered title text.
+    await applyUpdate(this.ctx, this.sheetId, chartId, { title: null, titleFormula: formula });
   }
 
   async getTitleSubstring(
-    _chartId: string,
-    _start: number,
-    _length: number,
+    chartId: string,
+    start: number,
+    length: number,
   ): Promise<ChartFormatString> {
-    // Stub: requires rich text model for titles.
-    return { text: '' };
+    const chart = await requireChart(this.ctx, this.sheetId, chartId);
+    return sliceChartTitle(chart, start, length);
   }
 
   // ===========================================================================

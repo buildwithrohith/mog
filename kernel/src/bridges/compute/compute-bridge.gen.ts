@@ -2,7 +2,7 @@
 
 import type { BridgeTransport } from '@rust-bridge/client';
 import type { ComputeCore } from './compute-core';
-import type { A1CellRef, A1RangeRef, AutoExpansionResult, BatchCellInput, BatchRangeRequest, BatchRangeResponse, BridgeAutoFillRequest, BridgeFlashFillRequest, BridgeSortOptions, CFColorScale, CFDataBar, CFIconSetName, CFIconSetPreset, CFPresetCategory, CFRule, CacheInvalidationEventReason, Table as CanonicalTable, CellCFResult, CalculationSettings, ChartStatistics, Comment, CommentMention, CommentType, CellEdit, CellInput, CellPosition, CellPositionResult, CellInfo, CellStyleDef, CellMergeInfo, SheetPos, CellValidationResult, ColumnEdge, ColumnFilter, AdvancedFilterRequest, DynamicFilterRule, ConditionalFormat, CopyType, CreateBindingInput, CreateShapeConfig, DefaultFont, DefinedName, DefinedNameInput, DefinedNameWire, DisconnectionEventReason, DocumentProperties, FilterHeaderInfo, FilterRecordCount, FilterSortState, FilterState, FormulaReferenceDiagnosticsOptions, FormulaReferenceDiagnosticsPage, RuntimeDiagnosticsOptions, RuntimeDiagnosticsPage, FloatingObjectBounds, FlipAxis, FrozenPanes, GroupDefinition, IdentityCell, ImportDiagnostic, MergeRegion, MoveTarget, MutationResult, NameValidationResult, NamedRangeUpdate, OutlineLevel, OutlineLevelButton, OutlineRenderData, OutlineSettingsUpdate, OutlineSymbol, ProjectionData, ProtectedWorkbookOperation, RawCellData, RangeQueryResult, RangeSchema, RectBounds, RowEdge, RegexSearchOptions, RegexSearchResult, ResolvedMergedRegion, ResizeConfig, Scenario, ScenarioActiveState, ScenarioCreateInput, ScenarioUpdateInput, SelectionAggregates, SetCellsBatchResult, FloatingObject, SerializedFloatingObjectGroup, ShapeStyleUpdate, SheetDataBinding, FindInRangeOptions, FindInRangeResult, WorkbookSearchResult, SignCheckOptions, SignCheckResult, SheetGroupingConfig, SheetMeta, SheetProtectionConfig, SheetProtectionOptions, SheetScrollPosition, SheetSettings, SheetSnapshot, SheetViewOptions, SplitViewConfig, SlicerItem, StoredSlicer, StoredSlicerUpdate, SlicerCustomStyle, NamedSlicerStyle, CsvImportOptions, PivotFieldItems, ImportedPivotViewRecord, PivotTableConfig, PivotTableResult, PivotField, HeaderFooterImageInfo, HfImagePosition, PrintRange, PrintSettings, PrintTitles, Sparkline, SparklineGroup, SparklineUpdate, SubtotalOptions, CustomTableStyleConfig, TableBoolOption, TableColumn, TableHitRegion, TableNameValidationResult, TableTopBottomFilter, TextToColumnsOptions, ThemeData, Transform, TotalsFunction, UndoState, UpdateBindingFields, RustWorkbookSettingsPatch, Viewport, WorkbookProtectionOptions, WorkbookComment, WorkbookPivotTable, WorkbookSettings, WorkbookTable, ZOrderEntry } from './compute-types.gen';
+import type { A1CellRef, A1RangeRef, AutoExpansionResult, BatchCellInput, BatchRangeRequest, BatchRangeResponse, BridgeAutoFillRequest, BridgeFlashFillRequest, BridgeSortOptions, CFColorScale, CFDataBar, CFIconSetName, CFIconSetPreset, CFPresetCategory, CFRule, CacheInvalidationEventReason, Table as CanonicalTable, CellCFResult, CalculationSettings, ChartStatistics, Comment, CommentMention, CommentType, CellEdit, CellInput, CellPosition, CellPositionResult, CellInfo, CellStyleDef, CellMergeInfo, SheetPos, CellValidationResult, ColumnEdge, ColumnFilter, AdvancedFilterRequest, DynamicFilterRule, ConditionalFormat, CopyType, CreateBindingInput, CreateShapeConfig, DefaultFont, DefinedName, DefinedNameInput, DefinedNameWire, DisconnectionEventReason, DocumentProperties, FilterHeaderInfo, FilterRecordCount, FilterSortState, FilterState, FormulaReferenceDiagnosticsOptions, FormulaReferenceDiagnosticsPage, RuntimeDiagnosticsOptions, RuntimeDiagnosticsPage, FloatingObjectBounds, FlipAxis, FrozenPanes, GroupDefinition, Hyperlink, IdentityCell, ImportDiagnostic, MergeRegion, MoveTarget, MutationResult, NameValidationResult, NamedRangeUpdate, OutlineLevel, OutlineLevelButton, OutlineRenderData, OutlineSettingsUpdate, OutlineSymbol, ProjectionData, ProtectedWorkbookOperation, RawCellData, RangeQueryResult, RangeSchema, RectBounds, RowEdge, RegexSearchOptions, RegexSearchResult, ResolvedMergedRegion, ResizeConfig, Scenario, ScenarioActiveState, ScenarioCreateInput, ScenarioUpdateInput, SelectionAggregates, SetCellsBatchResult, FloatingObject, SerializedFloatingObjectGroup, ShapeStyleUpdate, SheetDataBinding, FindInRangeOptions, FindInRangeResult, WorkbookSearchResult, SignCheckOptions, SignCheckResult, SheetGroupingConfig, SheetMeta, SheetProtectionConfig, SheetProtectionOptions, SheetScrollPosition, SheetSettings, SheetSnapshot, SheetViewOptions, SplitViewConfig, SlicerItem, StoredSlicer, StoredSlicerUpdate, SlicerCustomStyle, NamedSlicerStyle, CsvImportOptions, PivotFieldItems, ImportedPivotViewRecord, PivotTableConfig, PivotTableResult, PivotField, HeaderFooterImageInfo, HfImagePosition, PrintRange, PrintSettings, PrintTitles, Sparkline, SparklineGroup, SparklineUpdate, SubtotalOptions, CustomTableStyleConfig, TableBoolOption, TableColumn, TableHitRegion, TableNameValidationResult, TableTopBottomFilter, TextToColumnsOptions, ThemeData, Transform, TotalsFunction, UndoState, UpdateBindingFields, RustWorkbookSettingsPatch, Viewport, WorkbookProtectionOptions, WorkbookComment, WorkbookPivotTable, WorkbookSettings, WorkbookTable, ZOrderEntry } from './compute-types.gen';
 import type { IdentityFormulaWire as IdentityFormula, ColumnSchemaWire as ColumnSchema, SchemaTypeWire as SchemaType, ValidationResultWire as ValidationResult, EditorTypeResolutionInputWire as EditorTypeResolutionInput, EditorTypeResolutionResultWire as EditorTypeResolutionResult, InferredSchemaWire as InferredSchema, NamedRangeDef, DataRow, Point, RegressionMethod, RegressionOptions, RegressionOutput, DensityResult, HistogramBin, StackInput, StackMode, StackOutput, FormatEntry, DateValueResult, ParsedDateInput, FormulaCircularReferenceValidation, CFRuleWire, CfPresets, GoalSeekParams, GoalSeekResult, CreateDataTableInput, DataTableParams, DataTableResult, SchemaMapEntryWire, PageBreaks, TableRange, SlicerSortOrder, CFCellRange } from './types';
 import type { Table, FilterCriteria, Slicer, SlicerCache, SortSpec, RowVisibility, TableCellFormat, TableStyleDef, StructuredRef, DynamicFilter, FilterDropdownData, TableStructureChange } from '@mog/table-engine';
 import type { CellFormat, CellValue, SheetId } from '@mog-sdk/contracts/core';
@@ -117,6 +117,7 @@ export interface GeneratedBridgeMethods {
   encodeDiff(remoteSv: Uint8Array): Promise<Uint8Array>;
   drainPendingUpdates(): Promise<Uint8Array[]>;
   flushUndoCapture(): Promise<MutationResult>;
+  captureScreenshot(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number, dpr: number, showHeaders: boolean, showGridlines: boolean, maxWidth: number | null, maxHeight: number | null): Promise<Uint8Array>;
   createScenario(input: ScenarioCreateInput): Promise<MutationResult>;
   updateScenario(scenarioId: string, input: ScenarioUpdateInput): Promise<MutationResult>;
   removeScenario(scenarioId: string): Promise<MutationResult>;
@@ -604,6 +605,7 @@ export interface GeneratedBridgeMethods {
   setHyperlink(sheetId: SheetId, row: number, col: number, url: string): Promise<MutationResult>;
   removeHyperlink(sheetId: SheetId, row: number, col: number): Promise<MutationResult>;
   getHyperlink(sheetId: SheetId, row: number, col: number): Promise<string | null>;
+  getHyperlinks(sheetId: SheetId): Promise<Hyperlink[]>;
   clearHyperlinksInRange(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<MutationResult>;
   pivotCreate(config: unknown): Promise<MutationResult>;
   pivotUpdate(sheetId: SheetId, pivotId: string, config: PivotTableConfig): Promise<MutationResult>;
@@ -1073,6 +1075,10 @@ export class GeneratedBridgeBase implements GeneratedBridgeMethods {
 
   flushUndoCapture(): Promise<MutationResult> {
     return this.core.mutateSystem('compute_flush_undo_capture', () => this.core.transport.call<[Uint8Array, MutationResult]>('compute_flush_undo_capture', { docId: this.core.docId }));
+  }
+
+  captureScreenshot(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number, dpr: number, showHeaders: boolean, showGridlines: boolean, maxWidth: number | null, maxHeight: number | null): Promise<Uint8Array> {
+    return this.core.query(this.core.transport.call<Uint8Array>('compute_capture_screenshot', { docId: this.core.docId, sheetId, startRow, startCol, endRow, endCol, dpr, showHeaders, showGridlines, maxWidth, maxHeight }));
   }
 
   createScenario(input: ScenarioCreateInput): Promise<MutationResult> {
@@ -2151,6 +2157,14 @@ export class GeneratedBridgeBase implements GeneratedBridgeMethods {
     return this.core.mutatePublic('compute_set_col_format', () => this.core.transport.call<[Uint8Array, MutationResult]>('compute_set_col_format', { docId: this.core.docId, sheetId, col, format }));
   }
 
+  clearColFormat(sheetId: SheetId, col: number): Promise<MutationResult> {
+    return this.core.mutatePublic('compute_clear_col_format', () => this.core.transport.call<[Uint8Array, MutationResult]>('compute_clear_col_format', { docId: this.core.docId, sheetId, col }));
+  }
+
+  setColFormatRange(sheetId: SheetId, startCol: number, endCol: number, format: CellFormat): Promise<MutationResult> {
+    return this.core.mutatePublic('compute_set_col_format_range', () => this.core.transport.call<[Uint8Array, MutationResult]>('compute_set_col_format_range', { docId: this.core.docId, sheetId, startCol, endCol, format }));
+  }
+
   getRowFormats(sheetId: SheetId, rows: number[]): Promise<[number, CellFormat | null][]> {
     return this.core.query(this.core.transport.call<[number, CellFormat | null][]>('compute_get_row_formats', { docId: this.core.docId, sheetId, rows }));
   }
@@ -3021,6 +3035,10 @@ export class GeneratedBridgeBase implements GeneratedBridgeMethods {
 
   getHyperlink(sheetId: SheetId, row: number, col: number): Promise<string | null> {
     return this.core.query(this.core.transport.call<string | null>('compute_get_hyperlink', { docId: this.core.docId, sheetId, row, col }));
+  }
+
+  getHyperlinks(sheetId: SheetId): Promise<Hyperlink[]> {
+    return this.core.query(this.core.transport.call<Hyperlink[]>('compute_get_hyperlinks', { docId: this.core.docId, sheetId }));
   }
 
   clearHyperlinksInRange(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<MutationResult> {

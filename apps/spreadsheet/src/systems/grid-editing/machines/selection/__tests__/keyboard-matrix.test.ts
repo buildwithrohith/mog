@@ -89,30 +89,30 @@ describe('Arrow key movement (moveActiveCell)', () => {
     },
   );
 
-  describe('Arrow keys collapse multi-cell selection (Excel parity)', () => {
+  describe('Arrow keys collapse multi-cell selection after stepping from active cell', () => {
     it.each([
       {
         direction: 'up' as const,
-        expected: { row: 0, col: 1 },
-        desc: 'collapses to top edge, same column',
+        expected: { row: 1, col: 2 },
+        desc: 'one row up from active cell',
       },
       {
         direction: 'down' as const,
-        expected: { row: 2, col: 1 },
-        desc: 'collapses to bottom edge, same column',
+        expected: { row: 3, col: 2 },
+        desc: 'one row down from active cell',
       },
       {
         direction: 'left' as const,
-        expected: { row: 1, col: 0 },
-        desc: 'collapses to left edge, same row',
+        expected: { row: 2, col: 1 },
+        desc: 'one column left from active cell',
       },
       {
         direction: 'right' as const,
-        expected: { row: 1, col: 2 },
-        desc: 'collapses to right edge, same row',
+        expected: { row: 2, col: 3 },
+        desc: 'one column right from active cell',
       },
     ])(
-      '$direction from A1:C3 (activeCell B2) - $desc',
+      '$direction from A1:E5 (activeCell C3) - $desc',
       ({
         direction,
         expected,
@@ -123,8 +123,8 @@ describe('Arrow key movement (moveActiveCell)', () => {
       }) => {
         const context: SelectionContext = {
           ...initialSelectionContext,
-          activeCell: { row: 1, col: 1 }, // B2 - middle of range
-          pendingRange: { startRow: 0, startCol: 0, endRow: 2, endCol: 2 }, // A1:C3
+          activeCell: { row: 2, col: 2 }, // C3 - middle of range
+          pendingRange: { startRow: 0, startCol: 0, endRow: 4, endCol: 4 }, // A1:E5
           anchor: { row: 0, col: 0 },
         };
 
@@ -233,33 +233,25 @@ describe('Shift+Arrow selection extension (extendSelection)', () => {
     {
       direction: 'down' as const,
       firstRange: { startRow: 4, startCol: 1, endRow: 5, endCol: 1 },
-      firstEdge: { row: 5, col: 1 },
       secondRange: { startRow: 4, startCol: 1, endRow: 6, endCol: 1 },
-      secondEdge: { row: 6, col: 1 },
       desc: 'extends downward',
     },
     {
       direction: 'up' as const,
       firstRange: { startRow: 3, startCol: 1, endRow: 4, endCol: 1 },
-      firstEdge: { row: 3, col: 1 },
       secondRange: { startRow: 2, startCol: 1, endRow: 4, endCol: 1 },
-      secondEdge: { row: 2, col: 1 },
       desc: 'extends upward',
     },
     {
       direction: 'right' as const,
       firstRange: { startRow: 4, startCol: 1, endRow: 4, endCol: 2 },
-      firstEdge: { row: 4, col: 2 },
       secondRange: { startRow: 4, startCol: 1, endRow: 4, endCol: 3 },
-      secondEdge: { row: 4, col: 3 },
       desc: 'extends rightward',
     },
     {
       direction: 'left' as const,
       firstRange: { startRow: 4, startCol: 0, endRow: 4, endCol: 1 },
-      firstEdge: { row: 4, col: 0 },
       secondRange: { startRow: 4, startCol: 0, endRow: 4, endCol: 1 },
-      secondEdge: { row: 4, col: 0 },
       desc: 'extends leftward (hits edge at A)',
     },
   ])(
@@ -267,15 +259,11 @@ describe('Shift+Arrow selection extension (extendSelection)', () => {
     ({
       direction,
       firstRange,
-      firstEdge,
       secondRange,
-      secondEdge,
     }: {
       direction: 'up' | 'down' | 'left' | 'right';
       firstRange: { startRow: number; startCol: number; endRow: number; endCol: number };
-      firstEdge: { row: number; col: number };
       secondRange: { startRow: number; startCol: number; endRow: number; endCol: number };
-      secondEdge: { row: number; col: number };
       desc: string;
     }) => {
       it('first Shift+arrow creates range', () => {
@@ -295,15 +283,13 @@ describe('Shift+Arrow selection extension (extendSelection)', () => {
         const result = callAction('extendSelection', context, event);
 
         expect(result.pendingRange).toEqual(firstRange);
-        // Excel parity: activeCell stays pinned at the anchor (B5)
-        expect(result.activeCell).toEqual({ row: 4, col: 1 });
         expect(result.anchor).toEqual({ row: 4, col: 1 });
+        expect(result.activeCell).toEqual({ row: 4, col: 1 });
       });
 
       it('second Shift+arrow extends further', () => {
         const context: SelectionContext = {
           ...initialSelectionContext,
-          // After first Shift+arrow, activeCell stayed at the anchor
           activeCell: { row: 4, col: 1 },
           pendingRange: firstRange,
           anchor: { row: 4, col: 1 },
@@ -318,9 +304,8 @@ describe('Shift+Arrow selection extension (extendSelection)', () => {
         const result = callAction('extendSelection', context, event);
 
         expect(result.pendingRange).toEqual(secondRange);
-        // Excel parity: activeCell stays pinned at the anchor (B5)
-        expect(result.activeCell).toEqual({ row: 4, col: 1 });
         expect(result.anchor).toEqual({ row: 4, col: 1 });
+        expect(result.activeCell).toEqual({ row: 4, col: 1 });
       });
     },
   );
@@ -329,7 +314,7 @@ describe('Shift+Arrow selection extension (extendSelection)', () => {
     it('Shift+Up from B5:B6 (anchor B5) shrinks to B5:B5', () => {
       const context: SelectionContext = {
         ...initialSelectionContext,
-        activeCell: { row: 5, col: 1 }, // B6 (moving edge)
+        activeCell: { row: 4, col: 1 }, // B5 (anchor)
         pendingRange: { startRow: 4, startCol: 1, endRow: 5, endCol: 1 }, // B5:B6 (extended down)
         anchor: { row: 4, col: 1 },
       };
@@ -356,7 +341,7 @@ describe('Shift+Arrow selection extension (extendSelection)', () => {
     it('Shift+Down from B3:B5 (anchor B5) shrinks to B4:B5', () => {
       const context: SelectionContext = {
         ...initialSelectionContext,
-        activeCell: { row: 2, col: 1 }, // B3 (moving edge)
+        activeCell: { row: 4, col: 1 }, // B5 (anchor)
         pendingRange: { startRow: 2, startCol: 1, endRow: 4, endCol: 1 }, // B3:B5 (extended up)
         anchor: { row: 4, col: 1 },
       };
@@ -376,7 +361,6 @@ describe('Shift+Arrow selection extension (extendSelection)', () => {
         endRow: 4,
         endCol: 1,
       });
-      // Excel parity: activeCell stays pinned at the anchor (B5)
       expect(result.activeCell).toEqual({ row: 4, col: 1 });
       expect(result.anchor).toEqual({ row: 4, col: 1 });
     });
@@ -549,7 +533,6 @@ describe('Ctrl+Shift+Arrow extend (jumpToEdgeExtend)', () => {
       endRow: 14,
       endCol: 1,
     });
-    // activeCell stays pinned at the anchor (B5) — Excel parity
     expect(result.activeCell).toEqual({ row: 4, col: 1 });
     expect(result.anchor).toEqual({ row: 4, col: 1 });
   });
@@ -576,7 +559,6 @@ describe('Ctrl+Shift+Arrow extend (jumpToEdgeExtend)', () => {
       endRow: 14,
       endCol: 1,
     });
-    // activeCell stays pinned at the anchor (B15) — Excel parity
     expect(result.activeCell).toEqual({ row: 14, col: 1 });
     expect(result.anchor).toEqual({ row: 14, col: 1 });
   });
@@ -584,7 +566,7 @@ describe('Ctrl+Shift+Arrow extend (jumpToEdgeExtend)', () => {
   it('anchor stays put during extend', () => {
     const context: SelectionContext = {
       ...initialSelectionContext,
-      activeCell: { row: 8, col: 1 }, // B9 (moving edge)
+      activeCell: { row: 4, col: 1 }, // B5 (anchor)
       pendingRange: { startRow: 4, startCol: 1, endRow: 8, endCol: 1 }, // B5:B9
       anchor: { row: 4, col: 1 },
     };
@@ -604,7 +586,6 @@ describe('Ctrl+Shift+Arrow extend (jumpToEdgeExtend)', () => {
       endRow: 18,
       endCol: 1,
     });
-    // activeCell stays pinned at the anchor (B5) — Excel parity
     expect(result.activeCell).toEqual({ row: 4, col: 1 });
     expect(result.anchor).toEqual({ row: 4, col: 1 });
   });
@@ -674,7 +655,6 @@ describe('Home/End keys', () => {
         endRow: 4,
         endCol: 5,
       });
-      // activeCell stays pinned at the anchor (F5) — Excel parity
       expect(result.activeCell).toEqual({ row: 4, col: 5 });
     });
 
@@ -700,7 +680,6 @@ describe('Home/End keys', () => {
         endRow: 10,
         endCol: 10,
       });
-      // activeCell stays pinned at the anchor (K11) — Excel parity
       expect(result.activeCell).toEqual({ row: 10, col: 10 });
     });
 
@@ -728,6 +707,7 @@ describe('Home/End keys', () => {
         endRow: 6,
         endCol: 5,
       });
+      expect(result.activeCell).toEqual({ row: 4, col: 5 });
     });
   });
 
@@ -790,7 +770,6 @@ describe('Home/End keys', () => {
         endRow: 4,
         endCol: MAX_COLS - 1,
       });
-      // activeCell stays pinned at the anchor (F5) — Excel parity
       expect(result.activeCell).toEqual({ row: 4, col: 5 });
     });
 
@@ -816,7 +795,6 @@ describe('Home/End keys', () => {
         endRow: MAX_ROWS - 1,
         endCol: MAX_COLS - 1,
       });
-      // activeCell stays pinned at the anchor (F5) — Excel parity
       expect(result.activeCell).toEqual({ row: 4, col: 5 });
     });
 
@@ -843,6 +821,7 @@ describe('Home/End keys', () => {
         endRow: 6,
         endCol: MAX_COLS - 1,
       });
+      expect(result.activeCell).toEqual({ row: 4, col: 5 });
     });
   });
 });
@@ -952,7 +931,6 @@ describe('Page Up/Down/Left/Right (page actions)', () => {
         endRow: 30,
         endCol: 5,
       });
-      // activeCell stays pinned at the anchor (row 10) — Excel parity
       expect(result.activeCell).toEqual({ row: 10, col: 5 });
     });
 
@@ -978,7 +956,6 @@ describe('Page Up/Down/Left/Right (page actions)', () => {
         endRow: 30,
         endCol: 5,
       });
-      // activeCell stays pinned at the anchor (row 30) — Excel parity
       expect(result.activeCell).toEqual({ row: 30, col: 5 });
     });
   });
@@ -1080,7 +1057,6 @@ describe('Page Up/Down/Left/Right (page actions)', () => {
         endRow: 5,
         endCol: 20,
       });
-      // activeCell stays pinned at the anchor (col 10) — Excel parity
       expect(result.activeCell).toEqual({ row: 5, col: 10 });
     });
 
@@ -1106,7 +1082,6 @@ describe('Page Up/Down/Left/Right (page actions)', () => {
         endRow: 5,
         endCol: 20,
       });
-      // activeCell stays pinned at the anchor (col 20) — Excel parity
       expect(result.activeCell).toEqual({ row: 5, col: 20 });
     });
   });

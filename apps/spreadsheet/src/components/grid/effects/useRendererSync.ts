@@ -18,14 +18,7 @@ import { useEffect } from 'react';
 
 import type { SheetCoordinator } from '../../../coordinator/sheet-coordinator';
 import { lifecycleDebug } from '../../../systems/renderer/debug/debug-lifecycle';
-
-/**
- * Workbook settings for scrollbar visibility.
- */
-interface WorkbookSettings {
-  showHorizontalScrollbar: boolean;
-  showVerticalScrollbar: boolean;
-}
+import type { GridScrollbarSettings } from '../layout/viewport-size';
 
 /**
  * Options for the useRendererSync hook.
@@ -42,7 +35,7 @@ export interface UseRendererSyncOptions {
   /** Current zoom level for the active sheet (already resolved from UIStore) */
   currentZoom: number;
   /** Workbook settings for scrollbar visibility */
-  workbookSettings: WorkbookSettings;
+  workbookSettings: GridScrollbarSettings;
   /** The sheet coordinator instance */
   coordinator: SheetCoordinator;
   /** Resize callback from renderer hook */
@@ -57,6 +50,29 @@ export interface UseRendererSyncOptions {
   setZoom: (zoom: number) => void;
   /** Unmount callback from renderer hook */
   unmount: () => void;
+}
+
+export interface RendererZoomSyncOptions {
+  /** Current zoom level for the active sheet */
+  currentZoom: number;
+  /** The sheet coordinator instance */
+  coordinator: SheetCoordinator;
+  /** Set zoom callback from renderer hook */
+  setZoom: (zoom: number) => void;
+}
+
+/**
+ * Apply sheet zoom and keep the current active cell visible after the viewport
+ * cell span changes.
+ */
+export function syncRendererZoom(options: RendererZoomSyncOptions): void {
+  const { currentZoom, coordinator, setZoom } = options;
+  setZoom(currentZoom);
+
+  const activeCell = coordinator.grid.access.accessors.selection.getActiveCell();
+  if (activeCell) {
+    coordinator.renderer.scrollToActiveCell(activeCell);
+  }
 }
 
 /**
@@ -191,9 +207,8 @@ export function useRendererSync(options: UseRendererSyncOptions): void {
   useEffect(() => {
     if (!isReady) return;
 
-    // Apply zoom to renderer
-    setZoom(currentZoom);
-  }, [isReady, currentZoom, setZoom]);
+    syncRendererZoom({ currentZoom, coordinator, setZoom });
+  }, [isReady, currentZoom, coordinator, setZoom]);
 
   // Input dependencies effect
   // Sets up InputCoordinator dependencies when renderer is ready.
