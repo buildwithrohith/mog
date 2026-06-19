@@ -49702,10 +49702,10 @@
           }
         },
         "getCurrentRegion": {
-          "signature": "getCurrentRegion(row: number, col: number): Promise<CellRange>;",
+          "signature": "getCurrentRegion(row: number, col: number): Promise<WorksheetRange>;",
           "docstring": "Get the contiguous data region around a cell (Excel's Ctrl+Shift+* / CurrentRegion).",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "Worksheet.getCurrentRegion",
           "canonicalPath": "ws.getCurrentRegion",
@@ -49746,13 +49746,13 @@
               "kind": "promise",
               "inner": {
                 "kind": "objectRef",
-                "name": "CellRange"
+                "name": "WorksheetRange"
               }
             },
-            "typeText": "Promise<CellRange>"
+            "typeText": "Promise<WorksheetRange>"
           },
           "typeScript": {
-            "signature": "getCurrentRegion(row: number, col: number): Promise<CellRange>;",
+            "signature": "getCurrentRegion(row: number, col: number): Promise<WorksheetRange>;",
             "parameters": [
               {
                 "name": "row",
@@ -49763,7 +49763,7 @@
                 "typeText": "number"
               }
             ],
-            "returnTypeText": "Promise<CellRange>"
+            "returnTypeText": "Promise<WorksheetRange>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -50049,10 +50049,10 @@
           }
         },
         "getExtendedRange": {
-          "signature": "getExtendedRange(\n    range: string,\n    direction: 'up' | 'down' | 'left' | 'right',\n    activeCell?: { row: number; col: number },\n  ): Promise<CellRange>;",
-          "docstring": "Get the extended range in a direction (spreadsheet special-cell typeRange.getExtendedRange / Ctrl+Shift+Arrow).\n\nFrom the active cell (default: top-left of range), finds the data edge in the given\ndirection and returns a range extending from the original range to that edge.\n\n@param range - A1 range string (current selection)\n@param direction - Direction to extend\n@param activeCell - Optional active cell override (default: top-left of range)\n@returns Extended range as CellRange",
+          "signature": "getExtendedRange(\n    range: string,\n    direction: 'up' | 'down' | 'left' | 'right',\n    activeCell?: { row: number; col: number },\n  ): Promise<WorksheetRange>;",
+          "docstring": "Get the extended range in a direction (spreadsheet special-cell typeRange.getExtendedRange / Ctrl+Shift+Arrow).\n\nFrom the active cell (default: top-left of range), finds the data edge in the given\ndirection and returns a range extending from the original range to that edge.\n\n@param range - A1 range string (current selection)\n@param direction - Direction to extend\n@param activeCell - Optional active cell override (default: top-left of range)\n@returns Extended range as a worksheet-scoped public range",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "Worksheet.getExtendedRange",
           "canonicalPath": "ws.getExtendedRange",
@@ -50122,13 +50122,13 @@
               "kind": "promise",
               "inner": {
                 "kind": "objectRef",
-                "name": "CellRange"
+                "name": "WorksheetRange"
               }
             },
-            "typeText": "Promise<CellRange>"
+            "typeText": "Promise<WorksheetRange>"
           },
           "typeScript": {
-            "signature": "getExtendedRange(\n    range: string,\n    direction: 'up' | 'down' | 'left' | 'right',\n    activeCell?: { row: number; col: number },\n  ): Promise<CellRange>;",
+            "signature": "getExtendedRange(\n    range: string,\n    direction: 'up' | 'down' | 'left' | 'right',\n    activeCell?: { row: number; col: number },\n  ): Promise<WorksheetRange>;",
             "parameters": [
               {
                 "name": "range",
@@ -50143,7 +50143,7 @@
                 "typeText": "{row:number;col:number}"
               }
             ],
-            "returnTypeText": "Promise<CellRange>"
+            "returnTypeText": "Promise<WorksheetRange>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -51722,10 +51722,10 @@
           }
         },
         "getUsedRange": {
-          "signature": "getUsedRange(): Promise<CellRange | null>;",
+          "signature": "getUsedRange(): Promise<WorksheetRange | null>;",
           "docstring": "Get the used range, or null if the sheet is empty.",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "Worksheet.getUsedRange",
           "canonicalPath": "ws.getUsedRange",
@@ -51744,7 +51744,7 @@
                 "items": [
                   {
                     "kind": "objectRef",
-                    "name": "CellRange"
+                    "name": "WorksheetRange"
                   },
                   {
                     "kind": "literal",
@@ -51753,12 +51753,12 @@
                 ]
               }
             },
-            "typeText": "Promise<CellRange|null>"
+            "typeText": "Promise<WorksheetRange|null>"
           },
           "typeScript": {
-            "signature": "getUsedRange(): Promise<CellRange | null>;",
+            "signature": "getUsedRange(): Promise<WorksheetRange | null>;",
             "parameters": [],
-            "returnTypeText": "Promise<CellRange|null>"
+            "returnTypeText": "Promise<WorksheetRange|null>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -58987,10 +58987,10 @@
           }
         },
         "getCurrentRegion": {
-          "signature": "getCurrentRegion(row: number, col: number): Promise<CellRange>;",
+          "signature": "getCurrentRegion(row: number, col: number): Promise<WorksheetRange>;",
           "docstring": "Get the contiguous data region around a cell (Excel's Ctrl+Shift+* / CurrentRegion).",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "Worksheet.getCurrentRegion",
           "canonicalPath": "ws.getCurrentRegion",
@@ -59031,13 +59031,13 @@
               "kind": "promise",
               "inner": {
                 "kind": "objectRef",
-                "name": "CellRange"
+                "name": "WorksheetRange"
               }
             },
-            "typeText": "Promise<CellRange>"
+            "typeText": "Promise<WorksheetRange>"
           },
           "typeScript": {
-            "signature": "getCurrentRegion(row: number, col: number): Promise<CellRange>;",
+            "signature": "getCurrentRegion(row: number, col: number): Promise<WorksheetRange>;",
             "parameters": [
               {
                 "name": "row",
@@ -59048,7 +59048,7 @@
                 "typeText": "number"
               }
             ],
-            "returnTypeText": "Promise<CellRange>"
+            "returnTypeText": "Promise<WorksheetRange>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -59334,10 +59334,10 @@
           }
         },
         "getExtendedRange": {
-          "signature": "getExtendedRange(\n    range: string,\n    direction: 'up' | 'down' | 'left' | 'right',\n    activeCell?: { row: number; col: number },\n  ): Promise<CellRange>;",
-          "docstring": "Get the extended range in a direction (spreadsheet special-cell typeRange.getExtendedRange / Ctrl+Shift+Arrow).\n\nFrom the active cell (default: top-left of range), finds the data edge in the given\ndirection and returns a range extending from the original range to that edge.\n\n@param range - A1 range string (current selection)\n@param direction - Direction to extend\n@param activeCell - Optional active cell override (default: top-left of range)\n@returns Extended range as CellRange",
+          "signature": "getExtendedRange(\n    range: string,\n    direction: 'up' | 'down' | 'left' | 'right',\n    activeCell?: { row: number; col: number },\n  ): Promise<WorksheetRange>;",
+          "docstring": "Get the extended range in a direction (spreadsheet special-cell typeRange.getExtendedRange / Ctrl+Shift+Arrow).\n\nFrom the active cell (default: top-left of range), finds the data edge in the given\ndirection and returns a range extending from the original range to that edge.\n\n@param range - A1 range string (current selection)\n@param direction - Direction to extend\n@param activeCell - Optional active cell override (default: top-left of range)\n@returns Extended range as a worksheet-scoped public range",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "Worksheet.getExtendedRange",
           "canonicalPath": "ws.getExtendedRange",
@@ -59407,13 +59407,13 @@
               "kind": "promise",
               "inner": {
                 "kind": "objectRef",
-                "name": "CellRange"
+                "name": "WorksheetRange"
               }
             },
-            "typeText": "Promise<CellRange>"
+            "typeText": "Promise<WorksheetRange>"
           },
           "typeScript": {
-            "signature": "getExtendedRange(\n    range: string,\n    direction: 'up' | 'down' | 'left' | 'right',\n    activeCell?: { row: number; col: number },\n  ): Promise<CellRange>;",
+            "signature": "getExtendedRange(\n    range: string,\n    direction: 'up' | 'down' | 'left' | 'right',\n    activeCell?: { row: number; col: number },\n  ): Promise<WorksheetRange>;",
             "parameters": [
               {
                 "name": "range",
@@ -59428,7 +59428,7 @@
                 "typeText": "{row:number;col:number}"
               }
             ],
-            "returnTypeText": "Promise<CellRange>"
+            "returnTypeText": "Promise<WorksheetRange>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -61007,10 +61007,10 @@
           }
         },
         "getUsedRange": {
-          "signature": "getUsedRange(): Promise<CellRange | null>;",
+          "signature": "getUsedRange(): Promise<WorksheetRange | null>;",
           "docstring": "Get the used range, or null if the sheet is empty.",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "Worksheet.getUsedRange",
           "canonicalPath": "ws.getUsedRange",
@@ -61029,7 +61029,7 @@
                 "items": [
                   {
                     "kind": "objectRef",
-                    "name": "CellRange"
+                    "name": "WorksheetRange"
                   },
                   {
                     "kind": "literal",
@@ -61038,12 +61038,12 @@
                 ]
               }
             },
-            "typeText": "Promise<CellRange|null>"
+            "typeText": "Promise<WorksheetRange|null>"
           },
           "typeScript": {
-            "signature": "getUsedRange(): Promise<CellRange | null>;",
+            "signature": "getUsedRange(): Promise<WorksheetRange | null>;",
             "parameters": [],
-            "returnTypeText": "Promise<CellRange|null>"
+            "returnTypeText": "Promise<WorksheetRange|null>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -65526,10 +65526,10 @@
           }
         },
         "getProjectionRange": {
-          "signature": "getProjectionRange(row: number, col: number): Promise<CellRange | null>;",
+          "signature": "getProjectionRange(row: number, col: number): Promise<WorksheetRange | null>;",
           "docstring": "Get the spill range for a projected (dynamic array) cell.\n\n@param row - Row index (0-based)\n@param col - Column index (0-based)\n@returns The spill range, or null if the cell is not a projection source",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "WorksheetBindings.getProjectionRange",
           "canonicalPath": "ws.bindings.getProjectionRange",
@@ -65574,7 +65574,7 @@
                 "items": [
                   {
                     "kind": "objectRef",
-                    "name": "CellRange"
+                    "name": "WorksheetRange"
                   },
                   {
                     "kind": "literal",
@@ -65583,10 +65583,10 @@
                 ]
               }
             },
-            "typeText": "Promise<CellRange|null>"
+            "typeText": "Promise<WorksheetRange|null>"
           },
           "typeScript": {
-            "signature": "getProjectionRange(row: number, col: number): Promise<CellRange | null>;",
+            "signature": "getProjectionRange(row: number, col: number): Promise<WorksheetRange | null>;",
             "parameters": [
               {
                 "name": "row",
@@ -65597,7 +65597,7 @@
                 "typeText": "number"
               }
             ],
-            "returnTypeText": "Promise<CellRange|null>"
+            "returnTypeText": "Promise<WorksheetRange|null>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -66243,10 +66243,10 @@
           }
         },
         "getProjectionRange": {
-          "signature": "getProjectionRange(row: number, col: number): Promise<CellRange | null>;",
+          "signature": "getProjectionRange(row: number, col: number): Promise<WorksheetRange | null>;",
           "docstring": "Get the spill range for a projected (dynamic array) cell.\n\n@param row - Row index (0-based)\n@param col - Column index (0-based)\n@returns The spill range, or null if the cell is not a projection source",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "WorksheetBindings.getProjectionRange",
           "canonicalPath": "ws.bindings.getProjectionRange",
@@ -66291,7 +66291,7 @@
                 "items": [
                   {
                     "kind": "objectRef",
-                    "name": "CellRange"
+                    "name": "WorksheetRange"
                   },
                   {
                     "kind": "literal",
@@ -66300,10 +66300,10 @@
                 ]
               }
             },
-            "typeText": "Promise<CellRange|null>"
+            "typeText": "Promise<WorksheetRange|null>"
           },
           "typeScript": {
-            "signature": "getProjectionRange(row: number, col: number): Promise<CellRange | null>;",
+            "signature": "getProjectionRange(row: number, col: number): Promise<WorksheetRange | null>;",
             "parameters": [
               {
                 "name": "row",
@@ -66314,7 +66314,7 @@
                 "typeText": "number"
               }
             ],
-            "returnTypeText": "Promise<CellRange|null>"
+            "returnTypeText": "Promise<WorksheetRange|null>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -111999,11 +111999,11 @@
           }
         },
         "addWithSheet": {
-          "signature": "addWithSheet(\n    sheetName: string,\n    config: PivotCreateConfig,\n    options?: PivotCreateOptions,\n  ): Promise<PivotAddWithSheetReceipt>;",
+          "signature": "addWithSheet(\n    sheetName: string,\n    config: PivotCreateConfig,\n    options?: PivotCreateWithSheetOptions,\n  ): Promise<PivotAddWithSheetReceipt>;",
           "docstring": "Atomically create a new sheet AND a pivot table on it.\nBoth operations happen in a single transaction for undo atomicity.\n\nAccepts the same simple or full config formats as `add()`.\n\n@param sheetName - Name for the new sheet\n@param config - Pivot table configuration\n@param options - Creation lifecycle; defaults to defineOnly.\n@returns A receipt containing the new sheet ID and created pivot config.",
           "usedTypes": [
             "PivotCreateConfig",
-            "PivotCreateOptions",
+            "PivotCreateWithSheetOptions",
             "PivotAddWithSheetReceipt"
           ],
           "stableId": "WorksheetPivots.addWithSheet",
@@ -112048,9 +112048,9 @@
               "default": null,
               "type": {
                 "kind": "objectRef",
-                "name": "PivotCreateOptions"
+                "name": "PivotCreateWithSheetOptions"
               },
-              "typeText": "PivotCreateOptions"
+              "typeText": "PivotCreateWithSheetOptions"
             }
           ],
           "returns": {
@@ -112064,7 +112064,7 @@
             "typeText": "Promise<PivotAddWithSheetReceipt>"
           },
           "typeScript": {
-            "signature": "addWithSheet(\n    sheetName: string,\n    config: PivotCreateConfig,\n    options?: PivotCreateOptions,\n  ): Promise<PivotAddWithSheetReceipt>;",
+            "signature": "addWithSheet(\n    sheetName: string,\n    config: PivotCreateConfig,\n    options?: PivotCreateWithSheetOptions,\n  ): Promise<PivotAddWithSheetReceipt>;",
             "parameters": [
               {
                 "name": "sheetName",
@@ -112076,7 +112076,7 @@
               },
               {
                 "name": "options",
-                "typeText": "PivotCreateOptions"
+                "typeText": "PivotCreateWithSheetOptions"
               }
             ],
             "returnTypeText": "Promise<PivotAddWithSheetReceipt>"
@@ -112669,10 +112669,10 @@
           }
         },
         "getColumnLabelRange": {
-          "signature": "getColumnLabelRange(name: string): Promise<CellRange | null>;",
-          "docstring": "Get the range of column label headers, resolved by pivot name.\n\n@param name - Pivot table name\n@returns CellRange covering the column headers, or null if not computed",
+          "signature": "getColumnLabelRange(name: string): Promise<WorksheetRange | null>;",
+          "docstring": "Get the range of column label headers, resolved by pivot name.\n\n@param name - Pivot table name\n@returns Public worksheet range covering the column headers, or null if not computed",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "WorksheetPivots.getColumnLabelRange",
           "canonicalPath": "ws.pivots.getColumnLabelRange",
@@ -112705,7 +112705,7 @@
                 "items": [
                   {
                     "kind": "objectRef",
-                    "name": "CellRange"
+                    "name": "WorksheetRange"
                   },
                   {
                     "kind": "literal",
@@ -112714,17 +112714,17 @@
                 ]
               }
             },
-            "typeText": "Promise<CellRange|null>"
+            "typeText": "Promise<WorksheetRange|null>"
           },
           "typeScript": {
-            "signature": "getColumnLabelRange(name: string): Promise<CellRange | null>;",
+            "signature": "getColumnLabelRange(name: string): Promise<WorksheetRange | null>;",
             "parameters": [
               {
                 "name": "name",
                 "typeText": "string"
               }
             ],
-            "returnTypeText": "Promise<CellRange|null>"
+            "returnTypeText": "Promise<WorksheetRange|null>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -112796,10 +112796,10 @@
           }
         },
         "getDataBodyRange": {
-          "signature": "getDataBodyRange(name: string): Promise<CellRange | null>;",
-          "docstring": "Get the range of the data body, resolved by pivot name.\n\n@param name - Pivot table name\n@returns CellRange covering the data body, or null if not computed",
+          "signature": "getDataBodyRange(name: string): Promise<WorksheetRange | null>;",
+          "docstring": "Get the range of the data body, resolved by pivot name.\n\n@param name - Pivot table name\n@returns Public worksheet range covering the data body, or null if not computed",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "WorksheetPivots.getDataBodyRange",
           "canonicalPath": "ws.pivots.getDataBodyRange",
@@ -112832,7 +112832,7 @@
                 "items": [
                   {
                     "kind": "objectRef",
-                    "name": "CellRange"
+                    "name": "WorksheetRange"
                   },
                   {
                     "kind": "literal",
@@ -112841,17 +112841,17 @@
                 ]
               }
             },
-            "typeText": "Promise<CellRange|null>"
+            "typeText": "Promise<WorksheetRange|null>"
           },
           "typeScript": {
-            "signature": "getDataBodyRange(name: string): Promise<CellRange | null>;",
+            "signature": "getDataBodyRange(name: string): Promise<WorksheetRange | null>;",
             "parameters": [
               {
                 "name": "name",
                 "typeText": "string"
               }
             ],
-            "returnTypeText": "Promise<CellRange|null>"
+            "returnTypeText": "Promise<WorksheetRange|null>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -113312,10 +113312,10 @@
           }
         },
         "getFilterAxisRange": {
-          "signature": "getFilterAxisRange(name: string): Promise<CellRange | null>;",
-          "docstring": "Get the range of the filter area, resolved by pivot name.\n\n@param name - Pivot table name\n@returns CellRange covering filter dropdowns, or null if no filter fields",
+          "signature": "getFilterAxisRange(name: string): Promise<WorksheetRange | null>;",
+          "docstring": "Get the range of the filter area, resolved by pivot name.\n\n@param name - Pivot table name\n@returns Public worksheet range covering filter dropdowns, or null if no filter fields",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "WorksheetPivots.getFilterAxisRange",
           "canonicalPath": "ws.pivots.getFilterAxisRange",
@@ -113348,7 +113348,7 @@
                 "items": [
                   {
                     "kind": "objectRef",
-                    "name": "CellRange"
+                    "name": "WorksheetRange"
                   },
                   {
                     "kind": "literal",
@@ -113357,17 +113357,17 @@
                 ]
               }
             },
-            "typeText": "Promise<CellRange|null>"
+            "typeText": "Promise<WorksheetRange|null>"
           },
           "typeScript": {
-            "signature": "getFilterAxisRange(name: string): Promise<CellRange | null>;",
+            "signature": "getFilterAxisRange(name: string): Promise<WorksheetRange | null>;",
             "parameters": [
               {
                 "name": "name",
                 "typeText": "string"
               }
             ],
-            "returnTypeText": "Promise<CellRange|null>"
+            "returnTypeText": "Promise<WorksheetRange|null>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -113727,10 +113727,10 @@
           }
         },
         "getRange": {
-          "signature": "getRange(name: string): Promise<CellRange | null>;",
-          "docstring": "Get the full range occupied by the rendered pivot table, resolved by pivot name.\n\n@param name - Pivot table name\n@returns CellRange covering the entire pivot table, or null if not computed",
+          "signature": "getRange(name: string): Promise<WorksheetRange | null>;",
+          "docstring": "Get the full range occupied by the rendered pivot table, resolved by pivot name.\n\n@param name - Pivot table name\n@returns Public worksheet range covering the entire pivot table, or null if not computed",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "WorksheetPivots.getRange",
           "canonicalPath": "ws.pivots.getRange",
@@ -113763,7 +113763,7 @@
                 "items": [
                   {
                     "kind": "objectRef",
-                    "name": "CellRange"
+                    "name": "WorksheetRange"
                   },
                   {
                     "kind": "literal",
@@ -113772,17 +113772,17 @@
                 ]
               }
             },
-            "typeText": "Promise<CellRange|null>"
+            "typeText": "Promise<WorksheetRange|null>"
           },
           "typeScript": {
-            "signature": "getRange(name: string): Promise<CellRange | null>;",
+            "signature": "getRange(name: string): Promise<WorksheetRange | null>;",
             "parameters": [
               {
                 "name": "name",
                 "typeText": "string"
               }
             ],
-            "returnTypeText": "Promise<CellRange|null>"
+            "returnTypeText": "Promise<WorksheetRange|null>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -113805,10 +113805,10 @@
           }
         },
         "getRowLabelRange": {
-          "signature": "getRowLabelRange(name: string): Promise<CellRange | null>;",
-          "docstring": "Get the range of row label headers, resolved by pivot name.\n\n@param name - Pivot table name\n@returns CellRange covering the row headers, or null if not computed",
+          "signature": "getRowLabelRange(name: string): Promise<WorksheetRange | null>;",
+          "docstring": "Get the range of row label headers, resolved by pivot name.\n\n@param name - Pivot table name\n@returns Public worksheet range covering the row headers, or null if not computed",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "WorksheetPivots.getRowLabelRange",
           "canonicalPath": "ws.pivots.getRowLabelRange",
@@ -113841,7 +113841,7 @@
                 "items": [
                   {
                     "kind": "objectRef",
-                    "name": "CellRange"
+                    "name": "WorksheetRange"
                   },
                   {
                     "kind": "literal",
@@ -113850,17 +113850,17 @@
                 ]
               }
             },
-            "typeText": "Promise<CellRange|null>"
+            "typeText": "Promise<WorksheetRange|null>"
           },
           "typeScript": {
-            "signature": "getRowLabelRange(name: string): Promise<CellRange | null>;",
+            "signature": "getRowLabelRange(name: string): Promise<WorksheetRange | null>;",
             "parameters": [
               {
                 "name": "name",
                 "typeText": "string"
               }
             ],
-            "returnTypeText": "Promise<CellRange|null>"
+            "returnTypeText": "Promise<WorksheetRange|null>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -116747,11 +116747,11 @@
           }
         },
         "addWithSheet": {
-          "signature": "addWithSheet(\n    sheetName: string,\n    config: PivotCreateConfig,\n    options?: PivotCreateOptions,\n  ): Promise<PivotAddWithSheetReceipt>;",
+          "signature": "addWithSheet(\n    sheetName: string,\n    config: PivotCreateConfig,\n    options?: PivotCreateWithSheetOptions,\n  ): Promise<PivotAddWithSheetReceipt>;",
           "docstring": "Atomically create a new sheet AND a pivot table on it.\nBoth operations happen in a single transaction for undo atomicity.\n\nAccepts the same simple or full config formats as `add()`.\n\n@param sheetName - Name for the new sheet\n@param config - Pivot table configuration\n@param options - Creation lifecycle; defaults to defineOnly.\n@returns A receipt containing the new sheet ID and created pivot config.",
           "usedTypes": [
             "PivotCreateConfig",
-            "PivotCreateOptions",
+            "PivotCreateWithSheetOptions",
             "PivotAddWithSheetReceipt"
           ],
           "stableId": "WorksheetPivots.addWithSheet",
@@ -116796,9 +116796,9 @@
               "default": null,
               "type": {
                 "kind": "objectRef",
-                "name": "PivotCreateOptions"
+                "name": "PivotCreateWithSheetOptions"
               },
-              "typeText": "PivotCreateOptions"
+              "typeText": "PivotCreateWithSheetOptions"
             }
           ],
           "returns": {
@@ -116812,7 +116812,7 @@
             "typeText": "Promise<PivotAddWithSheetReceipt>"
           },
           "typeScript": {
-            "signature": "addWithSheet(\n    sheetName: string,\n    config: PivotCreateConfig,\n    options?: PivotCreateOptions,\n  ): Promise<PivotAddWithSheetReceipt>;",
+            "signature": "addWithSheet(\n    sheetName: string,\n    config: PivotCreateConfig,\n    options?: PivotCreateWithSheetOptions,\n  ): Promise<PivotAddWithSheetReceipt>;",
             "parameters": [
               {
                 "name": "sheetName",
@@ -116824,7 +116824,7 @@
               },
               {
                 "name": "options",
-                "typeText": "PivotCreateOptions"
+                "typeText": "PivotCreateWithSheetOptions"
               }
             ],
             "returnTypeText": "Promise<PivotAddWithSheetReceipt>"
@@ -117417,10 +117417,10 @@
           }
         },
         "getColumnLabelRange": {
-          "signature": "getColumnLabelRange(name: string): Promise<CellRange | null>;",
-          "docstring": "Get the range of column label headers, resolved by pivot name.\n\n@param name - Pivot table name\n@returns CellRange covering the column headers, or null if not computed",
+          "signature": "getColumnLabelRange(name: string): Promise<WorksheetRange | null>;",
+          "docstring": "Get the range of column label headers, resolved by pivot name.\n\n@param name - Pivot table name\n@returns Public worksheet range covering the column headers, or null if not computed",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "WorksheetPivots.getColumnLabelRange",
           "canonicalPath": "ws.pivots.getColumnLabelRange",
@@ -117453,7 +117453,7 @@
                 "items": [
                   {
                     "kind": "objectRef",
-                    "name": "CellRange"
+                    "name": "WorksheetRange"
                   },
                   {
                     "kind": "literal",
@@ -117462,17 +117462,17 @@
                 ]
               }
             },
-            "typeText": "Promise<CellRange|null>"
+            "typeText": "Promise<WorksheetRange|null>"
           },
           "typeScript": {
-            "signature": "getColumnLabelRange(name: string): Promise<CellRange | null>;",
+            "signature": "getColumnLabelRange(name: string): Promise<WorksheetRange | null>;",
             "parameters": [
               {
                 "name": "name",
                 "typeText": "string"
               }
             ],
-            "returnTypeText": "Promise<CellRange|null>"
+            "returnTypeText": "Promise<WorksheetRange|null>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -117544,10 +117544,10 @@
           }
         },
         "getDataBodyRange": {
-          "signature": "getDataBodyRange(name: string): Promise<CellRange | null>;",
-          "docstring": "Get the range of the data body, resolved by pivot name.\n\n@param name - Pivot table name\n@returns CellRange covering the data body, or null if not computed",
+          "signature": "getDataBodyRange(name: string): Promise<WorksheetRange | null>;",
+          "docstring": "Get the range of the data body, resolved by pivot name.\n\n@param name - Pivot table name\n@returns Public worksheet range covering the data body, or null if not computed",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "WorksheetPivots.getDataBodyRange",
           "canonicalPath": "ws.pivots.getDataBodyRange",
@@ -117580,7 +117580,7 @@
                 "items": [
                   {
                     "kind": "objectRef",
-                    "name": "CellRange"
+                    "name": "WorksheetRange"
                   },
                   {
                     "kind": "literal",
@@ -117589,17 +117589,17 @@
                 ]
               }
             },
-            "typeText": "Promise<CellRange|null>"
+            "typeText": "Promise<WorksheetRange|null>"
           },
           "typeScript": {
-            "signature": "getDataBodyRange(name: string): Promise<CellRange | null>;",
+            "signature": "getDataBodyRange(name: string): Promise<WorksheetRange | null>;",
             "parameters": [
               {
                 "name": "name",
                 "typeText": "string"
               }
             ],
-            "returnTypeText": "Promise<CellRange|null>"
+            "returnTypeText": "Promise<WorksheetRange|null>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -118060,10 +118060,10 @@
           }
         },
         "getFilterAxisRange": {
-          "signature": "getFilterAxisRange(name: string): Promise<CellRange | null>;",
-          "docstring": "Get the range of the filter area, resolved by pivot name.\n\n@param name - Pivot table name\n@returns CellRange covering filter dropdowns, or null if no filter fields",
+          "signature": "getFilterAxisRange(name: string): Promise<WorksheetRange | null>;",
+          "docstring": "Get the range of the filter area, resolved by pivot name.\n\n@param name - Pivot table name\n@returns Public worksheet range covering filter dropdowns, or null if no filter fields",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "WorksheetPivots.getFilterAxisRange",
           "canonicalPath": "ws.pivots.getFilterAxisRange",
@@ -118096,7 +118096,7 @@
                 "items": [
                   {
                     "kind": "objectRef",
-                    "name": "CellRange"
+                    "name": "WorksheetRange"
                   },
                   {
                     "kind": "literal",
@@ -118105,17 +118105,17 @@
                 ]
               }
             },
-            "typeText": "Promise<CellRange|null>"
+            "typeText": "Promise<WorksheetRange|null>"
           },
           "typeScript": {
-            "signature": "getFilterAxisRange(name: string): Promise<CellRange | null>;",
+            "signature": "getFilterAxisRange(name: string): Promise<WorksheetRange | null>;",
             "parameters": [
               {
                 "name": "name",
                 "typeText": "string"
               }
             ],
-            "returnTypeText": "Promise<CellRange|null>"
+            "returnTypeText": "Promise<WorksheetRange|null>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -118475,10 +118475,10 @@
           }
         },
         "getRange": {
-          "signature": "getRange(name: string): Promise<CellRange | null>;",
-          "docstring": "Get the full range occupied by the rendered pivot table, resolved by pivot name.\n\n@param name - Pivot table name\n@returns CellRange covering the entire pivot table, or null if not computed",
+          "signature": "getRange(name: string): Promise<WorksheetRange | null>;",
+          "docstring": "Get the full range occupied by the rendered pivot table, resolved by pivot name.\n\n@param name - Pivot table name\n@returns Public worksheet range covering the entire pivot table, or null if not computed",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "WorksheetPivots.getRange",
           "canonicalPath": "ws.pivots.getRange",
@@ -118511,7 +118511,7 @@
                 "items": [
                   {
                     "kind": "objectRef",
-                    "name": "CellRange"
+                    "name": "WorksheetRange"
                   },
                   {
                     "kind": "literal",
@@ -118520,17 +118520,17 @@
                 ]
               }
             },
-            "typeText": "Promise<CellRange|null>"
+            "typeText": "Promise<WorksheetRange|null>"
           },
           "typeScript": {
-            "signature": "getRange(name: string): Promise<CellRange | null>;",
+            "signature": "getRange(name: string): Promise<WorksheetRange | null>;",
             "parameters": [
               {
                 "name": "name",
                 "typeText": "string"
               }
             ],
-            "returnTypeText": "Promise<CellRange|null>"
+            "returnTypeText": "Promise<WorksheetRange|null>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -118553,10 +118553,10 @@
           }
         },
         "getRowLabelRange": {
-          "signature": "getRowLabelRange(name: string): Promise<CellRange | null>;",
-          "docstring": "Get the range of row label headers, resolved by pivot name.\n\n@param name - Pivot table name\n@returns CellRange covering the row headers, or null if not computed",
+          "signature": "getRowLabelRange(name: string): Promise<WorksheetRange | null>;",
+          "docstring": "Get the range of row label headers, resolved by pivot name.\n\n@param name - Pivot table name\n@returns Public worksheet range covering the row headers, or null if not computed",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "WorksheetPivots.getRowLabelRange",
           "canonicalPath": "ws.pivots.getRowLabelRange",
@@ -118589,7 +118589,7 @@
                 "items": [
                   {
                     "kind": "objectRef",
-                    "name": "CellRange"
+                    "name": "WorksheetRange"
                   },
                   {
                     "kind": "literal",
@@ -118598,17 +118598,17 @@
                 ]
               }
             },
-            "typeText": "Promise<CellRange|null>"
+            "typeText": "Promise<WorksheetRange|null>"
           },
           "typeScript": {
-            "signature": "getRowLabelRange(name: string): Promise<CellRange | null>;",
+            "signature": "getRowLabelRange(name: string): Promise<WorksheetRange | null>;",
             "parameters": [
               {
                 "name": "name",
                 "typeText": "string"
               }
             ],
-            "returnTypeText": "Promise<CellRange|null>"
+            "returnTypeText": "Promise<WorksheetRange|null>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -133262,10 +133262,10 @@
           }
         },
         "getMergeAtCell": {
-          "signature": "getMergeAtCell(address: string): Promise<CellRange | null>;",
+          "signature": "getMergeAtCell(address: string): Promise<WorksheetRange | null>;",
           "docstring": "Get the merge containing a cell by A1 address, or null if not merged.",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "WorksheetStructure.getMergeAtCell",
           "canonicalPath": "ws.structure.getMergeAtCell",
@@ -133298,7 +133298,7 @@
                 "items": [
                   {
                     "kind": "objectRef",
-                    "name": "CellRange"
+                    "name": "WorksheetRange"
                   },
                   {
                     "kind": "literal",
@@ -133307,17 +133307,17 @@
                 ]
               }
             },
-            "typeText": "Promise<CellRange|null>"
+            "typeText": "Promise<WorksheetRange|null>"
           },
           "typeScript": {
-            "signature": "getMergeAtCell(address: string): Promise<CellRange | null>;",
+            "signature": "getMergeAtCell(address: string): Promise<WorksheetRange | null>;",
             "parameters": [
               {
                 "name": "address",
                 "typeText": "string"
               }
             ],
-            "returnTypeText": "Promise<CellRange|null>"
+            "returnTypeText": "Promise<WorksheetRange|null>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -134466,10 +134466,10 @@
           }
         },
         "getMergeAtCell": {
-          "signature": "getMergeAtCell(address: string): Promise<CellRange | null>;",
+          "signature": "getMergeAtCell(address: string): Promise<WorksheetRange | null>;",
           "docstring": "Get the merge containing a cell by A1 address, or null if not merged.",
           "usedTypes": [
-            "CellRange"
+            "WorksheetRange"
           ],
           "stableId": "WorksheetStructure.getMergeAtCell",
           "canonicalPath": "ws.structure.getMergeAtCell",
@@ -134502,7 +134502,7 @@
                 "items": [
                   {
                     "kind": "objectRef",
-                    "name": "CellRange"
+                    "name": "WorksheetRange"
                   },
                   {
                     "kind": "literal",
@@ -134511,17 +134511,17 @@
                 ]
               }
             },
-            "typeText": "Promise<CellRange|null>"
+            "typeText": "Promise<WorksheetRange|null>"
           },
           "typeScript": {
-            "signature": "getMergeAtCell(address: string): Promise<CellRange | null>;",
+            "signature": "getMergeAtCell(address: string): Promise<WorksheetRange | null>;",
             "parameters": [
               {
                 "name": "address",
                 "typeText": "string"
               }
             ],
-            "returnTypeText": "Promise<CellRange|null>"
+            "returnTypeText": "Promise<WorksheetRange|null>"
           },
           "ownership": {
             "package": "@mog/types-api"
@@ -153698,7 +153698,7 @@
     },
     "ChartBorder": {
       "name": "ChartBorder",
-      "definition": "{\n  color?: string;\n  width?: number;\n  style?: string;\n}",
+      "definition": "{\n  color?: string;\n  width?: number;\n  style?: 'solid' | 'dot' | 'dash' | 'dashDot' | 'longDash' | 'longDashDot' | 'longDashDotDot';\n}",
       "docstring": "Shared chart border configuration (matches ChartBorderData wire type)",
       "source": {
         "file": "types/data/src/data/charts.ts"
@@ -153998,7 +153998,7 @@
     },
     "ChartLineFormat": {
       "name": "ChartLineFormat",
-      "definition": "{\n  color?: ChartColor;\n  width?: number;\n  dashStyle?: 'solid' | 'dot' | 'dash' | 'dashDot' | 'longDash' | 'longDashDot' | 'longDashDotDot';\n  transparency?: number;\n  /** Explicit OOXML a:ln/a:noFill. Absent line formatting is not an explicit no-line. */\n  noFill?: boolean;\n}",
+      "definition": "{\n  color?: ChartColor;\n  width?: number;\n  dashStyle?: | 'solid'\n    | 'dot'\n    | 'dash'\n    | 'dashDot'\n    | 'longDash'\n    | 'longDashDot'\n    | 'longDashDotDot'\n    | 'sysDash'\n    | 'sysDot'\n    | 'sysDashDot'\n    | 'sysDashDotDot';\n  transparency?: number;\n  /** Explicit OOXML a:ln/a:noFill. Absent line formatting is not an explicit no-line. */\n  noFill?: boolean;\n}",
       "docstring": "Line/border. Maps to OOXML CT_LineProperties.",
       "source": {
         "file": "types/data/src/data/charts.ts"
@@ -154106,7 +154106,7 @@
     },
     "ChartRangeReferenceSnapshot": {
       "name": "ChartRangeReferenceSnapshot",
-      "definition": "{\n  kind: string;\n  source: 'identity' | 'a1';\n  ref?: string;\n  range: {\n    sheetId?: string;\n    startRow: number;\n    startCol: number;\n    endRow: number;\n    endCol: number;\n  };\n}",
+      "definition": "{\n  kind: string;\n  source: 'identity' | 'a1';\n  ref?: string;\n  sheetName?: string;\n  range: {\n    startRow: number;\n    startCol: number;\n    endRow: number;\n    endCol: number;\n  };\n}",
       "docstring": "",
       "source": {
         "file": "types/data/src/data/charts.ts"
@@ -154192,6 +154192,18 @@
       "name": "ChartSeriesCategoryLevelsCache",
       "definition": "{\n  /** Logical OOXML point count for the category domain, when supplied by the source. */\n  pointCount?: number;\n  /** Category label levels in source order. */\n  levels: ChartSeriesCategoryLevelCache[];\n}",
       "docstring": "Imported multi-level category cache for hierarchical category labels.",
+      "source": {
+        "file": "types/data/src/data/charts.ts"
+      },
+      "ownership": {
+        "package": "@mog/types-data"
+      },
+      "ownerPackage": "@mog/types-data"
+    },
+    "ChartSeriesCategorySourceType": {
+      "name": "ChartSeriesCategorySourceType",
+      "definition": "'number' | 'string' | 'multiLevelString'",
+      "docstring": "Imported OOXML category/x source value type.",
       "source": {
         "file": "types/data/src/data/charts.ts"
       },
@@ -158368,7 +158380,7 @@
     },
     "PivotAddReceipt": {
       "name": "PivotAddReceipt",
-      "definition": "{\n  kind: 'pivot.add';\n  status: 'applied' | 'partial' | 'failed';\n  effects: readonly OperationEffect[];\n  diagnostics: readonly OperationDiagnostic[];\n  operationId?: string;\n  pivotId: string;\n  config: PivotTableConfig;\n  lifecycle: PivotCreationLifecycle;\n  materialized: boolean;\n  renderedRange?: CellRange | null;\n  result?: PivotTableResult | null;\n}",
+      "definition": "{\n  kind: 'pivot.add';\n  status: 'applied' | 'partial' | 'failed';\n  effects: readonly OperationEffect[];\n  diagnostics: readonly OperationDiagnostic[];\n  operationId?: string;\n  pivotId: string;\n  config: PivotTableConfig;\n  lifecycle: PivotCreationLifecycle;\n  materialized: boolean;\n  renderedRange?: WorksheetRange | null;\n  result?: PivotTableResult | null;\n}",
       "docstring": "Receipt for defining or materializing a pivot table on an existing sheet.",
       "source": {
         "file": "types/api/src/api/mutation-receipt.ts"
@@ -158380,7 +158392,7 @@
     },
     "PivotAddWithSheetReceipt": {
       "name": "PivotAddWithSheetReceipt",
-      "definition": "{\n  kind: 'pivot.addWithSheet';\n  status: 'applied' | 'partial' | 'failed';\n  effects: readonly OperationEffect[];\n  diagnostics: readonly OperationDiagnostic[];\n  operationId?: string;\n  sheetId: string;\n  pivotId: string;\n  config: PivotTableConfig;\n  lifecycle: PivotCreationLifecycle;\n  materialized: boolean;\n  renderedRange?: CellRange | null;\n  result?: PivotTableResult | null;\n}",
+      "definition": "{\n  kind: 'pivot.addWithSheet';\n  status: 'applied' | 'partial' | 'failed';\n  effects: readonly OperationEffect[];\n  diagnostics: readonly OperationDiagnostic[];\n  operationId?: string;\n  sheetId: string;\n  pivotId: string;\n  config: PivotTableConfig;\n  lifecycle: PivotCreationLifecycle;\n  materialized: boolean;\n  renderedRange?: WorksheetRange | null;\n  result?: PivotTableResult | null;\n}",
       "docstring": "Receipt for atomically creating a sheet and defining/materializing a pivot.",
       "source": {
         "file": "types/api/src/api/mutation-receipt.ts"
@@ -158477,6 +158489,18 @@
     "PivotCreateOptions": {
       "name": "PivotCreateOptions",
       "definition": "{\n  /** `defineOnly` stores the pivot metadata without writing rendered cells.\n`materialize` stores metadata and refreshes the rendered worksheet output. */\n  lifecycle?: PivotCreationLifecycle;\n}",
+      "docstring": "",
+      "source": {
+        "file": "types/api/src/api/worksheet/pivots.ts"
+      },
+      "ownership": {
+        "package": "@mog/types-api"
+      },
+      "ownerPackage": "@mog/types-api"
+    },
+    "PivotCreateWithSheetOptions": {
+      "name": "PivotCreateWithSheetOptions",
+      "definition": "{\n  /** `defineOnly` stores the pivot metadata without writing rendered cells.\n`materialize` stores metadata and refreshes the rendered worksheet output. */\n  lifecycle?: PivotCreationLifecycle;\n  /** Insert the newly-created pivot worksheet immediately before this sheet.\nTakes precedence over `insertIndex` when both are provided. */\n  insertBeforeSheetId?: SheetId;\n  /** Optional 0-based worksheet index for the newly-created pivot worksheet.\nValues past the current sheet count append at the end. */\n  insertIndex?: number;\n}",
       "docstring": "",
       "source": {
         "file": "types/api/src/api/worksheet/pivots.ts"
@@ -158908,7 +158932,7 @@
     },
     "PivotRefreshAllReceipt": {
       "name": "PivotRefreshAllReceipt",
-      "definition": "{\n  kind: 'pivot.refreshAll';\n  status: 'applied' | 'noOp' | 'partial' | 'failed';\n  effects: readonly OperationEffect[];\n  diagnostics: readonly OperationDiagnostic[];\n  operationId?: string;\n  sheetId: string;\n  pivotIds: readonly string[];\n  receipts: readonly PivotRefreshReceipt[];\n  materialized: boolean;\n  materializedCount: number;\n  failedCount: number;\n  renderedRanges: readonly (CellRange | null)[];\n}",
+      "definition": "{\n  kind: 'pivot.refreshAll';\n  status: 'applied' | 'noOp' | 'partial' | 'failed';\n  effects: readonly OperationEffect[];\n  diagnostics: readonly OperationDiagnostic[];\n  operationId?: string;\n  sheetId: string;\n  pivotIds: readonly string[];\n  receipts: readonly PivotRefreshReceipt[];\n  materialized: boolean;\n  materializedCount: number;\n  failedCount: number;\n  renderedRanges: readonly (WorksheetRange | null)[];\n}",
       "docstring": "Aggregate receipt for refreshing/materializing every pivot on a worksheet.",
       "source": {
         "file": "types/api/src/api/mutation-receipt.ts"
@@ -158920,7 +158944,7 @@
     },
     "PivotRefreshReceipt": {
       "name": "PivotRefreshReceipt",
-      "definition": "{\n  kind: 'pivot.refresh';\n  status: 'applied' | 'failed' | 'cancelled' | 'timedOut';\n  effects: readonly OperationEffect[];\n  diagnostics: readonly OperationDiagnostic[];\n  operationId?: string;\n  pivotId: string;\n  config?: PivotTableConfig | null;\n  materialized: boolean;\n  renderedRange?: CellRange | null;\n  result?: PivotTableResult | null;\n}",
+      "definition": "{\n  kind: 'pivot.refresh';\n  status: 'applied' | 'failed' | 'cancelled' | 'timedOut';\n  effects: readonly OperationEffect[];\n  diagnostics: readonly OperationDiagnostic[];\n  operationId?: string;\n  pivotId: string;\n  config?: PivotTableConfig | null;\n  materialized: boolean;\n  renderedRange?: WorksheetRange | null;\n  result?: PivotTableResult | null;\n}",
       "docstring": "Receipt for a pivot table refresh/materialization mutation.",
       "source": {
         "file": "types/api/src/api/mutation-receipt.ts"
@@ -159340,7 +159364,7 @@
     },
     "PointFormat": {
       "name": "PointFormat",
-      "definition": "{\n  idx: number;\n  invertIfNegative?: boolean;\n  explosion?: number;\n  bubble3d?: boolean;\n  bubble3D?: boolean;\n  fill?: string;\n  border?: ChartBorder;\n  lineFormat?: ChartLineFormat;\n  dataLabel?: DataLabelConfig;\n  visualFormat?: ChartFormat;\n  /** Readonly: computed value at this point (populated by get, ignored on set). */\n  value?: number | string;\n  /** Per-point marker fill color. */\n  markerBackgroundColor?: ChartColor;\n  /** Per-point marker border color. */\n  markerForegroundColor?: ChartColor;\n  /** Per-point marker size (2-72 points). */\n  markerSize?: number;\n  /** Per-point marker style. */\n  markerStyle?: MarkerStyle;\n}",
+      "definition": "{\n  idx: number;\n  invertIfNegative?: boolean;\n  explosion?: number;\n  bubble3d?: boolean;\n  bubble3D?: boolean;\n  fill?: string;\n  border?: ChartBorder;\n  lineFormat?: ChartLineFormat;\n  dataLabel?: DataLabelConfig;\n  visualFormat?: ChartFormat;\n  /** Readonly: computed value at this point (populated by get, ignored on set). */\n  value?: number | string;\n  /** Per-point marker fill color. */\n  markerBackgroundColor?: ChartColor;\n  /** Per-point marker border color. */\n  markerForegroundColor?: ChartColor;\n  /** Per-point marker border/outline format. */\n  markerLineFormat?: ChartLineFormat;\n  /** Per-point marker size (2-72 points). */\n  markerSize?: number;\n  /** Per-point marker style. */\n  markerStyle?: MarkerStyle;\n}",
       "docstring": "Per-point formatting for individual data points (matches PointFormatData wire type)",
       "source": {
         "file": "types/data/src/data/charts.ts"
@@ -160847,7 +160871,7 @@
     },
     "ResolvedChartSeriesSnapshot": {
       "name": "ResolvedChartSeriesSnapshot",
-      "definition": "{\n  index: number;\n  order: number;\n  sourceSeriesIndex: number;\n  sourceSeriesKey: string;\n  visibleOrder?: number;\n  pivotSeriesKey?: string;\n  pivotDataFieldIndex?: number;\n  projectionAuthority?: ChartSeriesProjectionAuthority;\n  projectionDiagnostics?: ChartSeriesProjectionDiagnostic[];\n  name: string;\n  type?: string;\n  axisGroup: 'primary' | 'secondary';\n  xRole?: ChartSeriesXRole;\n  stockRole?: ChartSeriesStockRole;\n  showLines?: boolean;\n  smooth?: boolean;\n  showMarkers?: boolean;\n  markerStyle?: string;\n  renderLayerCount?: number;\n  geometry?: ResolvedChartSeriesGeometrySnapshot;\n  color?: string;\n  colorAuthority?: ResolvedChartColorAuthoritySnapshot;\n  source: {\n    values?: string;\n    categories?: string;\n    bubbleSize?: string;\n    stockRole?: ChartSeriesStockRole;\n    valueSourceKind?: ChartSeriesDimensionSourceKind;\n    categorySourceKind?: ChartSeriesDimensionSourceKind;\n    bubbleSizeSourceKind?: ChartSeriesDimensionSourceKind;\n  };\n  renderAuthority: {\n    values: ChartSeriesDimensionRenderAuthority;\n    categories: ChartSeriesDimensionRenderAuthority;\n    bubbleSize: ChartSeriesDimensionRenderAuthority;\n  };\n  xValues: Array<string | number | null>;\n  categories: Array<string | number | null>;\n  values: Array<number | null>;\n  /** Values on the rendered layer after blank-cell display policy is applied. */\n  renderedValues?: Array<number | null>;\n  bubbleSizes: Array<number | null>;\n  /** Source-length stock role values aligned to original source point indexes. */\n  stockValues?: ResolvedChartStockRoleValuesSnapshot;\n  blankMask: boolean[];\n  pointCount: number;\n  renderedPointCount: number;\n  dataHash: string;\n}",
+      "definition": "{\n  index: number;\n  order: number;\n  sourceSeriesIndex: number;\n  sourceSeriesKey: string;\n  visibleOrder?: number;\n  pivotSeriesKey?: string;\n  pivotDataFieldIndex?: number;\n  projectionAuthority?: ChartSeriesProjectionAuthority;\n  projectionDiagnostics?: ChartSeriesProjectionDiagnostic[];\n  name: string;\n  type?: string;\n  axisGroup: 'primary' | 'secondary';\n  xRole?: ChartSeriesXRole;\n  stockRole?: ChartSeriesStockRole;\n  showLines?: boolean;\n  smooth?: boolean;\n  showMarkers?: boolean;\n  markerStyle?: MarkerStyle;\n  renderLayerCount?: number;\n  geometry?: ResolvedChartSeriesGeometrySnapshot;\n  color?: string;\n  colorAuthority?: ResolvedChartColorAuthoritySnapshot;\n  source: {\n    values?: string;\n    categories?: string;\n    bubbleSize?: string;\n    stockRole?: ChartSeriesStockRole;\n    valueSourceKind?: ChartSeriesDimensionSourceKind;\n    categorySourceKind?: ChartSeriesDimensionSourceKind;\n    bubbleSizeSourceKind?: ChartSeriesDimensionSourceKind;\n  };\n  renderAuthority: {\n    values: ChartSeriesDimensionRenderAuthority;\n    categories: ChartSeriesDimensionRenderAuthority;\n    bubbleSize: ChartSeriesDimensionRenderAuthority;\n  };\n  xValues: Array<string | number | null>;\n  categories: Array<string | number | null>;\n  values: Array<number | null>;\n  /** Values on the rendered layer after blank-cell display policy is applied. */\n  renderedValues?: Array<number | null>;\n  bubbleSizes: Array<number | null>;\n  /** Source-length stock role values aligned to original source point indexes. */\n  stockValues?: ResolvedChartStockRoleValuesSnapshot;\n  blankMask: boolean[];\n  pointCount: number;\n  renderedPointCount: number;\n  dataHash: string;\n}",
       "docstring": "",
       "source": {
         "file": "types/data/src/data/charts.ts"
@@ -161651,7 +161675,7 @@
     },
     "SeriesConfig": {
       "name": "SeriesConfig",
-      "definition": "{\n  name?: string;\n  /** Live series-name cell reference imported from OOXML c:tx/c:strRef/c:f. */\n  nameRef?: string;\n  type?: string;\n  color?: string;\n  stockRole?: ChartSeriesStockRole;\n  values?: string;\n  valueCache?: ChartSeriesPointCache;\n  valueSourceKind?: ChartSeriesDimensionSourceKind;\n  categories?: string;\n  xRole?: ChartSeriesXRole;\n  categoryCache?: ChartSeriesPointCache;\n  categoryLevels?: ChartSeriesCategoryLevelsCache;\n  categorySourceKind?: ChartSeriesDimensionSourceKind;\n  categoryLabelFormat?: CategoryLabelFormat;\n  bubbleSize?: string;\n  bubbleSizeCache?: ChartSeriesPointCache;\n  bubbleSizeSourceKind?: ChartSeriesDimensionSourceKind;\n  smooth?: boolean;\n  showLines?: boolean;\n  explosion?: number;\n  invertIfNegative?: boolean;\n  yAxisIndex?: number;\n  showMarkers?: boolean;\n  markerSize?: number;\n  markerStyle?: string;\n  lineWidth?: number;\n  points?: PointFormat[];\n  dataLabels?: DataLabelConfig;\n  trendlines?: TrendlineConfig[];\n  errorBars?: ErrorBarConfig;\n  xErrorBars?: ErrorBarConfig;\n  yErrorBars?: ErrorBarConfig;\n  idx?: number;\n  order?: number;\n  format?: ChartFormat;\n  barShape?: string;\n  /** Color to use when a data point is inverted (negative) */\n  invertColor?: ChartColor;\n  /** Marker fill color. */\n  markerBackgroundColor?: ChartColor;\n  /** Marker border color. */\n  markerForegroundColor?: ChartColor;\n  /** Whether this series is hidden/filtered from the chart. */\n  filtered?: boolean;\n  /** Original chart series index before filtering/projection. */\n  sourceSeriesIndex?: number;\n  /** Stable source key used to join extracted data back to this series. */\n  sourceSeriesKey?: string;\n  /** Visible/rendered series order after projection. */\n  visibleOrder?: number;\n  /** Stable key for projected pivot-chart series. */\n  pivotSeriesKey?: string;\n  /** Pivot data-field index when this series was projected from a data field. */\n  pivotDataFieldIndex?: number;\n  /** Data authority used to render this series. */\n  projectionAuthority?: ChartSeriesProjectionAuthority;\n  /** Projection/render diagnostics associated with this series. */\n  projectionDiagnostics?: ChartSeriesProjectionDiagnostic[];\n  /** Show drop shadow on series. */\n  showShadow?: boolean;\n  /** Show connector lines between pie slices (bar-of-pie, pie-of-pie). */\n  showConnectorLines?: boolean;\n  /** Gap width between bars/columns as percentage (per-series override) */\n  gapWidth?: number;\n  /** Overlap between bars/columns (-100 to 100, per-series override) */\n  overlap?: number;\n  /** Hole size for doughnut charts as percentage (per-series override) */\n  doughnutHoleSize?: number;\n  /** First slice angle for pie/doughnut charts in degrees (per-series override) */\n  firstSliceAngle?: number;\n  /** Split type for of-pie charts (per-series override) */\n  splitType?: string;\n  /** Split value threshold for of-pie charts (per-series override) */\n  splitValue?: number;\n  /** Bubble scale as percentage (per-series override) */\n  bubbleScale?: number;\n  leaderLineFormat?: ChartFormat;\n  showLeaderLines?: boolean;\n  /** Per-series histogram bin options (overrides chart-level histogram config) */\n  binOptions?: HistogramConfig;\n  /** Per-series box/whisker options (overrides chart-level boxplot config) */\n  boxwhiskerOptions?: BoxplotConfig;\n  /** @deprecated Use trendlines[] instead */\n  trendline?: TrendlineConfig;\n}",
+      "definition": "{\n  name?: string;\n  /** Live series-name cell reference imported from OOXML c:tx/c:strRef/c:f. */\n  nameRef?: string;\n  type?: string;\n  color?: string;\n  stockRole?: ChartSeriesStockRole;\n  values?: string;\n  valueCache?: ChartSeriesPointCache;\n  valueSourceKind?: ChartSeriesDimensionSourceKind;\n  categories?: string;\n  xRole?: ChartSeriesXRole;\n  categoryCache?: ChartSeriesPointCache;\n  categoryLevels?: ChartSeriesCategoryLevelsCache;\n  categorySourceKind?: ChartSeriesDimensionSourceKind;\n  categorySourceType?: ChartSeriesCategorySourceType;\n  categoryLabelFormat?: CategoryLabelFormat;\n  bubbleSize?: string;\n  bubbleSizeCache?: ChartSeriesPointCache;\n  bubbleSizeSourceKind?: ChartSeriesDimensionSourceKind;\n  /** 3-D bubble effect for this series. */\n  bubble3d?: boolean;\n  /** 3-D bubble effect for this series. */\n  bubble3D?: boolean;\n  smooth?: boolean;\n  showLines?: boolean;\n  explosion?: number;\n  invertIfNegative?: boolean;\n  yAxisIndex?: 0 | 1;\n  showMarkers?: boolean;\n  markerSize?: number;\n  markerStyle?: MarkerStyle;\n  lineWidth?: number;\n  points?: PointFormat[];\n  dataLabels?: DataLabelConfig;\n  trendlines?: TrendlineConfig[];\n  errorBars?: ErrorBarConfig;\n  xErrorBars?: ErrorBarConfig;\n  yErrorBars?: ErrorBarConfig;\n  idx?: number;\n  order?: number;\n  format?: ChartFormat;\n  barShape?: string;\n  /** Color to use when a data point is inverted (negative) */\n  invertColor?: ChartColor;\n  /** Marker fill color. */\n  markerBackgroundColor?: ChartColor;\n  /** Marker border color. */\n  markerForegroundColor?: ChartColor;\n  /** Full marker border/outline format. */\n  markerLineFormat?: ChartLineFormat;\n  /** Whether this series is hidden/filtered from the chart. */\n  filtered?: boolean;\n  /** Original chart series index before filtering/projection. */\n  sourceSeriesIndex?: number;\n  /** Stable source key used to join extracted data back to this series. */\n  sourceSeriesKey?: string;\n  /** Visible/rendered series order after projection. */\n  visibleOrder?: number;\n  /** Stable key for projected pivot-chart series. */\n  pivotSeriesKey?: string;\n  /** Pivot data-field index when this series was projected from a data field. */\n  pivotDataFieldIndex?: number;\n  /** Data authority used to render this series. */\n  projectionAuthority?: ChartSeriesProjectionAuthority;\n  /** Projection/render diagnostics associated with this series. */\n  projectionDiagnostics?: ChartSeriesProjectionDiagnostic[];\n  /** Show drop shadow on series. */\n  showShadow?: boolean;\n  /** Show connector lines between pie slices (bar-of-pie, pie-of-pie). */\n  showConnectorLines?: boolean;\n  /** Gap width between bars/columns as percentage (per-series override) */\n  gapWidth?: number;\n  /** Overlap between bars/columns (-100 to 100, per-series override) */\n  overlap?: number;\n  /** Hole size for doughnut charts as percentage (per-series override) */\n  doughnutHoleSize?: number;\n  /** First slice angle for pie/doughnut charts in degrees (per-series override) */\n  firstSliceAngle?: number;\n  /** Split type for of-pie charts (per-series override) */\n  splitType?: string;\n  /** Split value threshold for of-pie charts (per-series override) */\n  splitValue?: number;\n  /** Bubble scale as percentage (per-series override) */\n  bubbleScale?: number;\n  leaderLineFormat?: ChartFormat;\n  showLeaderLines?: boolean;\n  /** Per-series histogram bin options (overrides chart-level histogram config) */\n  binOptions?: HistogramConfig;\n  /** Per-series box/whisker options (overrides chart-level boxplot config) */\n  boxwhiskerOptions?: BoxplotConfig;\n  /** @deprecated Use trendlines[] instead */\n  trendline?: TrendlineConfig;\n}",
       "docstring": "Individual series configuration (matches ChartSeriesData wire type)",
       "source": {
         "file": "types/data/src/data/charts.ts"
@@ -162431,7 +162455,7 @@
     },
     "SparklineDataRange": {
       "name": "SparklineDataRange",
-      "definition": "{\n  startRow: number;\n  startCol: number;\n  endRow: number;\n  endCol: number;\n}",
+      "definition": "{\n  sourceSheetName?: string;\n  startRow: number;\n  startCol: number;\n  endRow: number;\n  endCol: number;\n}",
       "docstring": "",
       "source": {
         "file": "types/data/src/data/sparklines.ts"
@@ -162467,7 +162491,7 @@
     },
     "SparklineVisualSettings": {
       "name": "SparklineVisualSettings",
-      "definition": "{\n  color: string;\n  negativeColor?: string;\n  showMarkers?: boolean;\n  markerColor?: string;\n  highPointColor?: string;\n  lowPointColor?: string;\n  firstPointColor?: string;\n  lastPointColor?: string;\n  lineWeight?: number;\n  columnGap?: number;\n  barGap?: number;\n}",
+      "definition": "{\n  color: string;\n  negativeColor?: string;\n  showNegativePoints?: boolean;\n  showMarkers?: boolean;\n  markerColor?: string;\n  showHighPoint?: boolean;\n  highPointColor?: string;\n  showLowPoint?: boolean;\n  lowPointColor?: string;\n  showFirstPoint?: boolean;\n  firstPointColor?: string;\n  showLastPoint?: boolean;\n  lastPointColor?: string;\n  lineWeight?: number;\n  columnGap?: number;\n  barGap?: number;\n}",
       "docstring": "",
       "source": {
         "file": "types/data/src/data/sparklines.ts"
@@ -163691,7 +163715,7 @@
     },
     "TrendlineConfig": {
       "name": "TrendlineConfig",
-      "definition": "{\n  show?: boolean;\n  type?: string;\n  color?: string;\n  lineWidth?: number;\n  order?: number;\n  period?: number;\n  forward?: number;\n  backward?: number;\n  intercept?: number;\n  displayEquation?: boolean;\n  displayRSquared?: boolean;\n  name?: string;\n  lineFormat?: ChartLineFormat;\n  label?: TrendlineLabelConfig;\n  /** @deprecated Use displayEquation instead */\n  showEquation?: boolean;\n  /** @deprecated Use displayRSquared instead */\n  showR2?: boolean;\n  /** @deprecated Use forward instead */\n  forwardPeriod?: number;\n  /** @deprecated Use backward instead */\n  backwardPeriod?: number;\n}",
+      "definition": "{\n  show?: boolean;\n  type?: TrendlineType;\n  color?: string;\n  lineWidth?: number;\n  order?: number;\n  period?: number;\n  forward?: number;\n  backward?: number;\n  intercept?: number;\n  displayEquation?: boolean;\n  displayRSquared?: boolean;\n  name?: string;\n  lineFormat?: ChartLineFormat;\n  label?: TrendlineLabelConfig;\n  /** @deprecated Use displayEquation instead */\n  showEquation?: boolean;\n  /** @deprecated Use displayRSquared instead */\n  showR2?: boolean;\n  /** @deprecated Use forward instead */\n  forwardPeriod?: number;\n  /** @deprecated Use backward instead */\n  backwardPeriod?: number;\n}",
       "docstring": "Trendline configuration (matches TrendlineData wire type)",
       "source": {
         "file": "types/data/src/data/charts.ts"
@@ -163705,6 +163729,18 @@
       "name": "TrendlineLabelConfig",
       "definition": "{\n  text?: string;\n  format?: ChartFormat;\n  numberFormat?: string;\n  layout?: ManualLayout;\n}",
       "docstring": "Trendline label configuration.",
+      "source": {
+        "file": "types/data/src/data/charts.ts"
+      },
+      "ownership": {
+        "package": "@mog/types-data"
+      },
+      "ownerPackage": "@mog/types-data"
+    },
+    "TrendlineType": {
+      "name": "TrendlineType",
+      "definition": "| 'linear'\n  | 'exponential'\n  | 'logarithmic'\n  | 'polynomial'\n  | 'power'\n  | 'moving-average'",
+      "docstring": "Trendline types for scatter charts",
       "source": {
         "file": "types/data/src/data/charts.ts"
       },
@@ -164511,6 +164547,18 @@
       "docstring": "WorksheetHyperlinks — Sub-API for cell hyperlink operations.\n\nProvides methods to set, get, and remove hyperlinks on cells.",
       "source": {
         "file": "types/api/src/api/worksheet/hyperlinks.ts"
+      },
+      "ownership": {
+        "package": "@mog/types-api"
+      },
+      "ownerPackage": "@mog/types-api"
+    },
+    "WorksheetRange": {
+      "name": "WorksheetRange",
+      "definition": "{\n  /** 0-based first row in the range. */\n  startRow: number;\n  /** 0-based first column in the range. */\n  startCol: number;\n  /** 0-based last row in the range. */\n  endRow: number;\n  /** 0-based last column in the range. */\n  endCol: number;\n  /** A1 address relative to the worksheet, e.g. \"A1:D10\". */\n  address: string;\n}",
+      "docstring": "Public range result DTOs.\n\nInternal kernel code uses `CellRange.sheetId` for stable identity. Public\nread APIs should return display-safe ranges that do not expose internal sheet\nIDs. Worksheet-scoped ranges include an A1 address relative to that worksheet.",
+      "source": {
+        "file": "types/api/src/api/ranges.ts"
       },
       "ownership": {
         "package": "@mog/types-api"

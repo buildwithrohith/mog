@@ -149338,7 +149338,7 @@
     },
     "ChartBorder": {
       "name": "ChartBorder",
-      "definition": "{\n  color?: string;\n  width?: number;\n  style?: string;\n}",
+      "definition": "{\n  color?: string;\n  width?: number;\n  style?: 'solid' | 'dot' | 'dash' | 'dashDot' | 'longDash' | 'longDashDot' | 'longDashDotDot';\n}",
       "docstring": "Shared chart border configuration (matches ChartBorderData wire type)",
       "source": {
         "file": "types/data/src/data/charts.ts"
@@ -159331,7 +159331,7 @@
     },
     "TrendlineConfig": {
       "name": "TrendlineConfig",
-      "definition": "{\n  show?: boolean;\n  type?: string;\n  color?: string;\n  lineWidth?: number;\n  order?: number;\n  period?: number;\n  forward?: number;\n  backward?: number;\n  intercept?: number;\n  displayEquation?: boolean;\n  displayRSquared?: boolean;\n  name?: string;\n  lineFormat?: ChartLineFormat;\n  label?: TrendlineLabelConfig;\n  /** @deprecated Use displayEquation instead */\n  showEquation?: boolean;\n  /** @deprecated Use displayRSquared instead */\n  showR2?: boolean;\n  /** @deprecated Use forward instead */\n  forwardPeriod?: number;\n  /** @deprecated Use backward instead */\n  backwardPeriod?: number;\n}",
+      "definition": "{\n  show?: boolean;\n  type?: TrendlineType;\n  color?: string;\n  lineWidth?: number;\n  order?: number;\n  period?: number;\n  forward?: number;\n  backward?: number;\n  intercept?: number;\n  displayEquation?: boolean;\n  displayRSquared?: boolean;\n  name?: string;\n  lineFormat?: ChartLineFormat;\n  label?: TrendlineLabelConfig;\n  /** @deprecated Use displayEquation instead */\n  showEquation?: boolean;\n  /** @deprecated Use displayRSquared instead */\n  showR2?: boolean;\n  /** @deprecated Use forward instead */\n  forwardPeriod?: number;\n  /** @deprecated Use backward instead */\n  backwardPeriod?: number;\n}",
       "docstring": "Trendline configuration (matches TrendlineData wire type)",
       "source": {
         "file": "types/data/src/data/charts.ts"
