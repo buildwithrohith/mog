@@ -2,6 +2,7 @@
 
 use super::super::*;
 use super::helpers::*;
+use formula_types::StructureChange;
 use value_types::CellValue;
 
 #[test]
@@ -137,13 +138,127 @@ fn undo_redo_restores_bulk_dimension_growth() {
     assert!(engine.grid_index(&sid).unwrap().row_count() >= 100_000);
     assert!(engine.grid_index(&sid).unwrap().col_count() >= 28);
 
-    engine.undo().unwrap();
+    let (_patches, undo_result) = engine.undo().unwrap();
     assert_eq!(cell_value_at(&engine, &sid, 99_999, 27), CellValue::Null);
     assert_eq!(engine.grid_index(&sid).unwrap().row_count(), 0);
     assert_eq!(engine.grid_index(&sid).unwrap().col_count(), 0);
+    assert!(
+        undo_result.structure_changes.is_empty(),
+        "undo of implicit sparse capacity grow must stay incremental"
+    );
 
-    engine.redo().unwrap();
+    let (_patches, redo_result) = engine.redo().unwrap();
     assert_eq!(cell_value_at(&engine, &sid, 99_999, 27), num(7.0));
     assert!(engine.grid_index(&sid).unwrap().row_count() >= 100_000);
     assert!(engine.grid_index(&sid).unwrap().col_count() >= 28);
+    assert!(
+        redo_result.structure_changes.is_empty(),
+        "redo of implicit sparse capacity grow must stay incremental"
+    );
+}
+
+#[test]
+fn undo_redo_restores_single_axis_col_growth_on_pre_sized_sheet() {
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(crate::snapshot::WorkbookSnapshot {
+        sheets: vec![crate::snapshot::SheetSnapshot {
+            id: sheet_id().to_uuid_string(),
+            name: "Sheet1".to_string(),
+            rows: 1_335,
+            cols: 18,
+            cells: vec![],
+            ranges: vec![],
+        }],
+        ..Default::default()
+    })
+    .unwrap();
+    let sid = sheet_id();
+    assert_eq!(engine.grid_index(&sid).unwrap().row_count(), 1_335);
+    assert_eq!(engine.grid_index(&sid).unwrap().col_count(), 18);
+
+    engine
+        .batch_set_cells_by_position(
+            vec![(
+                sid,
+                79,
+                18,
+                crate::storage::engine::mutation::CellInput::Parse {
+                    text: "atlas91 paste alpha".into(),
+                },
+            )],
+            true,
+        )
+        .unwrap();
+
+    assert_eq!(
+        cell_value_at(&engine, &sid, 79, 18),
+        CellValue::Text("atlas91 paste alpha".into())
+    );
+    assert_eq!(engine.grid_index(&sid).unwrap().row_count(), 1_335);
+    assert_eq!(engine.grid_index(&sid).unwrap().col_count(), 19);
+
+    let (_patches, undo_result) = engine.undo().unwrap();
+    assert_eq!(cell_value_at(&engine, &sid, 79, 18), CellValue::Null);
+    assert_eq!(engine.grid_index(&sid).unwrap().row_count(), 1_335);
+    assert_eq!(engine.grid_index(&sid).unwrap().col_count(), 18);
+    assert!(
+        undo_result.structure_changes.is_empty(),
+        "undo of implicit single-axis capacity grow must stay incremental"
+    );
+
+    let (_patches, redo_result) = engine.redo().unwrap();
+    assert_eq!(
+        cell_value_at(&engine, &sid, 79, 18),
+        CellValue::Text("atlas91 paste alpha".into())
+    );
+    assert_eq!(engine.grid_index(&sid).unwrap().row_count(), 1_335);
+    assert_eq!(engine.grid_index(&sid).unwrap().col_count(), 19);
+    assert!(
+        redo_result.structure_changes.is_empty(),
+        "redo of implicit single-axis capacity grow must stay incremental"
+    );
+}
+
+#[test]
+fn explicit_tail_row_delete_undo_redo_stays_structural() {
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(empty_bulk_snapshot()).unwrap();
+    let sid = sheet_id();
+
+    engine
+        .batch_set_cells_by_position(
+            vec![(
+                sid,
+                0,
+                0,
+                crate::storage::engine::mutation::CellInput::Parse { text: "11".into() },
+            )],
+            true,
+        )
+        .unwrap();
+
+    engine
+        .structure_change(
+            &sid,
+            &StructureChange::DeleteRows {
+                at: 0,
+                count: 1,
+                deleted_cell_ids: vec![],
+            },
+        )
+        .expect("delete tail row");
+
+    assert_eq!(cell_value_at(&engine, &sid, 0, 0), CellValue::Null);
+
+    let (_patches, undo_result) = engine.undo().expect("undo explicit tail row delete");
+    assert_eq!(cell_value_at(&engine, &sid, 0, 0), num(11.0));
+    assert!(
+        !undo_result.structure_changes.is_empty(),
+        "undo of explicit tail row delete must stay on the structural refresh path"
+    );
+
+    let (_patches, redo_result) = engine.redo().expect("redo explicit tail row delete");
+    assert_eq!(cell_value_at(&engine, &sid, 0, 0), CellValue::Null);
+    assert!(
+        !redo_result.structure_changes.is_empty(),
+        "redo of explicit tail row delete must stay on the structural refresh path"
+    );
 }

@@ -48,6 +48,31 @@ export {
   type MogSdkLogger,
   type NapiAddonModule,
 } from './boot';
+export {
+  MOG_SDK_SUPPORTED_VERSION_STORE_KINDS,
+  MOG_SDK_UNSUPPORTED_VERSION_STORE_KINDS,
+  MogSdkVersionStoreConfigError,
+  createSdkVersionStoreLifecycleConfig,
+  isMogSdkVersionStoreConfigError,
+} from './version-store';
+export type {
+  MogSdkBrowserVersionStoreConfig,
+  MogSdkIndexedDbVersionStoreConfig,
+  MogSdkMemoryDurableSnapshotVersionStoreConfig,
+  MogSdkMemoryVersionStoreConfig,
+  MogSdkNodeFileVersionStoreConfig,
+  MogSdkSupportedVersionStoreKind,
+  MogSdkUnsupportedVersionStoreKind,
+  MogSdkVersionStoreConfig,
+  MogSdkVersionStoreConfigObject,
+  MogSdkVersionStoreDiagnostic,
+  MogSdkVersionStoreDiagnosticCode,
+  MogSdkVersionStoreLifecycleConfig,
+  MogSdkVersionStoreLifecycleOptions,
+  MogSdkVersionStoreLifecycleProviderSelection,
+  MogSdkVersionStoreRuntime,
+  MogSdkVersionStoreScopeOptions,
+} from './version-store';
 
 export {
   CollaborativeEngine,
@@ -55,6 +80,13 @@ export {
   type CollaborativeEngineOptions,
   type SyncMode,
 } from './collaborative-engine';
+export {
+  CONTROL_PLANE_ENTRYPOINT_IDS,
+  controlPlaneEntrypoints,
+  createInertControlPlane,
+  observeControlPlaneShadow,
+} from './control-plane';
+export type * from './control-plane';
 
 // ---------------------------------------------------------------------------
 // Kernel-backed public APIs — SDK-owned declarations, bundled runtime

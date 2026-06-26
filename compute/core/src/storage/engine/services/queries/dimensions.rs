@@ -42,6 +42,24 @@ pub(in crate::storage::engine) fn get_hidden_rows(
     hidden
 }
 
+pub(in crate::storage::engine) fn get_filter_hidden_rows(
+    stores: &EngineStores,
+    sheet_id: &SheetId,
+) -> Vec<u32> {
+    let doc = stores.storage.doc();
+    let sheets = stores.storage.sheets();
+    let grid = stores.grid_indexes.get(sheet_id);
+    let mut hidden: Vec<u32> = sheet_dimensions::get_hidden_rows(doc, sheets, sheet_id)
+        .into_iter()
+        .filter(|row| {
+            sheet_dimensions::is_row_hidden_by_any_filter(doc, sheets, sheet_id, *row, grid)
+        })
+        .collect();
+    hidden.sort_unstable();
+    hidden.dedup();
+    hidden
+}
+
 pub(in crate::storage::engine) fn get_hidden_columns(
     stores: &EngineStores,
     sheet_id: &SheetId,
@@ -84,38 +102,20 @@ pub(in crate::storage::engine) fn get_data_bounds(
         }
     }
 
-    // 2. Expand bounds with sheet extent (includes materialized values: pivot output, spill arrays).
-    //    expand_extent() is called when writing to col_data, so sheet.rows/cols reflects the
-    //    farthest materialized cell even though those cells have no CellId.
-    if !sheet.col_data_is_empty() && sheet.rows > 0 && sheet.cols > 0 {
+    // 2. Expand bounds with non-null dense content (materialized values: pivot output,
+    //    spill arrays, range payloads). Dense storage may retain null padding after
+    //    clears, so raw sheet extents are not content bounds.
+    if let Some((dense_min_row, dense_min_col, dense_max_row, dense_max_col)) =
+        sheet.dense_content_bounds()
+    {
         found = true;
-        min_row = 0;
-        max_row = max_row.max(sheet.rows - 1);
-        min_col = 0;
-        max_col = max_col.max(sheet.cols - 1);
+        min_row = min_row.min(dense_min_row);
+        max_row = max_row.max(dense_max_row);
+        min_col = min_col.min(dense_min_col);
+        max_col = max_col.max(dense_max_col);
     }
 
-    // 3. Expand bounds with format-only cells from CRDT properties.
-    //    These cells have formatting but no value/formula, so they exist in
-    //    the CRDT properties map but not in the cell mirror.
-    use crate::storage::properties;
-
-    let doc = stores.storage.doc();
-    let sheets_map = stores.storage.sheets();
-    let grid = stores.grid_indexes.get(sheet_id);
-
-    for cell_id_hex in properties::iter_formatted_property_cell_ids(doc, sheets_map, sheet_id) {
-        // Resolve position directly from the authoritative GridIndex.
-        if let Some((row, col)) = resolve_pos_from_grid(grid, cell_id_hex.as_str()) {
-            found = true;
-            min_row = min_row.min(row);
-            max_row = max_row.max(row);
-            min_col = min_col.min(col);
-            max_col = max_col.max(col);
-        }
-    }
-
-    // 4. Expand bounds with merge-region footprints.
+    // 3. Expand bounds with merge-region footprints.
     //    A merged region is sheet structure (not just a view hint), so its
     //    bounding box must be part of the used range — matches Excel's
     //    `UsedRange` semantics. Walking merges here makes `get_data_bounds`
@@ -129,6 +129,9 @@ pub(in crate::storage::engine) fn get_data_bounds(
     //    local `GridIndex` may not yet have the merge-origin cell IDs
     //    registered (hydration gap fixed in a separate round), but the
     //    Yrs merges map carries the rectangle directly.
+    let doc = stores.storage.doc();
+    let sheets_map = stores.storage.sheets();
+
     for (sr, sc, er, ec) in merges::iter_merge_bounds(doc, sheets_map, *sheet_id) {
         found = true;
         min_row = min_row.min(sr);
@@ -315,6 +318,7 @@ pub(in crate::storage::engine) fn get_col_widths_batch(
 
 pub(in crate::storage::engine) fn get_current_region(
     stores: &EngineStores,
+    mirror: &CellMirror,
     sheet_id: &SheetId,
     start_row: u32,
     start_col: u32,
@@ -327,13 +331,14 @@ pub(in crate::storage::engine) fn get_current_region(
             end_col: start_col,
         };
     };
-    let region = cell_iter::get_current_region(
+    let region = cell_iter::get_current_region_with_extra_data(
         stores.storage.doc(),
         stores.storage.sheets(),
         *sheet_id,
         grid,
         start_row,
         start_col,
+        |r, c| mirror_render_has_data(stores, mirror, sheet_id, r, c),
     );
     RectBounds {
         start_row: region.start_row(),
@@ -366,7 +371,7 @@ pub(in crate::storage::engine) fn find_data_edge(
     )
 }
 
-fn mirror_render_has_data(
+pub(super) fn mirror_render_has_data(
     stores: &EngineStores,
     mirror: &CellMirror,
     sheet_id: &SheetId,

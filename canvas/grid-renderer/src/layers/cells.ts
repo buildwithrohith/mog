@@ -55,7 +55,7 @@ import {
 } from '../cells/indicators';
 import {
   collectInteractiveElements,
-  toInteractiveViewportCellInfo,
+  toInteractiveViewportBounds,
   type InteractiveCellInfo,
 } from '../cells/interactive-elements';
 import { collectVisibleInteractiveElements } from '../cells/visible-interactive-elements';
@@ -441,7 +441,7 @@ export class CellsLayer extends BaseLayer implements DirtyCellExpander {
       );
       if (this.interactiveElements) {
         collectInteractiveElements(
-          toInteractiveViewportCellInfo(fallbackCellInfo, region),
+          fallbackCellInfo,
           {
             hasComment: false,
             isCheckbox: false,
@@ -450,6 +450,7 @@ export class CellsLayer extends BaseLayer implements DirtyCellExpander {
             sheetId,
           },
           this.interactiveElements,
+          (bounds) => toInteractiveViewportBounds(bounds, region),
         );
       }
     };
@@ -819,10 +820,8 @@ export class CellsLayer extends BaseLayer implements DirtyCellExpander {
           filterInfo,
           sheetId,
         };
-        collectInteractiveElements(
-          toInteractiveViewportCellInfo(cellInfo, region),
-          interactiveInfo,
-          this.interactiveElements,
+        collectInteractiveElements(cellInfo, interactiveInfo, this.interactiveElements, (bounds) =>
+          toInteractiveViewportBounds(bounds, region),
         );
       }
     }

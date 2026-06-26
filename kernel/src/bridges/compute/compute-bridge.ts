@@ -20,7 +20,7 @@ import {
   type SheetId,
   sheetId as toSheetId,
 } from '@mog-sdk/contracts/core';
-import { toCellId } from '@mog-sdk/contracts/cell-identity';
+import { toCellId, type CellId } from '@mog-sdk/contracts/cell-identity';
 import type { RawSecurityEvent } from '@mog-sdk/contracts/events';
 import type { ViewportRefreshDetails } from '@mog-sdk/contracts/api';
 import type { IKernelContext } from '@mog-sdk/contracts/kernel';
@@ -46,6 +46,9 @@ import {
   type PositionedCellInput,
   type TableHeaderRename,
 } from './table-header-write-intercept';
+import { prepareVersionMutationCapture, type MutationAdmissionOptions } from './mutation-admission';
+import type { AdmittedSyncApplyContext } from './sync-apply-admission';
+import { assertStrictValidationAdmission } from './validation-admission';
 
 export interface PivotCreateWithSheetOptions {
   insertBeforeSheetId?: SheetId;
@@ -94,6 +97,7 @@ import type {
   ImportDiagnostic as WireImportDiagnostic,
   MergeChange,
   MutationResult,
+  SyncApplyMutationMetadataWire,
   RuntimeDiagnosticsOptions as WireRuntimeDiagnosticsOptions,
   RuntimeDiagnosticsPage as WireRuntimeDiagnosticsPage,
   RustWorkbookSettingsPatch,
@@ -218,6 +222,7 @@ export type {
   GroupingChange,
   MergeChange,
   MutationResult,
+  SyncApplyMutationMetadataWire,
   NamedRangeChange,
   OutlineLevel,
   OutlineLevelButton,
@@ -408,6 +413,7 @@ export {
 // =============================================================================
 
 export { extractMutationData } from './compute-core';
+export type { SyncApplyWithMetadataResult } from './sync-apply-result';
 
 // =============================================================================
 // ComputeCore & Generated Bridge Methods
@@ -416,6 +422,7 @@ export { extractMutationData } from './compute-core';
 import type { WriteGate } from '../../document/write-gate';
 import { GeneratedBridgeBase } from './compute-bridge.gen';
 import { ComputeCore, extractMutationData } from './compute-core';
+import type { SyncApplyWithMetadataResult } from './sync-apply-result';
 
 // =============================================================================
 // InitPhase type
@@ -523,9 +530,12 @@ function isUiStateWorkbookSettingsPatch(settings: RustWorkbookSettingsPatch): bo
  * override or extend the generated base naturally via class inheritance.
  */
 export class ComputeBridge extends GeneratedBridgeBase {
+  private bridgeCtx: IKernelContext;
+
   constructor(ctx: IKernelContext, docId: string, transport: BridgeTransport) {
     const core = new ComputeCore(ctx, docId, transport);
     super(core);
+    this.bridgeCtx = ctx;
     core.setAfterMutationHook(() => this.flushPendingUpdateV1());
   }
 
@@ -543,6 +553,7 @@ export class ComputeBridge extends GeneratedBridgeBase {
 
   setContext(ctx: IKernelContext): void {
     this.core.setContext(ctx);
+    this.bridgeCtx = ctx;
   }
 
   /**
@@ -569,23 +580,43 @@ export class ComputeBridge extends GeneratedBridgeBase {
     return this.core.createEngineFromYrsState(yrsState);
   }
 
-  setFloatingObject(sheetId: SheetId, objectId: string, json: unknown): Promise<MutationResult> {
-    return super.setFloatingObject(sheetId, objectId, normalizeFloatingObjectForStorage(json));
+  setFloatingObject(
+    sheetId: SheetId,
+    objectId: string,
+    json: unknown,
+    admissionOptions?: MutationAdmissionOptions,
+  ): Promise<MutationResult> {
+    return super.setFloatingObject(
+      sheetId,
+      objectId,
+      normalizeFloatingObjectForStorage(json),
+      admissionOptions,
+    );
   }
 
-  createFloatingObject(sheetId: SheetId, config: unknown): Promise<MutationResult> {
-    return super.createFloatingObject(sheetId, normalizeFloatingObjectForStorage(config));
+  createFloatingObject(
+    sheetId: SheetId,
+    config: unknown,
+    admissionOptions?: MutationAdmissionOptions,
+  ): Promise<MutationResult> {
+    return super.createFloatingObject(
+      sheetId,
+      normalizeFloatingObjectForStorage(config),
+      admissionOptions,
+    );
   }
 
   updateFloatingObject(
     sheetId: SheetId,
     objectId: string,
     updates: unknown,
+    admissionOptions?: MutationAdmissionOptions,
   ): Promise<MutationResult> {
     return super.updateFloatingObject(
       sheetId,
       objectId,
       normalizeFloatingObjectUpdateForStorage(updates),
+      admissionOptions,
     );
   }
 
@@ -785,8 +816,43 @@ export class ComputeBridge extends GeneratedBridgeBase {
     return this.core.syncDiff(remoteSv);
   }
 
-  syncApply(update: Uint8Array): Promise<MutationResult> {
-    return this.core.syncApply(update);
+  syncApply(update: Uint8Array): Promise<MutationResult>;
+  syncApply(
+    update: Uint8Array,
+    syncApplyContext: AdmittedSyncApplyContext,
+  ): Promise<MutationResult>;
+  syncApply(
+    update: Uint8Array,
+    syncApplyContext?: AdmittedSyncApplyContext,
+  ): Promise<MutationResult> {
+    return syncApplyContext
+      ? this.core.syncApply(update, syncApplyContext)
+      : this.core.syncApply(update);
+  }
+
+  syncApplyLegacyRaw(update: Uint8Array): Promise<SyncApplyWithMetadataResult> {
+    return this.core.syncApplyLegacyRaw(update);
+  }
+
+  syncApplyAdmitted(
+    update: Uint8Array,
+    syncApplyContext: AdmittedSyncApplyContext,
+  ): Promise<MutationResult> {
+    return this.core.syncApplyAdmitted(update, syncApplyContext);
+  }
+
+  syncApplyWithMetadata(
+    update: Uint8Array,
+    syncApplyContext: AdmittedSyncApplyContext,
+  ): Promise<SyncApplyWithMetadataResult> {
+    return this.core.syncApplyWithMetadata(update, syncApplyContext);
+  }
+
+  syncApplyAdmittedWithMetadata(
+    update: Uint8Array,
+    syncApplyContext: AdmittedSyncApplyContext,
+  ): Promise<SyncApplyWithMetadataResult> {
+    return this.core.syncApplyAdmittedWithMetadata(update, syncApplyContext);
   }
 
   override async drainPendingUpdates(): Promise<Uint8Array[]> {
@@ -1059,12 +1125,20 @@ export class ComputeBridge extends GeneratedBridgeBase {
   }
 
   /** Structural change — delegates to ComputeCore for prefetch invalidation. */
-  async structureChange(sheetId: SheetId, change: StructureChange): Promise<MutationResult> {
-    return this.core.structureChangeWithInvalidation(sheetId, change);
+  async structureChange(
+    sheetId: SheetId,
+    change: StructureChange,
+    options?: MutationAdmissionOptions,
+  ): Promise<MutationResult> {
+    return this.core.structureChangeWithInvalidation(sheetId, change, options);
   }
 
   /** Copy a sheet and return the new sheet ID. */
-  async copySheet(sheetId: SheetId, newName: string): Promise<{ newSheetId: SheetId }> {
+  async copySheet(
+    sheetId: SheetId,
+    newName: string,
+    options?: MutationAdmissionOptions,
+  ): Promise<{ newSheetId: SheetId }> {
     // `compute_copy_sheet` returns `[String, MutationResult]` (not a bytes-tuple).
     // We capture the new sheet id alongside the MutationResult, then route it
     // through public admission and the normal mutation pipeline so the undo
@@ -1079,6 +1153,8 @@ export class ComputeBridge extends GeneratedBridgeBase {
           newName,
         }),
       ([, mutationResult]) => [new Uint8Array(0), mutationResult],
+      undefined,
+      options,
     );
     const [rawId] = raw;
     // `mutation_copy_sheet` in Rust registers formulas in the dep graph and
@@ -1098,7 +1174,10 @@ export class ComputeBridge extends GeneratedBridgeBase {
   }
 
   /** Create a new sheet and return its ID. */
-  async createSheet(name: string): Promise<{ sheetId: SheetId }> {
+  async createSheet(
+    name: string,
+    options?: MutationAdmissionOptions,
+  ): Promise<{ sheetId: SheetId }> {
     // See `copySheet` above: route through public admission and the normal
     // mutation pipeline so the undo service refreshes its cached state.
     const { raw } = await this.core.mutatePublicResult<[string, MutationResult]>(
@@ -1113,6 +1192,8 @@ export class ComputeBridge extends GeneratedBridgeBase {
           },
         ),
       ([, mutationResult]) => [new Uint8Array(0), mutationResult],
+      undefined,
+      options,
     );
     const [rawId] = raw;
     return { sheetId: toSheetId(rawId) };
@@ -1149,8 +1230,12 @@ export class ComputeBridge extends GeneratedBridgeBase {
   }
 
   /** Remove a sheet. */
-  async removeSheet(sheetId: SheetId): Promise<void> {
-    await this.core.admitPublicMutation('compute_delete_sheet');
+  async removeSheet(sheetId: SheetId, options?: MutationAdmissionOptions): Promise<void> {
+    await this.core.admitPublicMutation('compute_delete_sheet', options);
+    await prepareVersionMutationCapture(this.bridgeCtx, {
+      operation: 'compute_delete_sheet',
+      ...(options?.operationContext ? { operationContext: options.operationContext } : {}),
+    });
     // `compute_delete_sheet` is `#[bridge::skip(ts_bridge)]` on the Rust side,
     // so it is absent from the generated BYTES_TUPLE_COMMANDS set and the
     // bytes-tuple normalizing transport does NOT auto-unpack the result. But
@@ -1177,7 +1262,13 @@ export class ComputeBridge extends GeneratedBridgeBase {
         },
       );
       const tuple = normalizeBytesTuple(raw as [Uint8Array, MutationResult] | Uint8Array);
-      await this.core.mutate(Promise.resolve(tuple));
+      await this.core.mutate(
+        Promise.resolve(tuple),
+        undefined,
+        'compute_delete_sheet',
+        options,
+        true,
+      );
       // Force-recalculate cells whose formula strings now contain "#REF!" after deletion.
       // Rust's remove_sheet() misses DepTarget::Range dependents, so cross-sheet positional
       // refs like =Sheet2!A1 are not recalculated. This workaround finds them by formula text
@@ -1217,7 +1308,11 @@ export class ComputeBridge extends GeneratedBridgeBase {
   }
 
   /** Rename a sheet. */
-  async renameSheet(sheetId: SheetId, name: string): Promise<void> {
+  async renameSheet(
+    sheetId: SheetId,
+    name: string,
+    options?: MutationAdmissionOptions,
+  ): Promise<void> {
     // See `removeSheet` above for the rationale: `compute_rename_compute_sheet`
     // is `#[bridge::skip(ts_bridge)]`, so the bytes-tuple return from Rust is
     // NOT auto-unpacked by the transport. Normalize explicitly, then route
@@ -1235,6 +1330,8 @@ export class ComputeBridge extends GeneratedBridgeBase {
           },
         ),
       (raw) => normalizeBytesTuple(raw as [Uint8Array, MutationResult] | Uint8Array),
+      undefined,
+      options,
     );
     // Rust's `mutation_rename_sheet` rewrites Yrs formula text and
     // regenerates the `formula_strings` cache — no TS-side mirror needed.
@@ -1379,19 +1476,24 @@ export class ComputeBridge extends GeneratedBridgeBase {
     authorId: string | null,
     parentId: string | null,
     commentType: 'note' | 'threadedComment',
+    admissionOptions?: MutationAdmissionOptions,
   ): Promise<MutationResult> {
-    return this.core.mutatePublic('compute_add_comment_by_position', () =>
-      this.core.transport.call<[Uint8Array, MutationResult]>('compute_add_comment_by_position', {
-        docId: this.core.docId,
-        sheetId,
-        row,
-        col,
-        text,
-        author,
-        authorId,
-        parentId,
-        commentType,
-      }),
+    return this.core.mutatePublic(
+      'compute_add_comment_by_position',
+      () =>
+        this.core.transport.call<[Uint8Array, MutationResult]>('compute_add_comment_by_position', {
+          docId: this.core.docId,
+          sheetId,
+          row,
+          col,
+          text,
+          author,
+          authorId,
+          parentId,
+          commentType,
+        }),
+      undefined,
+      admissionOptions,
     );
   }
 
@@ -1641,23 +1743,38 @@ export class ComputeBridge extends GeneratedBridgeBase {
     return this.applyChanges(edits, true);
   }
 
+  async setCell(
+    sheetId: SheetId,
+    cellId: CellId,
+    row: number,
+    col: number,
+    input: CellInput,
+    admissionOptions?: MutationAdmissionOptions,
+  ): Promise<MutationResult> {
+    await assertStrictValidationAdmission(this, sheetId, [{ row, col, input }]);
+    return super.setCell(sheetId, cellId, row, col, input, admissionOptions);
+  }
+
   async setCellValueParsed(
     sheetId: SheetId,
     row: number,
     col: number,
     rawInput: string,
+    admissionOptions?: MutationAdmissionOptions,
   ): Promise<MutationResult> {
     const { normalEdits, headerRenames } = await splitTableHeaderWritesForSetCells(this, sheetId, [
       { row, col, input: { kind: 'parse', text: rawInput } },
     ]);
-    const headerResult = await this.applyTableHeaderRenames(headerRenames);
+    await assertStrictValidationAdmission(this, sheetId, normalEdits);
+    const headerResult = await this.applyTableHeaderRenames(headerRenames, admissionOptions);
     if (normalEdits.length === 0) return headerResult ?? emptyMutationResult();
-    return super.setCellValueParsed(sheetId, row, col, rawInput);
+    return super.setCellValueParsed(sheetId, row, col, rawInput, admissionOptions);
   }
 
   async setCellValuesParsed(
     sheetId: SheetId,
     updates: [number, number, string][],
+    admissionOptions?: MutationAdmissionOptions,
   ): Promise<MutationResult> {
     const edits = updates.map(
       ([row, col, text]) => ({ row, col, input: { kind: 'parse', text } }) as const,
@@ -1667,7 +1784,8 @@ export class ComputeBridge extends GeneratedBridgeBase {
       sheetId,
       edits,
     );
-    const headerResult = await this.applyTableHeaderRenames(headerRenames);
+    await assertStrictValidationAdmission(this, sheetId, normalEdits);
+    const headerResult = await this.applyTableHeaderRenames(headerRenames, admissionOptions);
     if (normalEdits.length === 0) return headerResult ?? emptyMutationResult();
     return super.setCellValuesParsed(
       sheetId,
@@ -1677,6 +1795,7 @@ export class ComputeBridge extends GeneratedBridgeBase {
         }
         return [edit.row, edit.col, edit.input.text] as [number, number, string];
       }),
+      admissionOptions,
     );
   }
 
@@ -1685,13 +1804,40 @@ export class ComputeBridge extends GeneratedBridgeBase {
     row: number,
     col: number,
     value: string,
+    admissionOptions?: MutationAdmissionOptions,
   ): Promise<MutationResult> {
     const { normalEdits, headerRenames } = await splitTableHeaderWritesForSetCells(this, sheetId, [
       { row, col, input: { kind: 'literal', text: value } },
     ]);
-    const headerResult = await this.applyTableHeaderRenames(headerRenames);
+    await assertStrictValidationAdmission(this, sheetId, normalEdits);
+    const headerResult = await this.applyTableHeaderRenames(headerRenames, admissionOptions);
     if (normalEdits.length === 0) return headerResult ?? emptyMutationResult();
-    return super.setCellValueAsText(sheetId, row, col, value);
+    return super.setCellValueAsText(sheetId, row, col, value, admissionOptions);
+  }
+
+  batchSetCellsByPosition(
+    edits: [SheetId, number, number, CellInput][],
+    skipCycleCheck: boolean,
+    admissionOptions?: MutationAdmissionOptions,
+  ): Promise<MutationResult> {
+    return this.core.mutatePublic(
+      'compute_batch_set_cells_by_position',
+      () =>
+        this.core.transport.call<[Uint8Array, MutationResult]>(
+          'compute_batch_set_cells_by_position',
+          {
+            docId: this.core.docId,
+            edits,
+            skipCycleCheck,
+          },
+        ),
+      edits.map(([editSheetId, row, col]) => ({
+        sheetId: editSheetId,
+        row,
+        col,
+      })),
+      admissionOptions,
+    );
   }
 
   /** Set cells by position. Converts to tuples for generated batchSetCellsByPosition.
@@ -1705,13 +1851,16 @@ export class ComputeBridge extends GeneratedBridgeBase {
   async setCellsByPosition(
     sheetId: SheetId,
     edits: PositionedCellInput[],
+    options?: MutationAdmissionOptions,
   ): Promise<MutationResult> {
     const { normalEdits, headerRenames } = await splitTableHeaderWritesForSetCells(
       this,
       sheetId,
       edits,
     );
-    const headerResult = await this.applyTableHeaderRenames(headerRenames);
+
+    await assertStrictValidationAdmission(this, sheetId, normalEdits);
+    const headerResult = await this.applyTableHeaderRenames(headerRenames, options);
 
     if (normalEdits.length === 0) {
       return headerResult ?? emptyMutationResult();
@@ -1720,24 +1869,103 @@ export class ComputeBridge extends GeneratedBridgeBase {
     const tuples: [SheetId, number, number, CellInput][] = normalEdits.map(
       (e) => [sheetId, e.row, e.col, e.input] as [SheetId, number, number, CellInput],
     );
-    const result = await this.core.mutatePublic(
-      'compute_batch_set_cells_by_position',
+    const result = await this.batchSetCellsByPosition(tuples, true, options);
+    return this.applyDateFormulaFormatCompatibility(sheetId, normalEdits, result, options);
+  }
+
+  async setDateValue(
+    sheetId: SheetId,
+    row: number,
+    col: number,
+    year: number,
+    month: number,
+    day: number,
+    options?: MutationAdmissionOptions,
+  ): Promise<MutationResult> {
+    await assertStrictValidationAdmission(this, sheetId, [
+      {
+        row,
+        col,
+        input: {
+          kind: 'literal',
+          text: `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+        },
+      },
+    ]);
+    return this.core.mutatePublic(
+      'compute_set_date_value',
       () =>
-        this.core.transport.call<[Uint8Array, MutationResult]>(
-          'compute_batch_set_cells_by_position',
-          {
-            docId: this.core.docId,
-            edits: tuples,
-            skipCycleCheck: true,
-          },
-        ),
-      normalEdits.map((edit) => ({ sheetId, row: edit.row, col: edit.col })),
+        this.core.transport.call<[Uint8Array, MutationResult]>('compute_set_date_value', {
+          docId: this.core.docId,
+          sheetId,
+          row,
+          col,
+          year,
+          month,
+          day,
+        }),
+      [{ sheetId, row, col }],
+      options,
     );
-    return this.applyDateFormulaFormatCompatibility(sheetId, normalEdits, result);
+  }
+
+  async setTimeValue(
+    sheetId: SheetId,
+    row: number,
+    col: number,
+    hours: number,
+    minutes: number,
+    seconds: number,
+    options?: MutationAdmissionOptions,
+  ): Promise<MutationResult> {
+    await assertStrictValidationAdmission(this, sheetId, [
+      {
+        row,
+        col,
+        input: {
+          kind: 'literal',
+          text: `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`,
+        },
+      },
+    ]);
+    return this.core.mutatePublic(
+      'compute_set_time_value',
+      () =>
+        this.core.transport.call<[Uint8Array, MutationResult]>('compute_set_time_value', {
+          docId: this.core.docId,
+          sheetId,
+          row,
+          col,
+          hours,
+          minutes,
+          seconds,
+        }),
+      [{ sheetId, row, col }],
+      options,
+    );
+  }
+
+  setTabColor(
+    sheetId: SheetId,
+    color: string | null,
+    options?: MutationAdmissionOptions,
+  ): Promise<MutationResult> {
+    return this.core.mutatePublic(
+      'compute_set_tab_color',
+      () =>
+        this.core.transport.call<[Uint8Array, MutationResult]>('compute_set_tab_color', {
+          docId: this.core.docId,
+          sheetId,
+          color,
+        }),
+      undefined,
+      options,
+    );
   }
 
   private async applyTableHeaderRenames(
     headerRenames: TableHeaderRename[],
+    options?: MutationAdmissionOptions,
   ): Promise<MutationResult | null> {
     let headerResult: MutationResult | null = null;
     for (const rename of headerRenames) {
@@ -1745,6 +1973,7 @@ export class ComputeBridge extends GeneratedBridgeBase {
         rename.tableName,
         rename.columnIndex,
         rename.newName,
+        options,
       );
     }
     return headerResult;
@@ -1754,6 +1983,7 @@ export class ComputeBridge extends GeneratedBridgeBase {
     sheetId: SheetId,
     edits: PositionedCellInput[],
     result: MutationResult,
+    options?: MutationAdmissionOptions,
   ): Promise<MutationResult> {
     const dateFormulaEdits = edits.filter((edit) => isParsedTopLevelDateFormula(edit.input));
     if (dateFormulaEdits.length === 0) return result;
@@ -1782,6 +2012,7 @@ export class ComputeBridge extends GeneratedBridgeBase {
           format: { numberFormat: 'M/d/yyyy' },
         }),
       ranges.map(([row, col]) => ({ sheetId, row, col })),
+      options,
     );
     return appendPropertyChanges(result, formatResult);
   }
@@ -1846,24 +2077,24 @@ export class ComputeBridge extends GeneratedBridgeBase {
   // cover the same call surface.
   // ===========================================================================
 
-  wbSecurityAddPolicy(policy: unknown): Promise<string> {
-    this.core.ensureInitialized();
+  async wbSecurityAddPolicy(policy: unknown): Promise<string> {
+    await this.core.admitPublicMutation('compute_wb_security_add_policy');
     return this.core.transport.call<string>('compute_wb_security_add_policy', {
       docId: this.core.docId,
       policy,
     });
   }
 
-  wbSecurityRemovePolicy(id: string): Promise<void> {
-    this.core.ensureInitialized();
+  async wbSecurityRemovePolicy(id: string): Promise<void> {
+    await this.core.admitPublicMutation('compute_wb_security_remove_policy');
     return this.core.transport.call<void>('compute_wb_security_remove_policy', {
       docId: this.core.docId,
       id,
     });
   }
 
-  wbSecurityUpdatePolicy(id: string, patch: unknown): Promise<void> {
-    this.core.ensureInitialized();
+  async wbSecurityUpdatePolicy(id: string, patch: unknown): Promise<void> {
+    await this.core.admitPublicMutation('compute_wb_security_update_policy');
     return this.core.transport.call<void>('compute_wb_security_update_policy', {
       docId: this.core.docId,
       id,
@@ -1898,16 +2129,16 @@ export class ComputeBridge extends GeneratedBridgeBase {
     });
   }
 
-  wbSecurityApplyTemplate(template: unknown): Promise<string[]> {
-    this.core.ensureInitialized();
+  async wbSecurityApplyTemplate(template: unknown): Promise<string[]> {
+    await this.core.admitPublicMutation('compute_wb_security_apply_template');
     return this.core.transport.call<string[]>('compute_wb_security_apply_template', {
       docId: this.core.docId,
       template,
     });
   }
 
-  wbSecurityRemoveTemplate(templateId: string): Promise<void> {
-    this.core.ensureInitialized();
+  async wbSecurityRemoveTemplate(templateId: string): Promise<void> {
+    await this.core.admitPublicMutation('compute_wb_security_remove_template');
     return this.core.transport.call<void>('compute_wb_security_remove_template', {
       docId: this.core.docId,
       templateId,

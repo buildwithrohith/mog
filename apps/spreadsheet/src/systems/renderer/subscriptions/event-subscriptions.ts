@@ -12,6 +12,7 @@
  * - rows:hidden/unhidden, columns:hidden/unhidden - Hidden dimension sync
  * - sheet:settings-changed - Gridline color, zero values, RTL
  * - workbook:theme-changed - Theme changes (full invalidation)
+ * - workbook:version-checkout-materialized - Context swap after checkout
  * - sparkline:* - Sparkline CRUD and data changes
  * - range:sorted - Sort operations (full invalidation)
  * - filter:created, filter:deleted - AutoFilter CRUD (render filter buttons)
@@ -88,6 +89,11 @@ export interface EventSubscriptionConfig {
    * Split events are workbook state changes; SheetView owns the computed layout.
    */
   setViewportConfig: (config: PersistedViewportConfig) => void;
+
+  /**
+   * Rebind renderer-owned viewport registrations after workbook context swaps.
+   */
+  rebindWorkbookViewport?: () => void;
 
   /**
    * Callback when workbook settings change that affect selection machine.
@@ -470,6 +476,15 @@ export function setupEventSubscriptions(config: EventSubscriptionConfig): EventS
     }
   });
   cleanups.set('workbookSettings', workbookSettingsUnsub);
+
+  // ---------------------------------------------------------------------------
+  // VERSION CHECKOUT EVENTS
+  // ---------------------------------------------------------------------------
+  const versionCheckoutUnsub = workbook.on('workbook:version-checkout-materialized', () => {
+    config.rebindWorkbookViewport?.();
+    doInvalidateAll();
+  });
+  cleanups.set('versionCheckout', versionCheckoutUnsub);
 
   // ---------------------------------------------------------------------------
   // WORKBOOK THEME EVENTS (Issue 4: Page Layout - Themes)

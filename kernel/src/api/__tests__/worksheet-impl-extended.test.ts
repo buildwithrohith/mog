@@ -174,6 +174,22 @@ const TableOps = await import('../worksheet/operations/table-operations');
 
 const SHEET_ID = sheetId('sheet-1');
 
+function expectVersionOperationOptions(operationIdPrefix: string, domainIds: readonly string[]) {
+  return expect.objectContaining({
+    operationContext: expect.objectContaining({
+      operationId: expect.stringMatching(
+        new RegExp(`^${operationIdPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:`),
+      ),
+      kind: 'mutation',
+      author: expect.objectContaining({ actorKind: 'user' }),
+      sheetIds: [SHEET_ID],
+      domainIds,
+      capturePolicy: 'commitEligible',
+      writeAdmissionMode: 'capture',
+    }),
+  });
+}
+
 function createMockCtx(): any {
   const eventHandlers = new Map<string, Set<(event: any) => void>>();
   const eventBus = {
@@ -321,6 +337,7 @@ function createMockCtx(): any {
       getSplitConfig: jest.fn().mockResolvedValue(null),
       setSplitConfig: jest.fn().mockResolvedValue(undefined),
       getHiddenRows: jest.fn().mockResolvedValue([]),
+      getFilterHiddenRows: jest.fn().mockResolvedValue([]),
       getHiddenColumns: jest.fn().mockResolvedValue([]),
       getRowHeightQuery: jest.fn().mockResolvedValue(20),
       setRowHeight: jest.fn().mockResolvedValue(undefined),
@@ -432,6 +449,15 @@ describe('WorksheetImpl Extended Methods', () => {
       expect(result).toBe(false);
     });
 
+    it('getFilterHiddenRowsBitmap delegates to computeBridge.getFilterHiddenRows', async () => {
+      ctx.computeBridge.getFilterHiddenRows.mockResolvedValue([2, 4]);
+
+      const result = await ws.layout.getFilterHiddenRowsBitmap();
+
+      expect(ctx.computeBridge.getFilterHiddenRows).toHaveBeenCalledWith(SHEET_ID);
+      expect(result).toEqual(new Set([2, 4]));
+    });
+
     it('getTabColor delegates to computeBridge.getTabColorQuery', async () => {
       ctx.computeBridge.getTabColorQuery.mockResolvedValue('#FF0000');
 
@@ -444,13 +470,21 @@ describe('WorksheetImpl Extended Methods', () => {
     it('setTabColor delegates to computeBridge.setTabColor', async () => {
       await ws.view.setTabColor('#00FF00');
 
-      expect(ctx.computeBridge.setTabColor).toHaveBeenCalledWith(SHEET_ID, '#00FF00');
+      expect(ctx.computeBridge.setTabColor).toHaveBeenCalledWith(
+        SHEET_ID,
+        '#00FF00',
+        expectVersionOperationOptions('worksheet.view.setTabColor', ['sheets']),
+      );
     });
 
     it('setTabColor with null clears the color', async () => {
       await ws.view.setTabColor(null);
 
-      expect(ctx.computeBridge.setTabColor).toHaveBeenCalledWith(SHEET_ID, null);
+      expect(ctx.computeBridge.setTabColor).toHaveBeenCalledWith(
+        SHEET_ID,
+        null,
+        expectVersionOperationOptions('worksheet.view.setTabColor', ['sheets']),
+      );
     });
 
     it('getVisibility returns visible or hidden based on cached value', async () => {
@@ -912,7 +946,11 @@ describe('WorksheetImpl Extended Methods', () => {
       await ws.tables.rename('OldName', 'NewName');
 
       expect(ctx.computeBridge.tableValidateTableName).toHaveBeenCalledWith('NewName', []);
-      expect(ctx.computeBridge.renameTable).toHaveBeenCalledWith('OldName', 'NewName');
+      expect(ctx.computeBridge.renameTable).toHaveBeenCalledWith(
+        'OldName',
+        'NewName',
+        expectVersionOperationOptions('tables.rename', ['tables']),
+      );
     });
 
     it('renameTable rejects invalid names before compute rename', async () => {
@@ -942,7 +980,11 @@ describe('WorksheetImpl Extended Methods', () => {
       expect(ctx.computeBridge.tableValidateTableName).toHaveBeenCalledWith('table1', [
         'OtherTable',
       ]);
-      expect(ctx.computeBridge.renameTable).toHaveBeenCalledWith('Table1', 'table1');
+      expect(ctx.computeBridge.renameTable).toHaveBeenCalledWith(
+        'Table1',
+        'table1',
+        expectVersionOperationOptions('tables.rename', ['tables']),
+      );
     });
 
     it('addTable with style delegates to one Rust lifecycle command', async () => {
@@ -982,6 +1024,7 @@ describe('WorksheetImpl Extended Methods', () => {
         [],
         true,
         'TableStyleMedium4',
+        expectVersionOperationOptions('tables.add', ['tables']),
       );
       expect(ctx.computeBridge.createTable).not.toHaveBeenCalled();
       expect(ctx.computeBridge.setTableStyle).not.toHaveBeenCalled();
@@ -1028,6 +1071,7 @@ describe('WorksheetImpl Extended Methods', () => {
         [],
         false,
         null,
+        expectVersionOperationOptions('tables.add', ['tables']),
       );
       expect(ctx.computeBridge.createTable).not.toHaveBeenCalled();
       expect(ctx.computeBridge.setTableStyle).not.toHaveBeenCalled();
@@ -1037,7 +1081,11 @@ describe('WorksheetImpl Extended Methods', () => {
     it('updateTable with style updates calls computeBridge.setTableStyle', async () => {
       await ws.tables.update('Table1', { style: 'TableStyleLight1' });
 
-      expect(ctx.computeBridge.setTableStyle).toHaveBeenCalledWith('Table1', 'TableStyleLight1');
+      expect(ctx.computeBridge.setTableStyle).toHaveBeenCalledWith(
+        'Table1',
+        'TableStyleLight1',
+        expectVersionOperationOptions('tables.update', ['tables']),
+      );
     });
 
     it('updateTable rejects invalid renamed names before compute rename', async () => {
@@ -1064,19 +1112,29 @@ describe('WorksheetImpl Extended Methods', () => {
     it('setTableStylePreset delegates to computeBridge.setTableStyle', async () => {
       await ws.tables.setStylePreset('Table1', 'TableStyleMedium2');
 
-      expect(ctx.computeBridge.setTableStyle).toHaveBeenCalledWith('Table1', 'TableStyleMedium2');
+      expect(ctx.computeBridge.setTableStyle).toHaveBeenCalledWith(
+        'Table1',
+        'TableStyleMedium2',
+        expectVersionOperationOptions('tables.setStylePreset', ['tables']),
+      );
     });
 
     it('setShowTotals delegates to computeBridge.toggleTotalsRow when state differs', async () => {
       await ws.tables.setShowTotals('Table1', true);
 
-      expect(ctx.computeBridge.toggleTotalsRow).toHaveBeenCalledWith('Table1');
+      expect(ctx.computeBridge.toggleTotalsRow).toHaveBeenCalledWith(
+        'Table1',
+        expectVersionOperationOptions('tables.setShowTotals', ['tables']),
+      );
     });
 
     it('setShowHeaders delegates to computeBridge.toggleHeaderRow when state differs', async () => {
       await ws.tables.setShowHeaders('Table1', false);
 
-      expect(ctx.computeBridge.toggleHeaderRow).toHaveBeenCalledWith('Table1');
+      expect(ctx.computeBridge.toggleHeaderRow).toHaveBeenCalledWith(
+        'Table1',
+        expectVersionOperationOptions('tables.setShowHeaders', ['tables']),
+      );
     });
 
     it('applyAutoExpansion delegates to computeBridge.applyAutoExpansion', async () => {
@@ -1088,13 +1146,24 @@ describe('WorksheetImpl Extended Methods', () => {
 
       await ws.tables.applyAutoExpansion('Table1');
 
-      expect(ctx.computeBridge.applyAutoExpansion).toHaveBeenCalledWith(SHEET_ID, 'Table1');
+      expect(ctx.computeBridge.applyAutoExpansion).toHaveBeenCalledWith(
+        SHEET_ID,
+        'Table1',
+        expectVersionOperationOptions('tables.applyAutoExpansion', ['tables']),
+      );
     });
 
     it('resizeTable delegates to computeBridge.resizeTable', async () => {
       await ws.tables.resize('Table1', 'A1:E20');
 
-      expect(ctx.computeBridge.resizeTable).toHaveBeenCalledWith('Table1', 0, 0, 19, 4);
+      expect(ctx.computeBridge.resizeTable).toHaveBeenCalledWith(
+        'Table1',
+        0,
+        0,
+        19,
+        4,
+        expectVersionOperationOptions('tables.resize', ['tables']),
+      );
     });
 
     it('addTableColumn inserts a worksheet column and normalizes the table range', async () => {
@@ -1104,8 +1173,20 @@ describe('WorksheetImpl Extended Methods', () => {
       expect(ctx.computeBridge.structureChange).toHaveBeenCalledWith(SHEET_ID, {
         InsertCols: { at: 2, count: 1, new_col_ids: [] },
       });
-      expect(ctx.computeBridge.addTableColumn).toHaveBeenCalledWith('Table1', 'NewCol', 2);
-      expect(ctx.computeBridge.resizeTable).toHaveBeenCalledWith('Table1', 0, 0, 9, 4);
+      expect(ctx.computeBridge.addTableColumn).toHaveBeenCalledWith(
+        'Table1',
+        'NewCol',
+        2,
+        expectVersionOperationOptions('tables.addColumn', ['tables']),
+      );
+      expect(ctx.computeBridge.resizeTable).toHaveBeenCalledWith(
+        'Table1',
+        0,
+        0,
+        9,
+        4,
+        expectVersionOperationOptions('tables.addColumn', ['tables']),
+      );
       expect(ctx.computeBridge.endUndoGroup).toHaveBeenCalledTimes(1);
     });
 
@@ -1115,8 +1196,20 @@ describe('WorksheetImpl Extended Methods', () => {
       expect(ctx.computeBridge.structureChange).toHaveBeenCalledWith(SHEET_ID, {
         InsertCols: { at: 3, count: 1, new_col_ids: [] },
       });
-      expect(ctx.computeBridge.addTableColumn).toHaveBeenCalledWith('Table1', 'NewCol', 3);
-      expect(ctx.computeBridge.resizeTable).toHaveBeenCalledWith('Table1', 0, 0, 9, 4);
+      expect(ctx.computeBridge.addTableColumn).toHaveBeenCalledWith(
+        'Table1',
+        'NewCol',
+        3,
+        expectVersionOperationOptions('tables.addColumn', ['tables']),
+      );
+      expect(ctx.computeBridge.resizeTable).toHaveBeenCalledWith(
+        'Table1',
+        0,
+        0,
+        9,
+        4,
+        expectVersionOperationOptions('tables.addColumn', ['tables']),
+      );
     });
 
     it('removeTableColumn deletes the worksheet column and normalizes the table range', async () => {
@@ -1126,8 +1219,19 @@ describe('WorksheetImpl Extended Methods', () => {
       expect(ctx.computeBridge.structureChange).toHaveBeenCalledWith(SHEET_ID, {
         DeleteCols: { at: 2, count: 1, deleted_cell_ids: [] },
       });
-      expect(ctx.computeBridge.removeTableColumn).toHaveBeenCalledWith('Table1', 2);
-      expect(ctx.computeBridge.resizeTable).toHaveBeenCalledWith('Table1', 0, 0, 9, 2);
+      expect(ctx.computeBridge.removeTableColumn).toHaveBeenCalledWith(
+        'Table1',
+        2,
+        expectVersionOperationOptions('tables.removeColumn', ['tables']),
+      );
+      expect(ctx.computeBridge.resizeTable).toHaveBeenCalledWith(
+        'Table1',
+        0,
+        0,
+        9,
+        2,
+        expectVersionOperationOptions('tables.removeColumn', ['tables']),
+      );
       expect(ctx.computeBridge.endUndoGroup).toHaveBeenCalledTimes(1);
     });
   });
@@ -1149,6 +1253,7 @@ describe('WorksheetImpl Extended Methods', () => {
         format,
         sourceRange,
         targetRange,
+        expectVersionOperationOptions('formats.applyFormatToRange', ['cells.formats.direct']),
       );
     });
 
@@ -1164,6 +1269,7 @@ describe('WorksheetImpl Extended Methods', () => {
         format,
         null,
         targetRange,
+        expectVersionOperationOptions('formats.applyFormatToRange', ['cells.formats.direct']),
       );
     });
 
@@ -1196,6 +1302,7 @@ describe('WorksheetImpl Extended Methods', () => {
         relativeCFs,
         origin,
         true,
+        expect.any(Function),
       );
     });
 
@@ -1322,7 +1429,12 @@ describe('WorksheetImpl Extended Methods', () => {
       ];
       const result = await ws.setCells(updates);
 
-      expect(CellOps.setCells).toHaveBeenCalledWith(ctx, SHEET_ID, updates);
+      expect(CellOps.setCells).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        updates,
+        expectVersionOperationOptions('worksheet.setCells', ['cells']),
+      );
       expect(result).toEqual({ cellsWritten: 2 });
     });
 
@@ -1332,11 +1444,18 @@ describe('WorksheetImpl Extended Methods', () => {
       const date = new Date(2024, 0, 15); // Jan 15, 2024
       await ws.setDateValue(0, 0, date);
 
-      expect(CellOps.setDateValue).toHaveBeenCalledWith(ctx, SHEET_ID, 0, 0, {
-        year: 2024,
-        month: 1,
-        day: 15,
-      });
+      expect(CellOps.setDateValue).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        0,
+        0,
+        {
+          year: 2024,
+          month: 1,
+          day: 15,
+        },
+        expectVersionOperationOptions('worksheet.setDateValue', ['cells']),
+      );
     });
 
     it('setDateValue extracts month as 1-based', async () => {
@@ -1345,11 +1464,18 @@ describe('WorksheetImpl Extended Methods', () => {
       const date = new Date(2023, 11, 25); // Dec 25, 2023
       await ws.setDateValue(3, 2, date);
 
-      expect(CellOps.setDateValue).toHaveBeenCalledWith(ctx, SHEET_ID, 3, 2, {
-        year: 2023,
-        month: 12,
-        day: 25,
-      });
+      expect(CellOps.setDateValue).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        3,
+        2,
+        {
+          year: 2023,
+          month: 12,
+          day: 25,
+        },
+        expectVersionOperationOptions('worksheet.setDateValue', ['cells']),
+      );
     });
 
     it('setTimeValue delegates to CellOps.setTimeValue with decomposed time', async () => {
@@ -1358,11 +1484,18 @@ describe('WorksheetImpl Extended Methods', () => {
       const date = new Date(2024, 0, 1, 14, 30, 45);
       await ws.setTimeValue(0, 0, date);
 
-      expect(CellOps.setTimeValue).toHaveBeenCalledWith(ctx, SHEET_ID, 0, 0, {
-        hours: 14,
-        minutes: 30,
-        seconds: 45,
-      });
+      expect(CellOps.setTimeValue).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        0,
+        0,
+        {
+          hours: 14,
+          minutes: 30,
+          seconds: 45,
+        },
+        expectVersionOperationOptions('worksheet.setTimeValue', ['cells']),
+      );
     });
 
     it('setTimeValue handles midnight', async () => {
@@ -1371,11 +1504,18 @@ describe('WorksheetImpl Extended Methods', () => {
       const date = new Date(2024, 0, 1, 0, 0, 0);
       await ws.setTimeValue(1, 1, date);
 
-      expect(CellOps.setTimeValue).toHaveBeenCalledWith(ctx, SHEET_ID, 1, 1, {
-        hours: 0,
-        minutes: 0,
-        seconds: 0,
-      });
+      expect(CellOps.setTimeValue).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        1,
+        1,
+        {
+          hours: 0,
+          minutes: 0,
+          seconds: 0,
+        },
+        expectVersionOperationOptions('worksheet.setTimeValue', ['cells']),
+      );
     });
   });
 
@@ -1528,10 +1668,17 @@ describe('WorksheetImpl Extended Methods', () => {
       expect(ctx.computeBridge.getTableByName).toHaveBeenCalledWith('Table1');
       expect(TableOps.getTableColumnDataCellsFromInfo).toHaveBeenCalledWith(mockTableInfo, 2);
       expect(ctx.computeBridge.beginUndoGroup).toHaveBeenCalledTimes(1);
-      expect(ctx.computeBridge.updateCalculatedColumn).toHaveBeenCalledWith('Table1', 2, '=A2+B2');
-      expect(ctx.computeBridge.setCellsByPosition).toHaveBeenCalledWith(SHEET_ID, [
-        { row: 1, col: 2, input: { kind: 'parse', text: '=A2+B2' } },
-      ]);
+      expect(ctx.computeBridge.updateCalculatedColumn).toHaveBeenCalledWith(
+        'Table1',
+        2,
+        '=A2+B2',
+        expectVersionOperationOptions('tables.setCalculatedColumn', ['tables']),
+      );
+      expect(ctx.computeBridge.setCellsByPosition).toHaveBeenCalledWith(
+        SHEET_ID,
+        [{ row: 1, col: 2, input: { kind: 'parse', text: '=A2+B2' } }],
+        expectVersionOperationOptions('tables.setCalculatedColumn', ['tables']),
+      );
       expect(ctx.computeBridge.autoFill).toHaveBeenCalledWith(SHEET_ID, {
         sourceRange: { startRow: 1, startCol: 2, endRow: 1, endCol: 2 },
         targetRange: { startRow: 2, startCol: 2, endRow: 3, endCol: 2 },
@@ -1572,11 +1719,19 @@ describe('WorksheetImpl Extended Methods', () => {
       await ws.tables.clearCalculatedColumn('Table1', 2);
 
       expect(ctx.computeBridge.getTableByName).toHaveBeenCalledWith('Table1');
-      expect(ctx.computeBridge.removeCalculatedColumn).toHaveBeenCalledWith('Table1', 2);
-      expect(ctx.computeBridge.setCellsByPosition).toHaveBeenCalledWith(SHEET_ID, [
-        { row: 1, col: 2, input: { kind: 'clear' } },
-        { row: 2, col: 2, input: { kind: 'clear' } },
-      ]);
+      expect(ctx.computeBridge.removeCalculatedColumn).toHaveBeenCalledWith(
+        'Table1',
+        2,
+        expectVersionOperationOptions('tables.clearCalculatedColumn', ['tables']),
+      );
+      expect(ctx.computeBridge.setCellsByPosition).toHaveBeenCalledWith(
+        SHEET_ID,
+        [
+          { row: 1, col: 2, input: { kind: 'clear' } },
+          { row: 2, col: 2, input: { kind: 'clear' } },
+        ],
+        expectVersionOperationOptions('tables.clearCalculatedColumn', ['tables']),
+      );
     });
   });
 

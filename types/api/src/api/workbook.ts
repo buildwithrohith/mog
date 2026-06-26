@@ -1,6 +1,5 @@
 /**
  * Unified Spreadsheet API -- Workbook Interface
- *
  * THE definitive API for all workbook-level operations.
  * Every consumer -- headless agents, LLM code, OS apps, browser app -- uses this.
  * No exceptions, no bypasses.
@@ -53,8 +52,10 @@ import type {
 } from './types';
 import type { LinkStatus, LinkStatusReason, LinkStatusView } from './receipt-payloads';
 import type { CultureInfo } from '@mog/types-culture/types';
+import type { WorkbookXlsxExportOptions } from './workbook/xlsx-export';
 import type {
   WorkbookHistory,
+  WorkbookVersion,
   WorkbookNames,
   WorkbookNotifications,
   WorkbookProperties,
@@ -82,6 +83,73 @@ import type { CodeExecutionResult, CodeExecutionOptions } from '@mog/types-comma
 export type { CustomList } from '@mog/types-editor/fill/custom-lists';
 export type { WorkbookId, WorkbookSessionId, DocumentId, LinkId, ActorId } from './types';
 export type { LinkStatus, LinkStatusReason, LinkStatusView } from './receipt-payloads';
+// prettier-ignore
+export type {
+  CheckoutVersionResult,
+  GetVersionHeadInput,
+  JsonValue, ObjectDigest, PageCursor, Paged,
+  ListVersionCommitsInput, ListVersionRefsInput,
+  RedactionPolicy, RedactionSummary, RedactedVersionAuthor,
+  VerificationSummary, VersionAnnotationText, VersionAuthor, VersionBranchName,
+  VersionBranchRefReadResult, VersionBranchSelector,
+  VersionCheckoutDependencyRole, VersionCheckoutDependencySummary,
+  VersionCheckoutMutationGuarantee, VersionCheckoutOptions, VersionCheckoutPlan,
+  VersionCheckoutResolvedTarget, VersionCheckoutResult, VersionCheckoutTarget,
+  VersionCommitish, VersionCommitExpectedHead, VersionCommitMode, VersionCommitOptions,
+  VersionCommitPage, VersionCreateBranchOptions, VersionCounterRecordRevision, VersionDegradedHeadResult, VersionDeleteRefOptions,
+  VersionDiffDisplay, VersionDiffDisplayValue, VersionDiffCursor, VersionDiffEntry, VersionDiffInput, VersionDiffOptions, VersionDiffResourceLimit, VersionDiffResourceLimitKind, VersionDiffResourceLimitSummary, VersionDiffResourceLimitUnit, VersionDiffStructuralMetadata, VersionDiffValue, VersionDiagnosticCode,
+  VersionDiagnosticMessageId, VersionDiagnosticPublicPayload,
+  VersionFastForwardBranchOptions, VersionGetMergeConflictDetailRequest,
+  VersionGetHeadOptions, VersionHead, VersionListCommitsOptions, VersionListRefsOptions,
+  VersionLiveCollaborationState, VersionMainRefName,
+  VersionApplyMergeInput, VersionApplyMergeMutationGuarantee, VersionApplyMergeOptions,
+  VersionApplyMergeResolution, VersionApplyMergeResult,
+  VersionApplyMergeAttemptMetadata, VersionMergeAttemptKind, VersionMergeAttemptMetadata,
+  VersionMergeAttemptPersistence, VersionMergeChange, VersionMergeConflict,
+  VersionMergeConflictDetailBase, VersionMergeConflictDetailPurpose,
+  VersionMergeConflictDetailResolutionOption, VersionMergeConflictDetailResult,
+  VersionMergeConflictValuePageRef, VersionMergeConflictValueRole,
+  VersionMergeConflictResolutionOption, VersionMergeConflictResolutionOptionKind, VersionMergeInput,
+  VersionMergeEndpointDeniedStatus, VersionMergeResolutionPayloadPurpose,
+  VersionMergeMutationGuarantee, VersionMergeOptions, VersionMergeResult, VersionMergeResultId,
+  VersionCapability, VersionCapabilityDependency, VersionCapabilityError, VersionCapabilityState,
+  VersionPage, VersionPageOrder, VersionPageToken,
+  VersionPendingRemoteSegmentId, VersionPromotePendingRemoteDiagnostic, VersionPromotePendingRemoteDiagnosticCode,
+  VersionPromotePendingRemoteOptions, VersionPromotePendingRemoteResult, VersionPromotePendingRemoteSkippedSegment, VersionPromotePendingRemoteSkipReason, VersionPromotePendingRemoteStatus,
+  VersionRecordRevision, VersionRedactedValue, VersionRedactionClass,
+  VersionRef, VersionRefListResult, VersionRefMutationResult, VersionRefName,
+  VersionRefReadResult, VersionRefSelector, VersionDiagnostic, VersionDiagnosticSeverity, VersionError,
+  VersionPutMergeResolutionPayloadRequest, VersionPutMergeResolutionPayloadResult,
+  VersionSaveMergeResolutionsRequest, VersionSaveMergeResolutionsResult,
+  VersionStoreDiagnostic,
+  VersionSemanticDiffPage, VersionSemanticValue, VersionSealedResolutionPayloadRef,
+  VersionSealedResolutionPayloadStorageMode,
+  VersionResult, VersionSurfaceDiagnosticCode, VersionSurfaceDiagnosticSeverity,
+  VersionSurfaceLiveCollaborationStatus, VersionSurfaceStage, VersionSurfaceStatus, VersionSurfaceStorageBackend,
+  VersionSymbolicRef, VersionSymbolicRefReadResult, VersionUpdateBranchOptions,
+  WorkbookCommitAnnotationSummary, WorkbookCommitId, WorkbookCommitRef, WorkbookCommitSummary,
+  WorkbookDiffPage, WorkbookVersion,
+  WorkbookVersionCapabilityStage, WorkbookVersionCapabilityStatus, WorkbookVersionDependency,
+  WorkbookVersionDiagnostic, WorkbookVersionDiagnosticCode, WorkbookVersionDiagnosticSeverity,
+  WorkbookVersionHead, WorkbookVersionHeadStatus, WorkbookVersionRolloutStage, WorkbookVersionStatus,
+} from './workbook/version';
+export type * from './workbook/version-proposal';
+export type {
+  VersionRevertCasAdmission,
+  VersionRevertDomainAdmission,
+  VersionRevertHistoryGapAdmission,
+  VersionRevertInput,
+  VersionRevertMutationGuarantee,
+  VersionRevertOptions,
+  VersionRevertPreflightAdmission,
+  VersionRevertResult,
+  VersionRevertReviewInvalidationAdmission,
+  VersionRevertStaleHeadAdmission,
+  VersionRevertTarget,
+} from './workbook/version-revert';
+export type * from './workbook/version-revert';
+export type * from './workbook/version-review';
+export type * from './workbook/xlsx-export';
 
 /** Options for wb.calculate() — all optional, backward compatible. */
 export interface CalculateOptions {
@@ -519,11 +587,11 @@ export interface Workbook {
   /**
    * Export the workbook as XLSX binary data.
    *
-   * `contextStripped` is an internal import/export verification mode that
-   * disables imported RoundTripContext preservation so corpus gates can prove
-   * modeled facts do not depend on stale source package bytes.
+   * Default export omits Mog-owned version metadata. Pass
+   * `versionMetadata: "include"` to write a redacted Mog sidecar with the
+   * current version head.
    */
-  toXlsx(options?: { contextStripped?: boolean }): Promise<Uint8Array>;
+  toXlsx(options?: WorkbookXlsxExportOptions): Promise<Uint8Array>;
 
   /**
    * Import sheets from XLSX data.
@@ -765,6 +833,8 @@ export interface Workbook {
   readonly scenarios: WorkbookScenarios;
   /** Undo/redo/history traversal */
   readonly history: WorkbookHistory;
+  /** Version-control status and read-only diagnostics. */
+  readonly version: WorkbookVersion;
   /** Table style management (add, get, update, remove, default, duplicate) */
   readonly tableStyles: WorkbookTableStyles;
   /** Cell style management (add, get, update, remove) */

@@ -1,12 +1,13 @@
 use super::*;
 use crate::domain::drawings::{CellAnchor, ClientData, Extent, OneCellAnchor};
+use crate::domain::styles::types::{ColorDef, DxfDef, FontDef};
 use crate::output::results::FullParsedSheet;
 use domain_types::CFRule;
 use domain_types::chart::AnchorPosition;
 use domain_types::domain::floating_object::ChartDrawingFrameOoxmlProps;
 use ooxml_types::cond_format::{
-    CfColor, CfRule as OoxmlCfRule, CfRuleType, Cfvo, CfvoType, DataBar, DataBarAxisPosition,
-    DataBarDirection,
+    CfColor, CfOperator, CfRule as OoxmlCfRule, CfRuleType, Cfvo, CfvoType, DataBar,
+    DataBarAxisPosition, DataBarDirection,
 };
 
 fn fallback_chart_spec() -> ChartSpec {
@@ -48,6 +49,62 @@ fn basic_ooxml_data_bar() -> DataBar {
         },
         ..Default::default()
     }
+}
+
+fn cell_is_rule_with_dxf(dxf_id: u32) -> OoxmlCfRule {
+    OoxmlCfRule {
+        rule_type: CfRuleType::CellIs,
+        priority: 1,
+        dxf_id: Some(dxf_id),
+        operator: Some(CfOperator::GreaterThan),
+        formulas: vec!["0".to_string()],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn cf_dxf_theme_font_uses_spreadsheet_theme_indices() {
+    let theme_colors = vec![
+        "#000000".to_string(), // dk1
+        "#FFFFFF".to_string(), // lt1
+        "#44546A".to_string(), // dk2
+        "#E7E6E6".to_string(), // lt2
+    ];
+    let dxfs = vec![
+        DxfDef {
+            font: Some(FontDef {
+                color: Some(ColorDef::Theme { id: 1, tint: None }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        DxfDef {
+            font: Some(FontDef {
+                color: Some(ColorDef::Theme { id: 0, tint: None }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    ];
+
+    let dark = convert_cf_rule(&cell_is_rule_with_dxf(0), &dxfs, &theme_colors);
+    let light = convert_cf_rule(&cell_is_rule_with_dxf(1), &dxfs, &theme_colors);
+
+    let CFRule::CellValue {
+        style: dark_style, ..
+    } = dark
+    else {
+        panic!("expected cell value rule");
+    };
+    let CFRule::CellValue {
+        style: light_style, ..
+    } = light
+    else {
+        panic!("expected cell value rule");
+    };
+
+    assert_eq!(dark_style.font_color.as_deref(), Some("#000000"));
+    assert_eq!(light_style.font_color.as_deref(), Some("#ffffff"));
 }
 
 #[test]
@@ -322,4 +379,79 @@ fn chart_ex_one_cell_anchor_position_preserves_extent() {
     assert_eq!(pos.end_row, None);
     assert_eq!(pos.extent_cx, Some(4_699_001));
     assert_eq!(pos.extent_cy, Some(3_260_722));
+}
+
+#[test]
+fn convert_floating_objects_skips_chart_graphic_frames() {
+    for chart_uri in [
+        "http://schemas.openxmlformats.org/drawingml/2006/chart",
+        "http://schemas.microsoft.com/office/drawing/2014/chartex",
+    ] {
+        let drawing = Drawing {
+            anchors: vec![DrawingAnchor::OneCell(OneCellAnchor {
+                from: CellAnchor {
+                    col: 5,
+                    row: 2,
+                    col_off: 0,
+                    row_off: 0,
+                },
+                extent: Extent {
+                    cx: 7_620_000,
+                    cy: 3_048_000,
+                },
+                content: DrawingContent::GraphicFrame(
+                    ooxml_types::drawings::SpreadsheetGraphicFrame {
+                        graphic_xml: Some(format!(
+                            r#"<a:graphic><a:graphicData uri="{chart_uri}"><c:chart r:id="rId1"/></a:graphicData></a:graphic>"#
+                        )),
+                        ..Default::default()
+                    },
+                ),
+                client_data: ClientData::default(),
+                mc_alternate_content: None,
+            })],
+            ..Default::default()
+        };
+
+        let objects = convert_floating_objects(Some(&drawing), &HashMap::new());
+
+        assert!(
+            objects.is_empty(),
+            "chart URI {chart_uri} should be skipped"
+        );
+    }
+}
+
+#[test]
+fn convert_floating_objects_preserves_opaque_graphic_frames() {
+    let drawing = Drawing {
+        anchors: vec![DrawingAnchor::OneCell(OneCellAnchor {
+            from: CellAnchor {
+                col: 1,
+                row: 1,
+                col_off: 0,
+                row_off: 0,
+            },
+            extent: Extent { cx: 10, cy: 20 },
+            content: DrawingContent::GraphicFrame(ooxml_types::drawings::SpreadsheetGraphicFrame {
+                graphic_xml: Some(
+                    r#"<a:graphic><a:graphicData uri="urn:custom"><custom:item r:id="rId2"/></a:graphicData></a:graphic>"#
+                        .to_string(),
+                ),
+                ..Default::default()
+            }),
+            client_data: ClientData::default(),
+            mc_alternate_content: None,
+        })],
+        ..Default::default()
+    };
+
+    let objects = convert_floating_objects(Some(&drawing), &HashMap::new());
+
+    assert_eq!(objects.len(), 1);
+    assert_eq!(objects[0].common.id, "fobj-0");
+    assert!(matches!(
+        objects[0].data,
+        domain_types::domain::floating_object::FloatingObjectData::Drawing(_)
+    ));
 }

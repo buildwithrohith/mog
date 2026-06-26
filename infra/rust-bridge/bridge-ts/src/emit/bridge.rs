@@ -21,11 +21,25 @@ pub enum BridgePattern {
     Skip,
 }
 
+fn accepts_mutation_admission_options(pattern: BridgePattern) -> bool {
+    matches!(pattern, BridgePattern::Mutate | BridgePattern::SystemMutate)
+}
+
 /// Check if a return type is a binary mutation tuple like `[Uint8Array, MutationResult]`.
 pub fn is_binary_mutation_return(ty: &TsType) -> bool {
     matches!(ty, TsType::Tuple(elems) if elems.len() == 2
         && elems[0] == TsType::Uint8Array
-        && matches!(&elems[1], TsType::Named(n) if n == "MutationResult"))
+        && matches!(&elems[1], TsType::Named(n) if is_mutation_payload_type(n)))
+}
+
+fn is_mutation_payload_type(name: &str) -> bool {
+    matches!(name, "MutationResult" | "SyncApplyMutationMetadataWire")
+}
+
+fn is_sync_apply_metadata_return(ty: &TsType) -> bool {
+    matches!(ty, TsType::Tuple(elems) if elems.len() == 2
+        && elems[0] == TsType::Uint8Array
+        && matches!(&elems[1], TsType::Named(n) if n == "SyncApplyMutationMetadataWire"))
 }
 
 /// Classify how a bridge method should be wrapped based on its access level and return type.
@@ -87,6 +101,9 @@ pub(crate) fn bridge_return_type(method: &TsMethod, pattern: BridgePattern) -> S
             if let TsType::Tuple(elems) = &method.return_type
                 && elems.len() == 2
             {
+                if is_sync_apply_metadata_return(&method.return_type) {
+                    return "MutationResult".to_string();
+                }
                 return elems[1].to_ts_string();
             }
             // Fallback (shouldn't happen if classify is correct)
@@ -113,11 +130,15 @@ pub(crate) fn collect_named_from_bridge(api: &TsApi) -> std::collections::BTreeS
             }
             match pattern {
                 BridgePattern::Mutate | BridgePattern::SystemMutate => {
-                    // Only collect from the unwrapped type (second tuple element)
+                    // Collect from the wire payload plus the exposed mutation result
+                    // type for wrappers such as SyncApplyMutationMetadataWire.
                     if let TsType::Tuple(elems) = &method.return_type
                         && elems.len() == 2
                     {
                         collect_named_from_type(&elems[1], &mut names);
+                        if is_sync_apply_metadata_return(&method.return_type) {
+                            names.insert("MutationResult".to_string());
+                        }
                     }
                 }
                 _ => {
@@ -173,6 +194,9 @@ pub fn emit_bridge(
         "import type {{ {} }} from '{}';\n",
         config.core_type_name, config.core_import_path
     ));
+    if bridge_uses_mutation_admission_options(api) {
+        out.push_str("import type { MutationAdmissionOptions } from './mutation-admission';\n");
+    }
 
     if let Some(import_config) = imports {
         let referenced = collect_named_from_bridge(api);
@@ -240,12 +264,20 @@ pub fn emit_bridge(
     out
 }
 
+fn bridge_uses_mutation_admission_options(api: &TsApi) -> bool {
+    api.services.iter().any(|svc| {
+        svc.methods
+            .iter()
+            .any(|method| accepts_mutation_admission_options(classify_bridge_pattern(method)))
+    })
+}
+
 /// Emit one method signature in the bridge interface (no key param).
 fn emit_bridge_interface_method(method: &TsMethod, pattern: BridgePattern) -> String {
     let camel_name = to_camel_case(&method.rust_name);
     let return_ts = bridge_return_type(method, pattern);
 
-    let params: Vec<String> = method
+    let mut params: Vec<String> = method
         .params
         .iter()
         .map(|p| {
@@ -256,6 +288,9 @@ fn emit_bridge_interface_method(method: &TsMethod, pattern: BridgePattern) -> St
             )
         })
         .collect();
+    if accepts_mutation_admission_options(pattern) {
+        params.push("admissionOptions?: MutationAdmissionOptions".to_string());
+    }
 
     let params_str = params.join(", ");
 
@@ -273,7 +308,7 @@ pub fn emit_bridge_class_method(
     let command_name = method_command_name(effective_prefix, &method.rust_name);
 
     // Build parameter list with types (no key param — bridge hides it)
-    let params: Vec<String> = method
+    let mut params: Vec<String> = method
         .params
         .iter()
         .map(|p| {
@@ -284,6 +319,9 @@ pub fn emit_bridge_class_method(
             )
         })
         .collect();
+    if accepts_mutation_admission_options(pattern) {
+        params.push("admissionOptions?: MutationAdmissionOptions".to_string());
+    }
     let params_str = params.join(", ");
 
     // Return type: unwrapped for mutation helpers (they strip the Uint8Array), raw otherwise.
@@ -312,13 +350,24 @@ pub fn emit_bridge_class_method(
     };
 
     let call_expr = format!("this.core.transport.call<{wire_type}>('{command_name}', {args_str})");
+    let mutation_call_expr = if is_sync_apply_metadata_return(&method.return_type) {
+        format!(
+            "async () => {{ const [viewportPatchesBinary, metadata] = await {call_expr}; return [viewportPatchesBinary, metadata.mutationResult] as [Uint8Array, MutationResult]; }}"
+        )
+    } else {
+        format!("() => {call_expr}")
+    };
 
     let body = match pattern {
         BridgePattern::Mutate => {
-            format!("this.core.mutatePublic('{command_name}', () => {call_expr})")
+            format!(
+                "this.core.mutatePublic('{command_name}', {mutation_call_expr}, undefined, admissionOptions)"
+            )
         }
         BridgePattern::SystemMutate => {
-            format!("this.core.mutateSystem('{command_name}', () => {call_expr})")
+            format!(
+                "this.core.mutateSystem('{command_name}', {mutation_call_expr}, undefined, admissionOptions)"
+            )
         }
         BridgePattern::Query => format!("this.core.query({})", call_expr),
         BridgePattern::Pure => call_expr,

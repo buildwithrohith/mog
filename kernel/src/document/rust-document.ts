@@ -41,26 +41,92 @@ import type {
   ProviderCheckpointStatus,
   StorageLifecycleError,
 } from '@mog-sdk/types-document/storage/lifecycle';
-import type { ProviderInboundUpdateEnvelope } from '@mog-sdk/types-document/storage/inbound-updates';
+import {
+  classifyLegacyProviderInboundUpdate,
+  isProviderInboundUpdateEnvelopeV2,
+  validateProviderInboundUpdateEnvelope,
+  type ProviderInboundUpdateEnvelope,
+  type ProviderInboundUpdateEnvelopeAny,
+  type ProviderInboundUpdateEnvelopeV2,
+  type SyncUpdateProvenance,
+  type SyncUpdateValidationDiagnostic,
+} from '@mog-sdk/types-document/storage';
 import type { ComputeBridge } from '../bridges/compute/compute-bridge';
+import { createAdmittedSyncApplyContext } from '../bridges/compute/sync-apply-admission';
 import type {
   Provider,
   ProviderAttachMode,
   ProviderAttachResult,
   ProviderCheckpointMode,
   ProviderCheckpointResult,
+  ProviderDocApplyUpdateResult,
+  ProviderInboundApplyUpdateMetadata,
 } from './providers/provider';
+import {
+  completeAppliedSyncUpdateIdentity,
+  completeAppliedSyncUpdateIdentityFailedAfterMutation,
+  openAppliedSyncUpdateIdentityStoreFromProvider,
+  prepareAppliedSyncUpdateIdentityBeforeApply,
+  type AppliedSyncUpdateIdentityAppliedTerminalMetadata,
+  type AppliedSyncUpdateIdentityStore,
+  type AppliedSyncUpdateIdentityPreApplyRejectionReason,
+} from './applied-sync-update-identity-wiring';
+import {
+  completeSyncBatchStatus,
+  completeSyncBatchStatusFailedAfterMutation,
+  openSyncBatchStatusStoreFromProvider,
+  prepareSyncBatchStatusBeforeApply,
+  type SyncBatchStatusPreApplyRejectionReason,
+  type SyncBatchStatusStore,
+} from './sync-batch-status-wiring';
+import {
+  capturePendingRemoteSegmentForAdmittedContext,
+  type PendingRemoteSyncCaptureServices,
+} from './pending-remote-sync-capture';
+import type { ResolvedWorkbookVersioningConfig } from './version-store/lifecycle';
+import type { VersionPendingRemoteCapture } from './version-store/pending-remote-capture-service';
+import {
+  createVersionProviderWriteActivityTracker,
+  type VersionProviderWriteActivityTracker,
+} from './version-store/provider-write-activity';
+import type { PendingRemotePromotionResult } from './version-store/pending-remote-promotion-service';
+import {
+  promoteCapturedPendingRemoteSegment,
+  resolvePendingRemotePromotionService,
+  type PendingRemotePromotionServiceLike,
+} from './pending-remote-auto-promotion';
+import type { VersionStoreProvider } from './version-store/provider';
+import type { SnapshotRootByteSyncPort } from './version-store/snapshot-root-capture';
 import type { WriteGate } from './write-gate';
 import { touchDoc } from './providers/indexeddb-meta';
 import { slog } from '../lib/slog';
+
+export type {
+  ProviderInboundUpdateEnvelope,
+  ProviderInboundUpdateEnvelopeAny,
+  ProviderInboundUpdateEnvelopeV2,
+};
 
 export type UpdateOrigin = 'local' | `provider:${string}`;
 
 export interface ProviderInboundUpdateResult {
   readonly status: 'applied' | 'duplicate' | 'rejected';
   readonly updateId: string;
-  readonly reason?: string;
+  readonly reason?: ProviderInboundUpdateReason;
+  readonly diagnostics?: readonly SyncUpdateValidationDiagnostic[];
+  readonly provenance?: SyncUpdateProvenance;
+  readonly applyResult?: ProviderDocApplyUpdateResult;
+  readonly pendingRemotePromotionResult?: PendingRemotePromotionResult;
 }
+
+export type ProviderInboundUpdateReason =
+  | 'document-destroyed'
+  | 'provenance-validation-failed'
+  | AppliedSyncUpdateIdentityPreApplyRejectionReason
+  | SyncBatchStatusPreApplyRejectionReason
+  | `unknown-provider: ${string}`
+  | `unsupported-payload-kind: ${ProviderInboundUpdateEnvelopeAny['payloadKind']}`
+  | `stale-epoch: ${string} < ${string}`;
 
 // =============================================================================
 // Types
@@ -131,6 +197,10 @@ export interface RustDocumentOptions {
    * rely on `lastActiveDocId` always being a user-visible doc.
    */
   internal?: boolean;
+  /** Optional document-scoped identity store for verified live sync updates. */
+  appliedSyncUpdateIdentityStore?: AppliedSyncUpdateIdentityStore;
+  /** Optional document-scoped in-process version provider write activity tracker. */
+  providerWriteActivityTracker?: VersionProviderWriteActivityTracker;
 }
 
 /**
@@ -181,6 +251,16 @@ export class RustDocument {
   /** Engine-init options that the constructor caches for `initialize`. */
   private readonly initialSnapshot?: Record<string, unknown>;
   private readonly yrsState?: Uint8Array;
+  private versionSyncServicesProvider?: unknown;
+  private versionStoreProvider?: VersionStoreProvider;
+  private versioningSnapshotRootByteSyncPort?: SnapshotRootByteSyncPort;
+  private capturePendingRemoteSegment?: VersionPendingRemoteCapture;
+  private pendingRemotePromotionService?: PendingRemotePromotionServiceLike;
+  private pendingRemotePromotionServiceProvider?: VersionStoreProvider;
+  private pendingRemotePromotionServiceTracker?: VersionProviderWriteActivityTracker;
+  private providerWriteActivityTracker: VersionProviderWriteActivityTracker;
+  private appliedSyncUpdateIdentityStore?: AppliedSyncUpdateIdentityStore;
+  private syncBatchStatusStore?: SyncBatchStatusStore;
   /**
    * Full-state diff captured after the bridge reaches STARTED but before
    * Provider attach/replay for document-local structs written before the
@@ -300,6 +380,9 @@ export class RustDocument {
     this.internal = options.internal ?? false;
     this.initialSnapshot = options.initialSnapshot;
     this.yrsState = options.yrsState;
+    this.appliedSyncUpdateIdentityStore = options.appliedSyncUpdateIdentityStore;
+    this.providerWriteActivityTracker =
+      options.providerWriteActivityTracker ?? createVersionProviderWriteActivityTracker();
 
     // Engine init runs immediately — `ready` resolves when status reaches
     // 'ready'. `subscribeUpdateV1` is wired *after* engine init so the
@@ -346,6 +429,10 @@ export class RustDocument {
    */
   get pendingUpdatesCount(): number {
     return this.updateQueue.length;
+  }
+
+  get versionProviderWriteActivityTracker(): VersionProviderWriteActivityTracker {
+    return this.providerWriteActivityTracker;
   }
 
   /**
@@ -487,8 +574,11 @@ export class RustDocument {
     // it eagerly at the top of the file because bridge-provider-doc.ts
     // imports `ComputeBridge` types and we want this file (rust-document)
     // to stay lean; circular import risk is also lower with a lazy import.
-    const { createBridgeBackedProviderDoc } = await import('./providers/bridge-provider-doc');
-    const doc = createBridgeBackedProviderDoc(this.computeBridge, this.docId);
+    const { createBridgeBackedProviderDoc, getBridgeBackedProviderReplayAdmission } =
+      await import('./providers/bridge-provider-doc');
+    const doc = createBridgeBackedProviderDoc(this.computeBridge, this.docId, {
+      providerReplayAdmission: getBridgeBackedProviderReplayAdmission(provider),
+    });
 
     // Provider replay applies persisted bytes into the engine via syncApply.
     // This is a system operation, not a user mutation, so it must bypass the
@@ -578,6 +668,112 @@ export class RustDocument {
     }
   }
 
+  async installAppliedSyncUpdateIdentityStoreFromProvider(provider: unknown): Promise<void> {
+    await this.installVersionSyncServicesFromProvider(provider);
+  }
+
+  async installVersionSyncServicesFromProvider(provider: unknown): Promise<void> {
+    if (provider === null || provider === undefined) return;
+    await this.installVersionSyncServices({ provider: provider as VersionStoreProvider });
+  }
+
+  async installVersionSyncServices(
+    versioning:
+      | Pick<
+          ResolvedWorkbookVersioningConfig,
+          | 'provider'
+          | 'providerWriteActivityTracker'
+          | 'pendingRemotePromotionService'
+          | 'semanticMutationCapture'
+          | 'snapshotRootByteSyncPort'
+        >
+      | null
+      | undefined,
+  ): Promise<void> {
+    if (versioning === null || versioning === undefined) return;
+    const provider = versioning?.provider;
+    if (provider === null || provider === undefined) {
+      this.clearVersionSyncServices();
+      return;
+    }
+
+    const capturePendingRemoteSegment =
+      versioning?.semanticMutationCapture?.capturePendingRemoteSegment;
+    const explicitPendingRemotePromotionService = versioning?.pendingRemotePromotionService;
+    const providerWriteActivityTracker = versioning?.providerWriteActivityTracker;
+    const snapshotRootByteSyncPort = versioning?.snapshotRootByteSyncPort;
+    if (providerWriteActivityTracker) {
+      this.providerWriteActivityTracker = providerWriteActivityTracker;
+    }
+    const resolvedPendingRemotePromotionService = resolvePendingRemotePromotionService({
+      explicit: explicitPendingRemotePromotionService,
+      provider,
+      providerWriteActivityTracker: this.providerWriteActivityTracker,
+      existing: this.pendingRemotePromotionService,
+      existingProvider: this.pendingRemotePromotionServiceProvider,
+      existingProviderWriteActivityTracker: this.pendingRemotePromotionServiceTracker,
+    });
+    const pendingRemotePromotionService = resolvedPendingRemotePromotionService.service;
+    if (
+      this.versionSyncServicesProvider === provider &&
+      this.capturePendingRemoteSegment === capturePendingRemoteSegment &&
+      this.pendingRemotePromotionService === pendingRemotePromotionService &&
+      this.versioningSnapshotRootByteSyncPort === snapshotRootByteSyncPort &&
+      (this.appliedSyncUpdateIdentityStore || this.syncBatchStatusStore)
+    ) {
+      return;
+    }
+
+    this.versionSyncServicesProvider = provider;
+    const [appliedSyncUpdateIdentityStore, syncBatchStatusStore] = await Promise.all([
+      openAppliedSyncUpdateIdentityStoreFromProvider(provider),
+      openSyncBatchStatusStoreFromProvider(provider),
+    ]);
+    this.versionStoreProvider = provider;
+    if (capturePendingRemoteSegment) {
+      this.capturePendingRemoteSegment = capturePendingRemoteSegment;
+    } else {
+      delete this.capturePendingRemoteSegment;
+    }
+    if (pendingRemotePromotionService) {
+      this.pendingRemotePromotionService = pendingRemotePromotionService;
+      this.pendingRemotePromotionServiceProvider = resolvedPendingRemotePromotionService.provider;
+      this.pendingRemotePromotionServiceTracker =
+        resolvedPendingRemotePromotionService.providerWriteActivityTracker;
+    } else {
+      delete this.pendingRemotePromotionService;
+      delete this.pendingRemotePromotionServiceProvider;
+      delete this.pendingRemotePromotionServiceTracker;
+    }
+    if (snapshotRootByteSyncPort) {
+      this.versioningSnapshotRootByteSyncPort = snapshotRootByteSyncPort;
+    } else {
+      delete this.versioningSnapshotRootByteSyncPort;
+    }
+    if (appliedSyncUpdateIdentityStore) {
+      this.appliedSyncUpdateIdentityStore = appliedSyncUpdateIdentityStore;
+    } else {
+      delete this.appliedSyncUpdateIdentityStore;
+    }
+    if (syncBatchStatusStore) {
+      this.syncBatchStatusStore = syncBatchStatusStore;
+    } else {
+      delete this.syncBatchStatusStore;
+    }
+  }
+
+  private clearVersionSyncServices(): void {
+    delete this.versionSyncServicesProvider;
+    delete this.versionStoreProvider;
+    delete this.versioningSnapshotRootByteSyncPort;
+    delete this.capturePendingRemoteSegment;
+    delete this.pendingRemotePromotionService;
+    delete this.pendingRemotePromotionServiceProvider;
+    delete this.pendingRemotePromotionServiceTracker;
+    delete this.appliedSyncUpdateIdentityStore;
+    delete this.syncBatchStatusStore;
+  }
+
   /**
    * Detach a Provider from this document. Idempotent if the Provider was
    * never attached. Awaits the Provider's `detach()` so its final flush
@@ -595,7 +791,7 @@ export class RustDocument {
   // ---------------------------------------------------------------------------
 
   async applyProviderUpdate(
-    envelope: ProviderInboundUpdateEnvelope,
+    envelope: ProviderInboundUpdateEnvelopeAny,
   ): Promise<ProviderInboundUpdateResult> {
     if (this.destroyed) {
       return { status: 'rejected', updateId: envelope.updateId, reason: 'document-destroyed' };
@@ -627,29 +823,181 @@ export class RustDocument {
       };
     }
 
-    if (this._inboundUpdateLog.has(envelope.updateId)) {
+    if (
+      !this.appliedSyncUpdateIdentityStore &&
+      !this.syncBatchStatusStore &&
+      this._inboundUpdateLog.has(envelope.updateId)
+    ) {
       return { status: 'rejected', updateId: envelope.updateId, reason: 'duplicate-update-id' };
     }
 
-    this._currentUpdateOrigin = `provider:${envelope.providerRefId}`;
-    try {
-      const { createBridgeBackedProviderDoc } = await import('./providers/bridge-provider-doc');
-      const doc = createBridgeBackedProviderDoc(this.computeBridge, this.docId);
-      await doc.applyUpdate(envelope.payload);
-    } finally {
-      this._currentUpdateOrigin = 'local';
+    const actualPayloadHash = await sha256Hex(envelope.payload);
+    const envelopeVersion = providerEnvelopeVersion(envelope);
+    const isV2Envelope = isProviderInboundUpdateEnvelopeV2(envelope);
+    const validation = validateProviderInboundUpdateEnvelope(envelope, {
+      expectedPayloadHash: isV2Envelope ? actualPayloadHash : undefined,
+    });
+    const providerIdentity = matchingProvider.getIdentity?.();
+    const provenance = isV2Envelope
+      ? envelope.provenance
+      : classifyLegacyProviderInboundUpdate(envelope, {
+          providerId: providerIdentity?.providerId,
+          stableOriginId: providerIdentity?.providerId,
+        });
+
+    if (isV2Envelope && !validation.ok) {
+      return {
+        status: 'rejected',
+        updateId: envelope.updateId,
+        reason: 'provenance-validation-failed',
+        diagnostics: validation.diagnostics,
+        provenance,
+      } as const satisfies ProviderInboundUpdateResult;
     }
 
-    this._inboundUpdateLog.add(envelope.updateId);
-    this._inboundUpdateOrder.push(envelope.updateId);
-    while (this._inboundUpdateOrder.length > RustDocument.INBOUND_LOG_CAPACITY) {
-      const oldest = this._inboundUpdateOrder.shift()!;
-      this._inboundUpdateLog.delete(oldest);
-    }
+    const metadata: ProviderInboundApplyUpdateMetadata = {
+      source: 'provider-inbound',
+      docId: this.docId,
+      envelopeVersion,
+      providerRefId: envelope.providerRefId,
+      providerEpoch: envelope.providerEpoch,
+      updateId: envelope.updateId,
+      payloadHash: actualPayloadHash,
+      provenance,
+      validationDiagnostics: validation.diagnostics,
+    };
 
-    this._providerEpochs.set(envelope.providerRefId, envelope.providerEpoch);
+    const admittedContext = createAdmittedSyncApplyContext(metadata);
+    return this.providerWriteActivityTracker.trackRemoteSyncApply(async () => {
+      const batchDecision = await prepareSyncBatchStatusBeforeApply({
+        store: this.syncBatchStatusStore,
+        admittedContext,
+      });
+      if (batchDecision.status === 'duplicate') {
+        return { status: 'duplicate', updateId: envelope.updateId, provenance };
+      }
+      if (batchDecision.status === 'rejected') {
+        return {
+          status: 'rejected',
+          updateId: envelope.updateId,
+          reason: batchDecision.reason,
+          provenance,
+        };
+      }
+      const batchReservation = batchDecision.reservation;
 
-    return { status: 'applied', updateId: envelope.updateId };
+      const identityDecision = await prepareAppliedSyncUpdateIdentityBeforeApply({
+        store: this.appliedSyncUpdateIdentityStore,
+        admittedContext,
+        inboundUpdateAlreadySeen: this._inboundUpdateLog.has(envelope.updateId),
+      });
+      if (identityDecision.status === 'duplicate') {
+        return { status: 'duplicate', updateId: envelope.updateId, provenance };
+      }
+      if (identityDecision.status === 'rejected') {
+        return {
+          status: 'rejected',
+          updateId: envelope.updateId,
+          reason: identityDecision.reason,
+          provenance,
+        };
+      }
+      const identityReservation = identityDecision.reservation;
+
+      this._currentUpdateOrigin = `provider:${envelope.providerRefId}`;
+      let applyResult: ProviderDocApplyUpdateResult | void;
+      let appliedTerminalMetadata: AppliedSyncUpdateIdentityAppliedTerminalMetadata | undefined;
+      try {
+        const { createBridgeBackedProviderDoc } = await import('./providers/bridge-provider-doc');
+        const doc = createBridgeBackedProviderDoc(this.computeBridge, this.docId);
+        applyResult = isV2Envelope
+          ? await doc.applyProviderInboundUpdateEnvelopeV2(envelope, metadata)
+          : await doc.applyLegacyProviderInboundUpdate(envelope, metadata);
+        appliedTerminalMetadata = await capturePendingRemoteSegmentForAdmittedContext({
+          docId: this.docId,
+          admittedContext,
+          services: this.pendingRemoteSyncCaptureServices(),
+        });
+      } catch (error) {
+        if (batchReservation) {
+          try {
+            await completeSyncBatchStatusFailedAfterMutation(batchReservation);
+          } catch (terminalError) {
+            slog('rustDocument.applyProviderUpdateSyncBatchFailedAfterMutationTerminalFailed', {
+              updateId: envelope.updateId,
+              error: terminalError,
+            });
+          }
+        }
+        if (identityReservation) {
+          try {
+            await completeAppliedSyncUpdateIdentityFailedAfterMutation(identityReservation);
+          } catch (terminalError) {
+            slog('rustDocument.applyProviderUpdateFailedAfterMutationTerminalFailed', {
+              updateId: envelope.updateId,
+              error: terminalError,
+            });
+          }
+        }
+        throw error;
+      } finally {
+        this._currentUpdateOrigin = 'local';
+      }
+
+      let terminalError: unknown;
+      if (batchReservation) {
+        try {
+          await completeSyncBatchStatus(batchReservation);
+        } catch (error) {
+          terminalError = error;
+        }
+      }
+      if (identityReservation) {
+        try {
+          await completeAppliedSyncUpdateIdentity(identityReservation, appliedTerminalMetadata);
+        } catch (error) {
+          terminalError ??= error;
+        }
+      }
+      if (terminalError) {
+        throw terminalError;
+      }
+
+      const pendingRemotePromotionResult = await promoteCapturedPendingRemoteSegment({
+        updateId: envelope.updateId,
+        captured: appliedTerminalMetadata !== undefined,
+        service: this.pendingRemotePromotionService,
+      });
+
+      this._inboundUpdateLog.add(envelope.updateId);
+      this._inboundUpdateOrder.push(envelope.updateId);
+      while (this._inboundUpdateOrder.length > RustDocument.INBOUND_LOG_CAPACITY) {
+        const oldest = this._inboundUpdateOrder.shift()!;
+        this._inboundUpdateLog.delete(oldest);
+      }
+
+      this._providerEpochs.set(envelope.providerRefId, envelope.providerEpoch);
+
+      return {
+        status: 'applied',
+        updateId: envelope.updateId,
+        provenance,
+        ...(applyResult === undefined ? {} : { applyResult }),
+        ...(pendingRemotePromotionResult === undefined ? {} : { pendingRemotePromotionResult }),
+      };
+    });
+  }
+
+  private pendingRemoteSyncCaptureServices(): PendingRemoteSyncCaptureServices {
+    return {
+      ...(this.versionStoreProvider ? { provider: this.versionStoreProvider } : {}),
+      ...(this.capturePendingRemoteSegment
+        ? { capturePendingRemoteSegment: this.capturePendingRemoteSegment }
+        : {}),
+      ...(this.versioningSnapshotRootByteSyncPort
+        ? { snapshotRootByteSyncPort: this.versioningSnapshotRootByteSyncPort }
+        : {}),
+    };
   }
 
   /**
@@ -909,6 +1257,24 @@ export class RustDocument {
     }
   }
 
+  async fullStateCheckpointFromBridge(
+    sourceBridge: ComputeBridge,
+    options: Pick<RustDocumentFullStateCheckpointOptions, 'publishAfterCommit'> = {},
+  ): Promise<void> {
+    if (this.destroyed) return;
+
+    await this.drainBridgePendingUpdatesNow();
+    this.drainQueuedUpdatesNow();
+    await this.computeBridge.flushUndoCapture();
+
+    const { createBridgeBackedProviderDoc } = await import('./providers/bridge-provider-doc');
+    const doc = createBridgeBackedProviderDoc(sourceBridge, this.docId);
+    await Promise.all(this.providers.map((p) => p.checkpointFullState(doc, { kind: 'normal' })));
+    if (options.publishAfterCommit) {
+      await this.touchUserVisibleDoc();
+    }
+  }
+
   async runImportInitializeHydration<T>(work: () => Promise<T>): Promise<T> {
     if (this.destroyed) {
       throw new Error('RustDocument.runImportInitializeHydration: document is destroyed');
@@ -1138,11 +1504,15 @@ export class RustDocument {
       return;
     }
 
+    const writeGate = this.computeBridge.writeGate as WriteGate | undefined;
+    let anyOfferedToProvider = false;
     for (const entry of batch) {
+      let offeredToProvider = false;
       for (const p of sinks) {
         if (entry.origin !== 'local' && entry.origin === `provider:${p.name}`) {
           continue;
         }
+        offeredToProvider = true;
         try {
           p.appendUpdate(entry.update);
         } catch (err) {
@@ -1152,6 +1522,10 @@ export class RustDocument {
           slog('rustDocument.providerAppendUpdateThrew', { error: err });
         }
       }
+      if (offeredToProvider) {
+        anyOfferedToProvider = true;
+        writeGate?.recordMutation();
+      }
     }
 
     // Once we've actually fanned an update out to at least one Provider, the
@@ -1159,7 +1533,7 @@ export class RustDocument {
     // The flag latches `true` for the lifetime of the orchestrator —
     // `__dt.persistenceEnabled` reads `hasAppendActive` to know the
     // orchestrator has crossed this threshold for at least one doc.
-    if (sinks.length > 0) {
+    if (anyOfferedToProvider) {
       this._appendActive = true;
     }
   }
@@ -1219,6 +1593,24 @@ export class RustDocument {
       slog('rustDocument.touchDocFailed', { error: err });
     }
   }
+}
+
+function providerEnvelopeVersion(
+  envelope: ProviderInboundUpdateEnvelopeAny,
+): 'provider-inbound-update-v1' | 'provider-inbound-update-v2' {
+  return isProviderInboundUpdateEnvelopeV2(envelope)
+    ? 'provider-inbound-update-v2'
+    : 'provider-inbound-update-v1';
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  if (typeof globalThis.crypto?.subtle?.digest !== 'function') {
+    throw new Error('RustDocument.applyProviderUpdate: SHA-256 digest is unavailable');
+  }
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', new Uint8Array(bytes));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 function isReadOnlyAttach(result: ProviderAttachResult | void): boolean {

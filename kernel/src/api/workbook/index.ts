@@ -7,6 +7,7 @@
  */
 
 export { WorkbookHistoryImpl } from './history';
+export { WorkbookVersionImpl } from './version';
 export { WorkbookNamesImpl } from './names';
 export { WorkbookNotificationsImpl } from './notifications';
 export { WorkbookPropertiesImpl } from './properties';
@@ -26,4 +27,9 @@ export { WorkbookLinksImpl } from './links';
 export type { WorkbookLinks } from '@mog-sdk/contracts/api';
 export { createWorkbook } from './create-workbook';
 export type { CreateWorkbookOptions, WorkbookConfig } from './types';
+export type {
+  VersionLiveCollaborationState,
+  VersionLiveCollaborationStatus,
+  VersionLiveCollaborationStatusReader,
+} from './version/live-collaboration/version-live-collaboration-status';
 export type { Workbook } from '@mog-sdk/contracts/api';

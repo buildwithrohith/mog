@@ -138,6 +138,53 @@ fn sdk_authored_threaded_comments_export_with_person_identity() {
 }
 
 #[test]
+fn sdk_authored_note_exports_as_legacy_note_without_person_identity() {
+    let snap = simple_snapshot();
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(snap).unwrap();
+    let sid = sheet_id();
+
+    engine
+        .add_comment_by_position(
+            &sid,
+            2,
+            2,
+            "SDK legacy note survives export",
+            "Nora Notes",
+            None,
+            None,
+            CommentType::Note,
+        )
+        .expect("add note");
+
+    let authored = engine.get_comments_for_cell_by_position(&sid, 2, 2);
+    assert_eq!(authored.len(), 1);
+    assert_eq!(authored[0].comment_type, CommentType::Note);
+    assert!(authored[0].person_id.is_none());
+    assert!(authored[0].thread_id.is_none());
+
+    let exported_bytes = engine.export_to_xlsx_bytes().expect("export xlsx bytes");
+    let parsed = xlsx_api::parse(&exported_bytes)
+        .expect("exported XLSX should parse")
+        .output;
+
+    assert!(parsed.persons.is_empty());
+    let note = parsed.sheets[0]
+        .comments
+        .iter()
+        .find(|comment| comment.author == "Nora Notes")
+        .expect("parsed note");
+    assert_eq!(note.cell_ref, "C3");
+    assert_eq!(note.comment_type, CommentType::Note);
+    assert!(note.person_id.is_none());
+    assert!(note.thread_id.is_none());
+    assert!(
+        note.content
+            .as_deref()
+            .is_some_and(|content| content.contains("SDK legacy note survives export"))
+    );
+}
+
+#[test]
 fn undo_comment_delete_emits_set_change_for_original_cell() {
     let snap = simple_snapshot();
     let (mut engine, _) = YrsComputeEngine::from_snapshot(snap).unwrap();

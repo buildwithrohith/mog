@@ -45,6 +45,7 @@ import type { TrapError } from '@mog/transport';
 import { DocumentLifecycleSystem } from '../../document';
 import { slog } from '../../lib/slog';
 import type { RoomSnapshot as CollaborationRoomSnapshot } from '../../document/collab/ws-sidecar';
+import type { WorkbookLinkStatusScope } from '../../services/workbook-links';
 import { resolveUserTimezone } from './resolve-user-timezone';
 import type {
   CollaborationDocumentCreateOptions,
@@ -61,6 +62,11 @@ import {
   type XlsxDocumentImportOptions,
 } from './xlsx-document-import';
 import { createHandleLiveness, type HandleLiveness } from '../lifecycle/handle-liveness';
+import { createDocumentByteSyncPort } from './document-sync-port';
+import { createComputeBridgeSemanticStateReader } from '../../document/version-store/semantic-state-reader';
+import { deferVersionRootCapturePorts } from '../../document/version-store/deferred-root-capture-ports';
+import { withDocumentRootInitializer } from '../../document/version-store/document-root-initializer';
+import type { XlsxVersionImportRootProvenance } from '../../document/version-store/xlsx-import-root';
 
 export { INTERNAL_INTERACTIVE_DEFERRED_IMPORT } from './xlsx-document-import';
 export type {
@@ -207,6 +213,15 @@ function generateDocumentId(): string {
   return `doc-${uuid}`;
 }
 
+function publicDocumentWorkbookLinkScope(documentId: string): WorkbookLinkStatusScope {
+  return {
+    requestingDocumentId: documentId,
+    requestingSessionId: 'unknown-session',
+    actor: 'trusted-host',
+    principal: { tags: ['host:trusted'] },
+  };
+}
+
 // =============================================================================
 // DocumentFactory
 // =============================================================================
@@ -296,13 +311,24 @@ export const DocumentFactory = {
       security: options?.security,
       userTimezone,
       clock: DOCUMENT_FACTORY_CLOCK,
+      workbookLinkScope: publicDocumentWorkbookLinkScope(documentId),
     });
     lifecycle.create(documentId, options ?? {});
     await lifecycle.waitForReady();
 
     const context = lifecycle.documentContext as ISpreadsheetKernelContext;
+    const blankWorkbookRootInitializerEnabled =
+      options?.initialSnapshot === undefined && options?.yrsState === undefined;
 
-    return createDocumentHandle(documentId, lifecycle, context);
+    return createDocumentHandle(
+      documentId,
+      lifecycle,
+      context,
+      undefined,
+      undefined,
+      undefined,
+      blankWorkbookRootInitializerEnabled,
+    );
   },
 
   /**
@@ -408,6 +434,7 @@ export const DocumentFactory = {
         options?.userTimezone,
         environment === 'headless' ? 'headless' : 'browser',
       );
+      const requestedDocumentId = options?.documentId ?? generateDocumentId();
 
       lifecycle = new DocumentLifecycleSystem({
         environment: options?.environment,
@@ -415,10 +442,14 @@ export const DocumentFactory = {
         security: options?.security,
         userTimezone,
         clock: DOCUMENT_FACTORY_CLOCK,
+        workbookLinkScope: publicDocumentWorkbookLinkScope(requestedDocumentId),
       });
       lifecycle.createFromCsv(
-        options?.documentId ?? generateDocumentId(),
-        { skipDefaultSheet: true },
+        requestedDocumentId,
+        {
+          skipDefaultSheet: true,
+          ...(options?.skipLocalPersistence === true ? { skipLocalPersistence: true } : {}),
+        },
         source,
         options?.csvOptions ?? null,
       );
@@ -430,7 +461,15 @@ export const DocumentFactory = {
 
       const context = lifecycle.documentContext as ISpreadsheetKernelContext;
 
-      const handle = createDocumentHandle(documentId, lifecycle, context);
+      const handle = createDocumentHandle(
+        documentId,
+        lifecycle,
+        context,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
 
       return {
         success: true,
@@ -537,7 +576,15 @@ export const DocumentFactory = {
 
     const context = lifecycle.documentContext as ISpreadsheetKernelContext;
 
-    return createDocumentHandle(documentId, lifecycle, context);
+    return createDocumentHandle(
+      documentId,
+      lifecycle,
+      context,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
   },
 };
 
@@ -572,6 +619,8 @@ function createDocumentHandle(
   context: ISpreadsheetKernelContext,
   collaborationBootstrap?: CollaborationRoomSnapshot,
   importWarnings: readonly DocumentImportWarning[] = [],
+  xlsxImportRoot?: XlsxVersionImportRootProvenance,
+  blankWorkbookRootInitializerEnabled = false,
 ): DocumentHandleInternal {
   let disposed = false;
   let cachedWorkbook: Workbook | undefined;
@@ -678,21 +727,11 @@ function createDocumentHandle(
       assertNotDisposed('createSyncPort');
       if (cachedSyncPort) return cachedSyncPort;
 
-      cachedSyncPort = {
-        docId: documentId,
-        async applyUpdate(update: Uint8Array): Promise<void> {
-          assertNotDisposed('syncPort.applyUpdate');
-          await lifecycle.computeBridge.syncApply(update);
-        },
-        encodeDiff(remoteStateVector: Uint8Array): Promise<Uint8Array> {
-          assertNotDisposed('syncPort.encodeDiff');
-          return lifecycle.computeBridge.encodeDiff(remoteStateVector);
-        },
-        currentStateVector(): Promise<Uint8Array> {
-          assertNotDisposed('syncPort.currentStateVector');
-          return lifecycle.computeBridge.currentStateVector();
-        },
-      };
+      cachedSyncPort = createDocumentByteSyncPort({
+        documentId,
+        getComputeBridge: () => lifecycle.computeBridge,
+        assertNotDisposed,
+      });
 
       return cachedSyncPort;
     },
@@ -825,16 +864,80 @@ function createDocumentHandle(
       // Config-accepting path: fresh workbook each call (not cached).
       if (config) {
         const { createWorkbookFromConfig } = await loadWorkbookModule();
+        const { resolveDocumentWorkbookVersioningLifecycle } =
+          await import('../../document/version-store/lifecycle');
+        const shouldDeferRootInitialization =
+          config.versioning?.providerSelection?.initializeTiming === 'deferred';
+        const waitForDeferredRootReadiness = async () => {
+          if (!shouldDeferRootInitialization || !lifecycle.isImportDurabilityPending) return;
+          await lifecycle.awaitImportDurability();
+        };
+        const snapshotRootByteSyncPort =
+          config.versioning?.snapshotRootByteSyncPort ?? ownerHandle.createSyncPort();
+        const semanticStateReader =
+          config.versioning?.semanticStateReader ??
+          createComputeBridgeSemanticStateReader(lifecycle.computeBridge);
+        const rootCapturePorts = shouldDeferRootInitialization
+          ? deferVersionRootCapturePorts({
+              snapshotRootByteSyncPort,
+              semanticStateReader,
+              waitForReadiness: waitForDeferredRootReadiness,
+            })
+          : { snapshotRootByteSyncPort, semanticStateReader };
+        const versioningWithDefaultPorts = config.versioning
+          ? {
+              ...config.versioning,
+              snapshotRootByteSyncPort: rootCapturePorts.snapshotRootByteSyncPort,
+              semanticStateReader: rootCapturePorts.semanticStateReader,
+            }
+          : undefined;
+        const versioningWithInitialRoot = versioningWithDefaultPorts
+          ? await withDocumentRootInitializer({
+              documentId,
+              versioning: versioningWithDefaultPorts,
+              xlsxImportRoot,
+              blankWorkbookRootInitializerEnabled,
+              createdAt: new Date(DOCUMENT_FACTORY_CLOCK.now()).toISOString(),
+            })
+          : undefined;
+        const resolvedVersioning = await resolveDocumentWorkbookVersioningLifecycle({
+          documentId,
+          versioning: versioningWithInitialRoot,
+        });
+        const versioning =
+          resolvedVersioning.versioning && lifecycle.rustDocument
+            ? {
+                ...resolvedVersioning.versioning,
+                providerWriteActivityTracker:
+                  resolvedVersioning.versioning.providerWriteActivityTracker ??
+                  lifecycle.rustDocument.versionProviderWriteActivityTracker,
+              }
+            : resolvedVersioning.versioning;
+        await lifecycle.rustDocument?.installVersionSyncServices(versioning);
         return createWorkbookFromConfig({
           ctx: context,
           eventBus: context.eventBus,
           stateProvider: config.stateProvider,
-          previouslySaved: config.previouslySaved,
+          featureGates: config.featureGates,
+          readFeatureGates: config.readFeatureGates,
+          previouslySaved: config.previouslySaved ?? xlsxImportRoot !== undefined,
           name: config.name,
           readOnly: config.readOnly,
           onSave: config.onSave,
           writeFile: config.writeFile,
           importWarnings: config.importWarnings ?? importWarnings,
+          versioning,
+          persistCheckoutMaterialization: async (materialization) => {
+            const rustDoc = lifecycle.rustDocument;
+            if (!rustDoc) {
+              throw new Error(
+                'DocumentHandle.workbook: cannot persist checkout materialization before engine readiness',
+              );
+            }
+            await rustDoc.fullStateCheckpointFromBridge(materialization.context.computeBridge, {
+              publishAfterCommit: true,
+            });
+          },
           liveness: createWorkbookLiveness('document.workbook(config)'),
         });
       }

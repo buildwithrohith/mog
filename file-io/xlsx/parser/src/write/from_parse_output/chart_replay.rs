@@ -2,11 +2,41 @@ use super::chart_auxiliary;
 use crate::domain::charts::chart_ex::chart_ex_title_text;
 use crate::write::write_error::WriteError;
 
-pub(super) fn should_reconstruct_chart_space(chart_spec: &domain_types::ChartSpec) -> bool {
-    !can_serialize_current_imported_chart_space(chart_spec)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum StandardChartExportPlan {
+    ReplayImportedChartSpace,
+    ReconstructFromModel,
 }
 
-fn can_serialize_current_imported_chart_space(chart_spec: &domain_types::ChartSpec) -> bool {
+pub(super) fn standard_chart_export_plan(
+    chart_spec: &domain_types::ChartSpec,
+) -> StandardChartExportPlan {
+    if can_replay_current_imported_chart_space(chart_spec) {
+        StandardChartExportPlan::ReplayImportedChartSpace
+    } else {
+        StandardChartExportPlan::ReconstructFromModel
+    }
+}
+
+pub(super) fn should_reconstruct_chart_space(chart_spec: &domain_types::ChartSpec) -> bool {
+    matches!(
+        standard_chart_export_plan(chart_spec),
+        StandardChartExportPlan::ReconstructFromModel
+    )
+}
+
+pub(super) fn should_complete_sources_for_xlsx_export(
+    chart_spec: &domain_types::ChartSpec,
+) -> bool {
+    !chart_spec.is_chart_ex
+        && has_live_chart_source_refs(chart_spec)
+        && matches!(
+            standard_chart_export_plan(chart_spec),
+            StandardChartExportPlan::ReconstructFromModel
+        )
+}
+
+fn can_replay_current_imported_chart_space(chart_spec: &domain_types::ChartSpec) -> bool {
     if !matches!(
         chart_spec.definition,
         Some(domain_types::ChartDefinition::Chart(_))
@@ -40,6 +70,34 @@ fn can_serialize_current_imported_chart_space(chart_spec: &domain_types::ChartSp
     let current_fingerprint = standard_chart_projection_fingerprint(chart_spec);
     provenance.projection_fingerprint.as_deref() == Some(current_fingerprint.as_str())
         && authority.projection_fingerprint.as_deref() == Some(current_fingerprint.as_str())
+}
+
+fn has_live_chart_source_refs(chart_spec: &domain_types::ChartSpec) -> bool {
+    chart_spec
+        .data_range
+        .as_deref()
+        .is_some_and(|range| !range.trim().is_empty())
+        || chart_spec.series.iter().any(series_has_live_source_refs)
+}
+
+fn series_has_live_source_refs(series: &domain_types::chart::ChartSeriesData) -> bool {
+    live_source_ref(series.values.as_deref(), series.value_source_kind)
+        || live_source_ref(series.categories.as_deref(), series.category_source_kind)
+        || live_source_ref(
+            series.bubble_size.as_deref(),
+            series.bubble_size_source_kind,
+        )
+}
+
+fn live_source_ref(
+    formula: Option<&str>,
+    source_kind: Option<domain_types::chart::ChartSeriesDimensionSourceKindData>,
+) -> bool {
+    formula.is_some_and(|formula| !formula.trim().is_empty())
+        && matches!(
+            source_kind,
+            None | Some(domain_types::chart::ChartSeriesDimensionSourceKindData::Ref)
+        )
 }
 
 fn has_modeled_chart_space_state(chart_spec: &domain_types::ChartSpec) -> bool {
@@ -229,7 +287,10 @@ pub(super) fn chart_allows_current_auxiliary_replay(
         && if chart_spec.is_chart_ex {
             chart_ex_allows_opaque_replay(chart_spec, chart_path)
         } else {
-            can_serialize_current_imported_chart_space(chart_spec)
+            matches!(
+                standard_chart_export_plan(chart_spec),
+                StandardChartExportPlan::ReplayImportedChartSpace
+            )
         }
 }
 
@@ -303,25 +364,60 @@ pub(super) fn chart_ex_allows_raw_anchor_replay(
     chart_path: &str,
     relationship_id: &str,
 ) -> bool {
-    chart_ex_allows_opaque_replay(chart_spec, chart_path)
-        && chart_spec
-            .chart_ex_replay
-            .as_ref()
-            .is_some_and(|replay| replay.original_position == chart_spec.position)
-        && chart_spec
-            .chart_frame
-            .as_ref()
-            .is_some_and(|frame| chart_frame_props_match_spec(chart_spec, frame))
-        && chart_spec
-            .chart_frame
-            .as_ref()
-            .and_then(|frame| frame.relationship_id.as_deref())
-            == Some(relationship_id)
-        && chart_spec
-            .chart_frame
-            .as_ref()
-            .and_then(|frame| frame.raw_alternate_content.as_deref())
-            .is_some()
+    chart_ex_raw_anchor_replay_xml(chart_spec, chart_path, relationship_id).is_some()
+}
+
+pub(super) fn chart_ex_raw_anchor_replay_xml(
+    chart_spec: &domain_types::ChartSpec,
+    chart_path: &str,
+    relationship_id: &str,
+) -> Option<String> {
+    if !chart_ex_allows_opaque_replay(chart_spec, chart_path) {
+        return None;
+    }
+    if !chart_spec
+        .chart_ex_replay
+        .as_ref()
+        .is_some_and(|replay| replay.original_position == chart_spec.position)
+    {
+        return None;
+    }
+    let frame = chart_spec.chart_frame.as_ref()?;
+    if !chart_frame_props_match_spec(chart_spec, frame) {
+        return None;
+    }
+
+    let raw_xml = frame.raw_alternate_content.as_ref()?;
+    let relationship_values = crate::infra::xml::relationship_attr_values(raw_xml);
+    let Some(imported_relationship_id) = frame.relationship_id.as_deref() else {
+        return relationship_values.is_empty().then(|| raw_xml.clone());
+    };
+    if !relationship_values.is_empty()
+        && !relationship_values
+            .iter()
+            .any(|value| value == imported_relationship_id)
+    {
+        return None;
+    }
+    if imported_relationship_id == relationship_id {
+        return Some(raw_xml.clone());
+    }
+    if relationship_values
+        .iter()
+        .any(|value| value == relationship_id)
+    {
+        return None;
+    }
+
+    let mut relationship_ids = std::collections::HashMap::new();
+    relationship_ids.insert(
+        imported_relationship_id.to_string(),
+        relationship_id.to_string(),
+    );
+    Some(crate::infra::xml::remap_relationship_attrs(
+        raw_xml,
+        &relationship_ids,
+    ))
 }
 
 fn chart_frame_props_match_spec(

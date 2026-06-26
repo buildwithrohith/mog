@@ -6,7 +6,7 @@
  * internal-only fields (StoredChartConfig).
  *
  * These are pure type definitions only -- no runtime values, no CellId imports.
- * Internal storage concerns (CellId anchors, zIndex, table linking) belong
+ * Internal storage concerns (CellId anchors, table linking) belong
  * in the charts package's StoredChartConfig.
  */
 
@@ -3484,7 +3484,7 @@ export interface ChartSurfaceBandFormat {
  * Public chart configuration -- the shape used by the unified API surface.
  *
  * This contains all user-facing fields for creating/updating charts.
- * Internal-only fields (CellId anchors, zIndex, table linking cache)
+ * Internal-only fields (CellId anchors, table linking cache)
  * are defined in StoredChartConfig in the charts package.
  */
 export interface ChartConfig {
@@ -3497,11 +3497,11 @@ export interface ChartConfig {
   anchorRow: number;
   /** Anchor column (0-based) */
   anchorCol: number;
-  /** Chart width in cells */
+  /** Chart width in points. */
   width: number;
-  /** Chart height in cells */
+  /** Chart height in points. */
   height: number;
-  /** Layout authority for render diagnostics; embedded charts keep width/height as cell counts. */
+  /** Layout authority for render diagnostics. */
   layoutAuthority?: ChartLayoutAuthority;
 
   // Data binding (A1 strings)
@@ -3672,10 +3672,10 @@ export interface ChartConfig {
    */
   extra?: unknown;
 
-  // Position in points (Group A)
-  /** Chart height in points */
+  // Position aliases preserved for imported chart metadata.
+  /** @deprecated Use height. */
   heightPt?: number;
-  /** Chart width in points */
+  /** @deprecated Use width. */
   widthPt?: number;
   /** Left offset in points */
   leftPt?: number;
@@ -3717,6 +3717,8 @@ export interface ChartConfig {
 export interface Chart extends ChartConfig {
   id: string;
   sheetId?: string;
+  /** Read-only drawing stack order metadata. Use zOrder updates to change it. */
+  zIndex?: number;
   createdAt?: number;
   updatedAt?: number;
 }

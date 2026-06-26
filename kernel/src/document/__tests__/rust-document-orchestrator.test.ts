@@ -205,6 +205,30 @@ describe('RustDocument orchestrator contract', () => {
       await doc.destroy();
     });
 
+    it('advances the write-gate watermark once per fanned-out update', async () => {
+      const { doc, bridge } = await makeOrchestrator();
+      const writeGate = new WriteGate();
+      (bridge as StubBridge & { writeGate: WriteGate }).writeGate = writeGate;
+      const storageA = new Map<string, Uint8Array[]>();
+      const storageB = new Map<string, Uint8Array[]>();
+      const providerA = new InMemoryProvider('watermark-doc-a', { storage: storageA });
+      const providerB = new InMemoryProvider('watermark-doc-b', { storage: storageB });
+      await doc.attachProvider(providerA);
+      await doc.attachProvider(providerB);
+
+      bridge.emit(new Uint8Array([0x01]));
+      bridge.emit(new Uint8Array([0x02]));
+      await Promise.resolve();
+      await providerA.flush();
+      await providerB.flush();
+
+      expect(writeGate.watermark).toBe(2);
+      expect(storageA.get('watermark-doc-a')).toHaveLength(2);
+      expect(storageB.get('watermark-doc-b')).toHaveLength(2);
+
+      await doc.destroy();
+    });
+
     it('preserves order across two separate microtask batches', async () => {
       const { doc, bridge } = await makeOrchestrator();
       const storage = new Map<string, Uint8Array[]>();
@@ -1104,6 +1128,25 @@ describe('RustDocument orchestrator contract', () => {
       await doc.fullStateCheckpoint();
 
       expect(events).toEqual(['append:9', 'checkpointFullState']);
+      await doc.destroy();
+    });
+
+    it('checkpoints attached Providers from an alternate materialized bridge state', async () => {
+      const { doc, bridge } = await makeOrchestrator();
+      const sourceBridge = makeStubBridge({ baselineUpdate: new Uint8Array([42]) });
+      const storage = new Map<string, Uint8Array[]>();
+      const provider = new InMemoryProvider('rust-doc-orch-test', { storage });
+
+      await doc.attachProvider(provider);
+      bridge.queueBridgeUpdate(new Uint8Array([9]));
+
+      await doc.fullStateCheckpointFromBridge(
+        sourceBridge as Parameters<RustDocument['fullStateCheckpointFromBridge']>[0],
+      );
+
+      const persisted = storage.get('rust-doc-orch-test') ?? [];
+      expect(persisted).toHaveLength(1);
+      expect([...persisted[0]!]).toEqual([42]);
       await doc.destroy();
     });
 

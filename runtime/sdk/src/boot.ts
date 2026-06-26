@@ -52,6 +52,18 @@ import {
   createNodeWasmChartImageExporterFactory,
 } from './chart-export/node-chart-image-exporter';
 import type { NativeChartRasterAddon } from './chart-export/node-chart-image-exporter';
+import {
+  createSdkVersionStoreLifecycleConfig,
+  type MogSdkVersionStoreConfig,
+} from './version-store';
+import { createClassifiedDocumentByteSyncPort } from './document-byte-sync-port';
+import type { ComputeEngineInstance, DocumentByteSyncPort } from './document-byte-sync-port';
+export type {
+  ComputeEngineInstance,
+  DocumentByteSyncPort,
+  DocumentByteSyncPortLegacyRawProvenance,
+  DocumentByteSyncPortRawProvenance,
+} from './document-byte-sync-port';
 
 type KernelCreateWorkbook = (...args: readonly unknown[]) => Promise<Workbook>;
 type HostBackedDocumentHandle = Awaited<ReturnType<typeof createHostBackedDocument>>;
@@ -108,30 +120,6 @@ function registerExternalWorkbookSession(
 // ---------------------------------------------------------------------------
 // SDK-owned types
 // ---------------------------------------------------------------------------
-
-/**
- * A compute engine instance. The SDK invokes methods by name
- * through the rust-bridge command protocol.
- *
- * @internal Not part of the public SDK API surface.
- */
-export interface ComputeEngineInstance {
-  [method: string]: (...args: unknown[]) => unknown;
-}
-
-/**
- * Package-local byte-sync capability exposed by the deprecated collaboration
- * helpers. Structurally matches the kernel provider port without publishing a
- * dependency on the kernel storage subpath.
- *
- * @internal
- */
-export interface DocumentByteSyncPort {
-  readonly docId: string;
-  applyUpdate(update: Uint8Array): Promise<void>;
-  encodeDiff(remoteSv: Uint8Array): Promise<Uint8Array>;
-  currentStateVector(): Promise<Uint8Array>;
-}
 
 export interface ChartImageFrame {
   readonly exportWidth: number;
@@ -276,6 +264,7 @@ export interface CreateWorkbookOptions {
    * @mog-sdk/chart-raster-wasm lazily for PNG/JPEG export.
    */
   chartRendering?: ChartRenderingConfig;
+  versionStore?: MogSdkVersionStoreConfig;
 }
 
 export interface MogSdkLogger {
@@ -373,6 +362,11 @@ export async function createWorkbook(
     };
   }
 
+  const documentId = opts.documentId ?? createPortableRandomUUID();
+  const versioning = createSdkVersionStoreLifecycleConfig(opts.versionStore, {
+    runtime: 'node',
+    documentId,
+  });
   // Default timezone for headless — headless hosts cannot infer user TZ.
   const timezone = opts.userTimezone ?? 'UTC';
 
@@ -387,7 +381,6 @@ export async function createWorkbook(
   // raw construction path would bypass source-handle validation, operation
   // gates, and principal/resource binding.
   // -------------------------------------------------------------------------
-  const documentId = opts.documentId ?? createPortableRandomUUID();
   const hostResult: NodeHeadlessHostResult = createNodeHeadlessHost({
     documentId,
     operation: xlsxBytes ? 'import' : 'create',
@@ -431,9 +424,8 @@ export async function createWorkbook(
 
   installNodeChartImageExporter(readyHandle, loadNodeSdkNapiAddon, opts.chartRendering);
 
-  // Create a Workbook from the handle — uses the cached workbook() path
-  // which wires context, event bus, and sheet metadata internally.
-  const wb = await readyHandle.workbook({ writeFile: writeNodeFileBytes });
+  // Create a Workbook from the handle.
+  const wb = await readyHandle.workbook({ writeFile: writeNodeFileBytes, versioning });
 
   // Chain disposal: workbook.dispose → handle.dispose → host.dispose
   const originalDispose = wb.dispose.bind(wb);
@@ -688,7 +680,7 @@ class HeadlessLifecycleSystem {
         '[HeadlessLifecycleSystem] sync port accessed before ready -- call create() or createFromXlsx() first',
       );
     }
-    return this.handle.createSyncPort();
+    return createClassifiedDocumentByteSyncPort(this.handle.createSyncPort());
   }
 
   get workbookLinkScope(): WorkbookLinkStatusScope | undefined {

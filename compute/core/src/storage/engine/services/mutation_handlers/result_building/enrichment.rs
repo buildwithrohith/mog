@@ -3,6 +3,8 @@ use value_types::CellValue;
 
 use crate::mirror::CellMirror;
 use crate::snapshot::RecalcResult;
+use crate::storage::engine::services::cell_editing::NO_OLD_FORMULA_SENTINEL;
+use crate::storage::engine::services::resolved_formats;
 use crate::storage::engine::settings::EngineSettings;
 use crate::storage::engine::stores::EngineStores;
 use crate::storage::sheet::{comments, hyperlinks, sparklines};
@@ -16,9 +18,9 @@ use compute_wire::flags as render_flags;
 /// Populate `display_text` on each `CellChange` using the canonical
 /// `format_value_at_cell` method.
 pub(in crate::storage::engine) fn enrich_display_text(
-    _stores: &EngineStores,
-    _mirror: &CellMirror,
-    _settings: &EngineSettings,
+    stores: &EngineStores,
+    mirror: &CellMirror,
+    settings: &EngineSettings,
     result: &mut RecalcResult,
     format_value_fn: &dyn Fn(&CellValue, &SheetId, u32, u32) -> String,
 ) {
@@ -30,8 +32,38 @@ pub(in crate::storage::engine) fn enrich_display_text(
             Ok(id) => id,
             Err(_) => continue,
         };
-        let text = format_value_fn(&change.value, &sheet_id, pos.row, pos.col);
-        change.display_text = Some(text);
+        let old_formula_known_absent =
+            change.old_formula.as_deref() == Some(NO_OLD_FORMULA_SENTINEL);
+        let had_before_formula_snapshot = change.old_formula.is_some();
+        if change.old_display_text.is_none()
+            && let Some(old_value) = &change.old_value
+        {
+            change.old_display_text = Some(format_value_fn(old_value, &sheet_id, pos.row, pos.col));
+        }
+
+        change.display_text = Some(format_value_fn(&change.value, &sheet_id, pos.row, pos.col));
+
+        let effective_format = resolved_formats::get_resolved_cell_format(
+            stores, mirror, settings, &sheet_id, pos.row, pos.col,
+        );
+        change.number_format = Some(
+            effective_format
+                .number_format
+                .unwrap_or_else(|| "General".to_string()),
+        );
+
+        if let Ok(cell_id) = CellId::from_uuid_str(&change.cell_id) {
+            change.new_formula = stores.compute.get_formula(&cell_id).map(str::to_owned);
+            if old_formula_known_absent {
+                change.old_formula = None;
+            } else if change.old_formula.is_none()
+                && !had_before_formula_snapshot
+                && change.old_value.is_some()
+                && change.new_formula.is_some()
+            {
+                change.old_formula = change.new_formula.clone();
+            }
+        }
     }
 }
 

@@ -4,6 +4,9 @@ import type { RectMark, TextMark } from '../../primitives/types';
 import type { ChartConfig, ChartData } from '../../types';
 import { configToSpec } from '../config-to-spec';
 
+const TEST_CHART_WIDTH_PT = 480;
+const TEST_CHART_HEIGHT_PT = 75;
+
 function asUnitSpec(spec: ChartSpec): UnitSpec {
   expect(isLayerSpec(spec)).toBe(false);
   return spec as UnitSpec;
@@ -55,8 +58,8 @@ describe('configToSpec invisible stacked bar series', () => {
     subType: 'stacked',
     anchorRow: 0,
     anchorCol: 0,
-    width: 8,
-    height: 5,
+    width: TEST_CHART_WIDTH_PT,
+    height: TEST_CHART_HEIGHT_PT,
     legend: {
       show: true,
       visible: true,
@@ -101,7 +104,7 @@ describe('configToSpec invisible stacked bar series', () => {
     expect(spec.mark).toMatchObject({
       type: 'bar',
       stroke: '#000000',
-      strokeWidth: 1.5,
+      strokeWidth: 1,
     });
     expect(rows.filter((row) => row.series === 'Series 0')).toHaveLength(2);
     expect(rows.filter((row) => row.series === 'Series 0')).toEqual(
@@ -153,8 +156,8 @@ describe('configToSpec invisible stacked bar series', () => {
       subType: 'stacked',
       anchorRow: 0,
       anchorCol: 0,
-      width: 8,
-      height: 5,
+      width: TEST_CHART_WIDTH_PT,
+      height: TEST_CHART_HEIGHT_PT,
       extra: {},
     };
 
@@ -207,8 +210,8 @@ describe('configToSpec invisible stacked bar series', () => {
       type: 'column',
       anchorRow: 0,
       anchorCol: 0,
-      width: 8,
-      height: 5,
+      width: TEST_CHART_WIDTH_PT,
+      height: TEST_CHART_HEIGHT_PT,
     };
 
     const spec = asUnitSpec(configToSpec(config, multiLevelData));
@@ -275,8 +278,8 @@ describe('configToSpec invisible stacked bar series', () => {
       type: 'bar',
       anchorRow: 0,
       anchorCol: 0,
-      width: 8,
-      height: 5,
+      width: TEST_CHART_WIDTH_PT,
+      height: TEST_CHART_HEIGHT_PT,
     };
 
     const spec = asUnitSpec(configToSpec(config, multiLevelData));
@@ -324,8 +327,8 @@ describe('configToSpec invisible stacked bar series', () => {
       type: 'bar',
       anchorRow: 0,
       anchorCol: 0,
-      width: 8,
-      height: 5,
+      width: TEST_CHART_WIDTH_PT,
+      height: TEST_CHART_HEIGHT_PT,
       axis: {
         categoryAxis: {
           visible: true,
@@ -341,6 +344,6 @@ describe('configToSpec invisible stacked bar series', () => {
 
     const spec = asUnitSpec(configToSpec(importedConfig, longLabelData));
 
-    expect(spec.config?.layoutHints?.yAxisLabelWidth).toBeGreaterThan(560);
+    expect(spec.config?.layoutHints?.yAxisLabelWidth).toBeGreaterThan(540);
   });
 });

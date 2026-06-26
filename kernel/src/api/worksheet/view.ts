@@ -10,6 +10,7 @@ import type { SpreadsheetEvent } from '@mog-sdk/contracts/events';
 import type { SplitViewportConfig } from '@mog-sdk/contracts/viewport-config';
 import { createSplitViewportConfig } from '@mog/spreadsheet-utils/viewport/viewport-config';
 import { KernelError } from '../../errors';
+import { createVersionOperationContext } from '../internal/version-operation-context';
 import { parseCellAddress } from '../internal/utils';
 
 import type { DocumentContext } from '../../context';
@@ -41,7 +42,19 @@ export class WorksheetViewImpl implements WorksheetView {
   }
 
   async freezePanes(rows: number, cols: number): Promise<void> {
-    this._ensureWritable('view.freezePanes');
+    await this.setFrozenPanesForOperation(rows, cols, 'view.freezePanes');
+  }
+
+  async setFrozenPanes(rows: number, cols: number): Promise<void> {
+    await this.setFrozenPanesForOperation(rows, cols, 'view.setFrozenPanes');
+  }
+
+  private async setFrozenPanesForOperation(
+    rows: number,
+    cols: number,
+    operation: string,
+  ): Promise<void> {
+    this._ensureWritable(operation);
     if (rows < 0 || cols < 0) {
       throw new KernelError('COMPUTE_ERROR', 'Frozen row and column counts cannot be negative');
     }
@@ -166,7 +179,13 @@ export class WorksheetViewImpl implements WorksheetView {
   }
 
   async setTabColor(color: string | null): Promise<void> {
-    await this.ctx.computeBridge.setTabColor(this.sheetId, color);
+    await this.ctx.computeBridge.setTabColor(this.sheetId, color, {
+      operationContext: createVersionOperationContext(this.ctx, {
+        operationIdPrefix: 'worksheet.view.setTabColor',
+        sheetIds: [this.sheetId],
+        domainIds: ['sheets'],
+      }),
+    });
   }
 
   async getScrollPosition(): Promise<ScrollPosition> {

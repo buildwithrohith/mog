@@ -53,7 +53,7 @@ import {
   snapshotSeries,
   snapshotSeriesProjection,
 } from './resolved-spec-series-snapshot';
-import { resolveChartHeightCells, resolveChartWidthCells } from '../chart-size-units';
+import { resolveStoredChartHeightPoints, resolveStoredChartWidthPoints } from '../chart-size-units';
 import {
   groupingFor,
   snapshotAxis,
@@ -198,6 +198,8 @@ export function buildResolvedChartSpecSnapshot(input: {
       ),
     }),
   ]);
+  const chartObjectWidthPt = resolveStoredChartWidthPoints(input.chart);
+  const chartObjectHeightPt = resolveStoredChartHeightPoints(input.chart);
   return {
     schemaVersion: 1,
     chartId: input.chart.id,
@@ -214,10 +216,10 @@ export function buildResolvedChartSpecSnapshot(input: {
       name: input.chart.name,
       anchorRow: input.chart.anchor?.anchorRow,
       anchorCol: input.chart.anchor?.anchorCol,
-      width: resolveChartWidthCells(input.chart.widthCells, input.chart.width),
-      height: resolveChartHeightCells(input.chart.heightCells, input.chart.height),
-      widthPt: input.chart.widthPt,
-      heightPt: input.chart.heightPt,
+      width: chartObjectWidthPt,
+      height: chartObjectHeightPt,
+      widthPt: chartObjectWidthPt,
+      heightPt: chartObjectHeightPt,
     },
     export: input.exportOptions,
     implementation: {

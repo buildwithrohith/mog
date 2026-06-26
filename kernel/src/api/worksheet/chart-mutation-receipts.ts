@@ -9,6 +9,11 @@ import type {
   SheetId,
 } from '@mog-sdk/contracts/api';
 import type {
+  ChartAxisRole,
+  ChartSourceBindingChange,
+  ChartSourceBindingAppModel,
+} from '@mog-sdk/contracts/data/chart-app-model';
+import type {
   BoxplotConfig,
   ChartBorder,
   DataLabelConfig,
@@ -38,13 +43,22 @@ type ChartMutationReceiptFields = Pick<
   | 'trendlineIndex'
   | 'pointIndex'
   | 'axisType'
+  | 'axisRole'
   | 'range'
+  | 'visible'
+  | 'title'
   | 'series'
   | 'trendline'
+  | 'appModelBefore'
+  | 'appModelAfter'
+  | 'sourceBindingBefore'
+  | 'sourceBindingAfter'
+  | 'sourceBindingChange'
 >;
 
 export type ChartMutationTarget = Partial<ChartMutationReceiptFields> & {
   readonly changedRanges?: readonly (string | null | undefined)[];
+  readonly chart?: Chart | null;
 };
 
 function compactDetails(details: Record<string, unknown>): Record<string, unknown> {
@@ -65,10 +79,36 @@ function receiptTargetFields(
     trendlineIndex: target.trendlineIndex,
     pointIndex: target.pointIndex,
     axisType: target.axisType,
+    axisRole: target.axisRole,
     range: target.range,
+    visible: target.visible,
+    title: target.title,
     series: target.series,
     trendline: target.trendline,
+    appModelBefore: target.appModelBefore,
+    appModelAfter: target.appModelAfter,
+    sourceBindingBefore: target.sourceBindingBefore,
+    sourceBindingAfter: target.sourceBindingAfter,
+    sourceBindingChange: target.sourceBindingChange,
   }) as Partial<ChartMutationReceiptFields>;
+}
+
+function receiptDetailFields(target: ChartMutationTarget = {}): Record<string, unknown> {
+  return compactDetails({
+    seriesIndex: target.seriesIndex,
+    fromSeriesIndex: target.fromSeriesIndex,
+    toSeriesIndex: target.toSeriesIndex,
+    trendlineIndex: target.trendlineIndex,
+    pointIndex: target.pointIndex,
+    axisType: target.axisType,
+    axisRole: target.axisRole,
+    range: target.range,
+    visible: target.visible,
+    title: target.title,
+    series: target.series,
+    trendline: target.trendline,
+    sourceBindingChange: target.sourceBindingChange,
+  });
 }
 
 function addChangedRange(ranges: Set<string>, range: string | null | undefined): void {
@@ -109,10 +149,12 @@ function collectChangedRanges(target: ChartMutationTarget = {}): string[] {
 
 function chartMutationTargetKind(target: ChartMutationTarget): string {
   if (target.trendlineIndex !== undefined) return 'chartTrendline';
+  if (target.sourceBindingBefore !== undefined || target.sourceBindingAfter !== undefined)
+    return 'chartSourceBinding';
   if (target.pointIndex !== undefined) return 'chartPoint';
   if (target.seriesIndex !== undefined || target.fromSeriesIndex !== undefined)
     return 'chartSeries';
-  if (target.axisType !== undefined) return 'chartAxis';
+  if (target.axisType !== undefined || target.axisRole !== undefined) return 'chartAxis';
   return 'chart';
 }
 
@@ -127,7 +169,7 @@ export function buildAppliedChartMutationReceipt(
   const targetDetails = compactDetails({
     mutationKind: kind,
     targetType: chartMutationTargetKind(target),
-    ...targetFields,
+    ...receiptDetailFields(target),
     objectType: 'chart',
   });
   const changedRanges = collectChangedRanges(target);
@@ -187,7 +229,7 @@ export function buildFailedChartMutationReceipt(
   const targetFields = receiptTargetFields(target);
   const diagnosticDetails = compactDetails({
     mutationKind: kind,
-    ...targetFields,
+    ...receiptDetailFields(target),
     ...details,
   });
   const diagnostic: OperationDiagnostic = {
@@ -218,6 +260,48 @@ export function buildFailedChartMutationReceipt(
   };
 }
 
+export function buildUnsupportedChartMutationReceipt(
+  kind: ChartMutationReceiptKind,
+  sheetId: SheetId,
+  chartId: string,
+  message: string,
+  target: ChartMutationTarget = {},
+  details: Record<string, unknown> = {},
+): ChartMutationReceipt {
+  const targetFields = receiptTargetFields(target);
+  const diagnosticDetails = compactDetails({
+    mutationKind: kind,
+    ...receiptDetailFields(target),
+    ...details,
+  });
+  const diagnostic: OperationDiagnostic = {
+    severity: 'warning',
+    code: 'chart.mutation.unsupported',
+    message,
+    target: { sheetId, objectId: chartId },
+    recoverable: true,
+    details: diagnosticDetails,
+  };
+
+  return {
+    kind,
+    status: 'unsupported',
+    sheetId,
+    chartId,
+    chart: target.chart ?? null,
+    effects: [
+      {
+        type: 'worksheetUnchanged',
+        sheetId,
+        objectId: chartId,
+        details: diagnosticDetails,
+      },
+    ],
+    diagnostics: [diagnostic],
+    ...targetFields,
+  };
+}
+
 export function formatIndexRange(capacity: number): string {
   return capacity > 0 ? `0-${capacity - 1}` : 'no valid indexes';
 }
@@ -234,9 +318,9 @@ function inferredRangeSeriesMutationCapacity(chart: Chart): number {
 
   const orientation = chart.seriesOrientation ?? detectSeriesOrientation(dataRange);
   if (orientation === 'columns') {
-    return Math.max(0, rowCount - (chart.categoryRange ? 0 : 1));
+    return Math.max(0, colCount - (chart.categoryRange ? 0 : 1));
   }
-  return Math.max(0, colCount - (chart.categoryRange ? 0 : 1));
+  return Math.max(0, rowCount - (chart.categoryRange ? 0 : 1));
 }
 
 export function chartSeriesMutationCapacityForReceipt(chart: Chart): number {

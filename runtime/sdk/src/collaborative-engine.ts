@@ -14,8 +14,17 @@
  * changes in minor versions.
  */
 
-import { createHeadlessEngine, _getDocumentSyncPort, type NapiAddonModule } from './boot';
+import {
+  createHeadlessEngine,
+  _getDocumentSyncPort,
+  type DocumentByteSyncPort,
+  type NapiAddonModule,
+} from './boot';
 import type { Workbook, Worksheet } from '@mog-sdk/contracts/api';
+import type {
+  DocumentByteSyncPortClassifiedRawProvenance,
+  DocumentByteSyncPortRawSyncLifecycle,
+} from './document-sync-port-types';
 
 // =============================================================================
 // Types
@@ -77,6 +86,144 @@ export interface FlushResult {
 export interface SyncResult {
   pushed: boolean;
   pulled: boolean;
+}
+
+type CoordinatorRawUpdateClassification = 'bootstrap' | 'flush' | 'pull' | 'sync';
+
+type CoordinatorRawUpdateLifecycle =
+  | (DocumentByteSyncPortRawSyncLifecycle & {
+      readonly source: 'collaborativeEngineBootstrap';
+    })
+  | (DocumentByteSyncPortRawSyncLifecycle & {
+      readonly source:
+        | 'collaborativeEngineFlush'
+        | 'collaborativeEnginePull'
+        | 'collaborativeEngineSync';
+    });
+
+const COORDINATOR_RAW_UPDATE_LIFECYCLE_BY_CLASSIFICATION = Object.freeze({
+  bootstrap: {
+    schemaVersion: 'sdk-raw-sync-lifecycle-v1',
+    source: 'collaborativeEngineBootstrap',
+    capturePolicy: 'excluded',
+  },
+  flush: {
+    schemaVersion: 'sdk-raw-sync-lifecycle-v1',
+    source: 'collaborativeEngineFlush',
+    capturePolicy: 'excluded',
+  },
+  pull: {
+    schemaVersion: 'sdk-raw-sync-lifecycle-v1',
+    source: 'collaborativeEnginePull',
+    capturePolicy: 'excluded',
+  },
+  sync: {
+    schemaVersion: 'sdk-raw-sync-lifecycle-v1',
+    source: 'collaborativeEngineSync',
+    capturePolicy: 'excluded',
+  },
+} satisfies Record<CoordinatorRawUpdateClassification, CoordinatorRawUpdateLifecycle>);
+
+const COORDINATOR_RAW_UPDATE_REDACTION_POLICY = Object.freeze({
+  schemaVersion: 'provenance-redaction-policy-v1',
+  mode: 'diagnostic-only',
+  durableAuthorIdentity: 'unknown',
+  durableProviderIdentity: 'unknown',
+  proofMaterial: 'diagnostics-only',
+} satisfies DocumentByteSyncPortClassifiedRawProvenance['redaction']);
+
+/** @internal */
+export async function _applyCoordinatorRawUpdate(
+  syncPort: DocumentByteSyncPort,
+  update: Uint8Array,
+  classification: CoordinatorRawUpdateClassification,
+): Promise<void> {
+  if (typeof syncPort.applyClassifiedRawUpdate !== 'function') {
+    throw new Error(
+      `CollaborativeEngine coordinator ${classification} update requires DocumentByteSyncPort.applyClassifiedRawUpdate`,
+    );
+  }
+
+  const payloadHash = await sha256Hex(update);
+  const lifecycle = coordinatorLifecycleForClassification(classification);
+  await syncPort.applyClassifiedRawUpdate(
+    update,
+    buildCoordinatorRawUpdateProvenance(classification, lifecycle, payloadHash),
+  );
+}
+
+function buildCoordinatorRawUpdateProvenance(
+  classification: CoordinatorRawUpdateClassification,
+  lifecycle: CoordinatorRawUpdateLifecycle,
+  payloadHash: string,
+): DocumentByteSyncPortClassifiedRawProvenance {
+  const updateIdentity = {
+    originKind: 'room' as const,
+    updateId: `sdk-coordinator-${classification}:${payloadHash}`,
+    payloadHash,
+  };
+
+  if (lifecycle.source === 'collaborativeEngineBootstrap') {
+    return {
+      schemaVersion: 'sync-update-provenance-v1',
+      sourceKind: 'collaborationHydration',
+      sdkLifecycle: lifecycle,
+      updateIdentity,
+      trust: { status: 'trustedLocalSystem' },
+      author: { kind: 'system', systemRef: 'collaboration-hydration' },
+      replay: true,
+      system: true,
+      capturePolicy: 'excluded',
+      redaction: COORDINATOR_RAW_UPDATE_REDACTION_POLICY,
+      exclusionDiagnostic: {
+        reason: 'hydration',
+        message:
+          'Coordinator bootstrap alignment is classified as collaborativeEngineBootstrap with capturePolicy=excluded.',
+      },
+    };
+  }
+
+  return {
+    schemaVersion: 'sync-update-provenance-v1',
+    sourceKind: 'collaborationMixedRemote',
+    sdkLifecycle: lifecycle,
+    updateIdentity,
+    trust: { status: 'unverified' },
+    author: { kind: 'mixedRemote', reason: 'aggregateWithoutBoundaries' },
+    replay: false,
+    system: false,
+    capturePolicy: 'excluded',
+    redaction: COORDINATOR_RAW_UPDATE_REDACTION_POLICY,
+    exclusionDiagnostic: {
+      reason: 'mixedAuthors',
+      message: `Coordinator ${classification} diff is classified as ${lifecycle.source} with capturePolicy=excluded because it lacks per-update provenance boundaries.`,
+    },
+  };
+}
+
+function coordinatorLifecycleForClassification(
+  classification: CoordinatorRawUpdateClassification,
+): CoordinatorRawUpdateLifecycle {
+  const lifecycle =
+    COORDINATOR_RAW_UPDATE_LIFECYCLE_BY_CLASSIFICATION[
+      classification as CoordinatorRawUpdateClassification
+    ];
+  if (!lifecycle) {
+    throw new Error(
+      `Unknown CollaborativeEngine coordinator raw update lifecycle: ${classification}`,
+    );
+  }
+  return lifecycle;
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  if (typeof globalThis.crypto?.subtle?.digest !== 'function') {
+    throw new Error('CollaborativeEngine coordinator sync classification requires SHA-256 digest');
+  }
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', new Uint8Array(bytes));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 // =============================================================================
@@ -312,7 +459,7 @@ export class CollaborativeEngine {
       );
       // Apply any existing state from the coordinator back to this engine
       if (pushRaw.ok && pushRaw.serverDiff && pushRaw.serverDiff.length > 0) {
-        await syncPort.applyUpdate(new Uint8Array(pushRaw.serverDiff));
+        await _applyCoordinatorRawUpdate(syncPort, new Uint8Array(pushRaw.serverDiff), 'bootstrap');
       }
     }
 
@@ -373,7 +520,7 @@ export class CollaborativeEngine {
         Buffer.from(initSv),
       );
       if (pushRaw.ok && pushRaw.serverDiff && pushRaw.serverDiff.length > 0) {
-        await syncPort.applyUpdate(new Uint8Array(pushRaw.serverDiff));
+        await _applyCoordinatorRawUpdate(syncPort, new Uint8Array(pushRaw.serverDiff), 'bootstrap');
       }
     }
 
@@ -424,6 +571,12 @@ export class CollaborativeEngine {
    * In manual mode, call this explicitly. In immediate mode, auto-called.
    */
   async flush(): Promise<FlushResult> {
+    return this.flushClassifiedRawUpdate('flush');
+  }
+
+  private async flushClassifiedRawUpdate(
+    classification: Extract<CoordinatorRawUpdateClassification, 'flush' | 'sync'>,
+  ): Promise<FlushResult> {
     if (this._disposed) throw new Error('Engine is disposed');
 
     // Get local state vector and diff
@@ -449,7 +602,7 @@ export class CollaborativeEngine {
 
     // Apply server diff (changes from other participants)
     if (result.serverDiff && result.serverDiff.length > 0) {
-      await syncPort.applyUpdate(new Uint8Array(result.serverDiff));
+      await _applyCoordinatorRawUpdate(syncPort, new Uint8Array(result.serverDiff), classification);
     }
 
     this._touchedSheets.clear();
@@ -462,6 +615,12 @@ export class CollaborativeEngine {
    * Pull remote changes from the coordinator.
    */
   async pull(): Promise<void> {
+    return this.pullClassifiedRawUpdate('pull');
+  }
+
+  private async pullClassifiedRawUpdate(
+    classification: Extract<CoordinatorRawUpdateClassification, 'pull' | 'sync'>,
+  ): Promise<void> {
     if (this._disposed) throw new Error('Engine is disposed');
 
     const syncPort = _getDocumentSyncPort(this._inner);
@@ -469,7 +628,7 @@ export class CollaborativeEngine {
     const diff = this._coordinator.pull(this._participantId, Buffer.from(localSv));
 
     if (diff.length > 0) {
-      await syncPort.applyUpdate(diff);
+      await _applyCoordinatorRawUpdate(syncPort, diff, classification);
     }
   }
 
@@ -477,8 +636,8 @@ export class CollaborativeEngine {
    * Full sync cycle: push local changes, then pull remote changes.
    */
   async sync(): Promise<SyncResult> {
-    const flushResult = await this.flush();
-    await this.pull();
+    const flushResult = await this.flushClassifiedRawUpdate('sync');
+    await this.pullClassifiedRawUpdate('sync');
     return { pushed: flushResult.ok, pulled: true };
   }
 

@@ -16,13 +16,17 @@
  */
 
 import type { BridgeTransport } from '@rust-bridge/client';
-import { TrapError, resetWasmModule } from '@mog/transport';
+import { TrapError, normalizeBytesTuple, resetWasmModule } from '@mog/transport';
 import { asFormulaA1 } from '@mog/spreadsheet-utils/cells/formula-string';
 import type { SchemaChangedEvent } from '@mog-sdk/contracts/events';
 import type { ViewportRefreshDetails } from '@mog-sdk/contracts/api';
 import type { IKernelContext, ISpreadsheetKernelContext } from '@mog-sdk/contracts/kernel';
 import type { ColumnSchema } from '@mog-sdk/contracts/schema';
 import { type SheetId, sheetId as toSheetId } from '@mog-sdk/contracts/core';
+import {
+  classifyLegacyRawUpdate,
+  validateSyncUpdateProvenance,
+} from '@mog-sdk/types-document/storage';
 import * as Schemas from '../../domain/schemas/schemas';
 
 import { BridgeError } from '../../errors/bridge';
@@ -45,10 +49,21 @@ import { refreshViewportForCfSiblings } from './cf-sibling-refresh';
 import { refreshViewportsAfterHistoryReplay } from './history-replay-refresh';
 import {
   admitPublicMutation as admitPublicMutationForCore,
+  observeMutationAdmission,
+  prepareVersionMutationCapture,
+  recordMutationAdmissionDiagnostic,
+  recordVersionMutationCapture,
   type DirectEditPosition,
+  type MutationAdmissionOptions,
   type MutationTuple,
   runSystemMutation,
 } from './mutation-admission';
+import {
+  createAdmittedSyncApplyContext,
+  toSyncApplyOperationContextWire,
+  type AdmittedSyncApplyContext,
+} from './sync-apply-admission';
+import type { SyncApplyWithMetadataResult } from './sync-apply-result';
 
 import type {
   ColumnSchemaWire,
@@ -67,8 +82,18 @@ import type {
   RecalcValidationAnnotation,
   RecalcValidationError,
   SheetSettingsChange,
+  SyncApplyMutationMetadataWire,
   UndoState,
 } from './compute-types.gen';
+
+const SYNC_APPLY_ADMISSION_LEDGER_LIMIT = 1024;
+
+interface SyncApplyAdmissionLedgerEntry {
+  readonly operationId: string;
+  readonly payloadHash: string;
+  readonly sourceKind: string;
+  seenCount: number;
+}
 
 // ---------------------------------------------------------------------------
 // MutationResult data extraction helper
@@ -250,6 +275,7 @@ export class ComputeCore {
    */
   private afterMutationHook: (() => Promise<void>) | null = null;
   private undoGroupDepth = 0;
+  private readonly syncApplyAdmissionLedger = new Map<string, SyncApplyAdmissionLedgerEntry>();
 
   /** Coordinator registry — single owner of per-viewport state. */
   private coordinatorRegistry: ViewportCoordinatorRegistry;
@@ -419,12 +445,13 @@ export class ComputeCore {
    * wait for deferred XLSX hydration. The post-barrier writable check matters:
    * closing/checkpointing/read-only state can arrive while hydration is running.
    */
-  async admitPublicMutation(operation: string): Promise<void> {
+  async admitPublicMutation(operation: string, options?: MutationAdmissionOptions): Promise<void> {
     await admitPublicMutationForCore(
       this.ctx,
       this._writeGate,
       () => this.ensureInitialized(),
       operation,
+      options,
     );
   }
 
@@ -845,6 +872,8 @@ export class ComputeCore {
     promise: Promise<MutationTuple>,
     directEdits?: DirectEditPosition[],
     operation = 'mutateCore',
+    options?: MutationAdmissionOptions,
+    captureMutation = false,
   ): Promise<MutationResult> {
     // Write gate check: if a gate is installed, verify the mutation is
     // allowed before executing. The gate throws WriteGateRejectionError
@@ -853,6 +882,15 @@ export class ComputeCore {
     this._writeGate?.assertWritable(operation);
 
     const [viewportPatchesBinary, result] = await promise;
+    if (captureMutation) {
+      recordVersionMutationCapture(this.ctx, {
+        operation,
+        result,
+        ...(directEdits ? { directEdits } : {}),
+        ...(options?.directEditRanges ? { directEditRanges: options.directEditRanges } : {}),
+        ...(options?.operationContext ? { operationContext: options.operationContext } : {}),
+      });
+    }
 
     // Guard for early calls: if not initialized, skip all post-processing.
     // Remote/provider sync can still advance the Rust engine before any
@@ -933,9 +971,11 @@ export class ComputeCore {
     // Architecturally this keeps Rust as the single source of truth for
     // positions: the renderer never recomputes them from per-row dimension
     // queries (the old quadratic pre-roll loop in viewport-wiring.ts).
+    const isHistoryReplay = operation === 'compute_undo' || operation === 'compute_redo';
     if (
       (result.dimensionChanges?.length || result.visibilityChanges?.length) &&
-      this.fetchManager
+      this.fetchManager &&
+      !isHistoryReplay
     ) {
       await this.fetchManager.forceRefreshAllViewports();
     }
@@ -982,8 +1022,10 @@ export class ComputeCore {
     promise: Promise<MutationTuple>,
     directEdits?: DirectEditPosition[],
     operation = 'mutate',
+    options?: MutationAdmissionOptions,
+    captureMutation = false,
   ): Promise<MutationResult> {
-    const result = await this.mutateCore(promise, directEdits, operation);
+    const result = await this.mutateCore(promise, directEdits, operation, options, captureMutation);
     if (this.undoGroupDepth === 0) {
       await this.ctx.services?.undo.notifyForwardMutation();
     }
@@ -998,9 +1040,11 @@ export class ComputeCore {
     operation: string,
     call: () => Promise<MutationTuple>,
     directEdits?: DirectEditPosition[],
+    options?: MutationAdmissionOptions,
   ): Promise<MutationResult> {
-    await this.admitPublicMutation(operation);
-    return this.mutate(call(), directEdits, operation);
+    await this.admitPublicMutation(operation, options);
+    await prepareVersionMutationCapture(this.ctx, operation, directEdits, options);
+    return this.mutate(call(), directEdits, operation, options, true);
   }
 
   /**
@@ -1015,10 +1059,16 @@ export class ComputeCore {
     operation: string,
     call: () => Promise<MutationTuple>,
     directEdits?: DirectEditPosition[],
+    options?: MutationAdmissionOptions,
   ): Promise<MutationResult> {
+    observeMutationAdmission(this.ctx, operation, {
+      invocation: 'public-ui-state',
+      ...options,
+    });
     this.ensureInitialized();
     this._writeGate?.assertWritable(operation);
-    return this.mutate(call(), directEdits, operation);
+    await prepareVersionMutationCapture(this.ctx, operation, directEdits, options);
+    return this.mutate(call(), directEdits, operation, options, true);
   }
 
   /**
@@ -1030,13 +1080,17 @@ export class ComputeCore {
     call: () => Promise<T>,
     toMutationTuple: (result: T) => MutationTuple,
     directEdits?: DirectEditPosition[],
+    options?: MutationAdmissionOptions,
   ): Promise<{ raw: T; mutation: MutationResult }> {
-    await this.admitPublicMutation(operation);
+    await this.admitPublicMutation(operation, options);
+    await prepareVersionMutationCapture(this.ctx, operation, directEdits, options);
     const raw = await call();
     const mutation = await this.mutate(
       Promise.resolve(toMutationTuple(raw)),
       directEdits,
       operation,
+      options,
+      true,
     );
     return { raw, mutation };
   }
@@ -1050,9 +1104,11 @@ export class ComputeCore {
     operation: string,
     call: () => Promise<MutationTuple>,
     directEdits?: DirectEditPosition[],
+    options?: MutationAdmissionOptions,
+    captureMutation = false,
   ): Promise<MutationResult> {
-    const run = () => this.mutate(call(), directEdits, operation);
-    return runSystemMutation(this._writeGate, run);
+    const run = () => this.mutate(call(), directEdits, operation, options, captureMutation);
+    return runSystemMutation(this.ctx, this._writeGate, operation, run, options);
   }
 
   /**
@@ -1063,6 +1119,7 @@ export class ComputeCore {
     call: () => Promise<T>,
     toMutationTuple: (result: T) => MutationTuple,
     directEdits?: DirectEditPosition[],
+    options?: MutationAdmissionOptions,
   ): Promise<{ raw: T; mutation: MutationResult }> {
     const run = async () => {
       const raw = await call();
@@ -1070,10 +1127,11 @@ export class ComputeCore {
         Promise.resolve(toMutationTuple(raw)),
         directEdits,
         operation,
+        options,
       );
       return { raw, mutation };
     };
-    return runSystemMutation(this._writeGate, run);
+    return runSystemMutation(this.ctx, this._writeGate, operation, run, options);
   }
 
   /**
@@ -1178,20 +1236,28 @@ export class ComputeCore {
   async structureChangeWithInvalidation(
     sheetId: SheetId,
     change: StructureChange,
+    options?: MutationAdmissionOptions,
   ): Promise<MutationResult> {
     let result: MutationResult;
     try {
-      result = await this.mutatePublic('compute_structure_change', () => {
-        // Mark old prefetch state stale after admission but before Rust shifts
-        // row/column structure. The awaited forced refresh below restores fresh
-        // buffers and bounds.
-        this.invalidateAllViewportPrefetch();
-        return this.transport.call<MutationTuple>('compute_structure_change', {
-          docId: this.docId,
-          sheetId,
-          change,
-        });
-      });
+      result = await this.mutatePublic(
+        'compute_structure_change',
+        () => {
+          // Mark old prefetch state stale after admission but before Rust shifts
+          // row/column structure. The awaited forced refresh below restores fresh
+          // buffers and bounds.
+          this.invalidateAllViewportPrefetch();
+          return this.transport
+            .call<[Uint8Array, MutationResult] | Uint8Array>('compute_structure_change', {
+              docId: this.docId,
+              sheetId,
+              change,
+            })
+            .then((raw) => normalizeBytesTuple(raw));
+        },
+        undefined,
+        options,
+      );
     } catch (error) {
       // Bridge call failed — Rust is truth. Re-read from engine to recover
       // correct VPI and viewport state (async bridge rule #4).
@@ -1632,7 +1698,7 @@ export class ComputeCore {
   // ===========================================================================
 
   async undo(): Promise<MutationResult> {
-    await this.admitPublicMutation('compute_undo');
+    await this.admitPublicMutation('compute_undo', { awaitMaterialization: false });
     const result = await this.mutateCore(
       this.transport.call<MutationTuple>('compute_undo', { docId: this.docId }),
       undefined,
@@ -1643,7 +1709,7 @@ export class ComputeCore {
   }
 
   async redo(): Promise<MutationResult> {
-    await this.admitPublicMutation('compute_redo');
+    await this.admitPublicMutation('compute_redo', { awaitMaterialization: false });
     const result = await this.mutateCore(
       this.transport.call<MutationTuple>('compute_redo', { docId: this.docId }),
       undefined,
@@ -1707,7 +1773,65 @@ export class ComputeCore {
    * STARTED phase. It can be called in CREATED (after createEngine) or later
    * phases to hydrate the Rust engine with persisted state.
    */
-  async syncApply(update: Uint8Array): Promise<MutationResult> {
+  /** Compatibility adapter for legacy raw sync bytes. Prefer syncApplyAdmitted for new callers. */
+  async syncApply(update: Uint8Array): Promise<MutationResult>;
+  async syncApply(
+    update: Uint8Array,
+    syncApplyContext: AdmittedSyncApplyContext,
+  ): Promise<MutationResult>;
+  async syncApply(
+    update: Uint8Array,
+    syncApplyContext?: AdmittedSyncApplyContext,
+  ): Promise<MutationResult> {
+    if (syncApplyContext) {
+      return this.syncApplyAdmitted(update, syncApplyContext);
+    }
+    const { mutationResult } = await this.syncApplyLegacyRaw(update);
+    return mutationResult;
+  }
+
+  async syncApplyLegacyRaw(update: Uint8Array): Promise<SyncApplyWithMetadataResult> {
+    const payloadHash = await sha256Hex(update, 'ComputeCore.syncApplyLegacyRaw');
+    const provenance = classifyLegacyRawUpdate({
+      payloadHash,
+      updateId: `legacy-raw:${payloadHash}`,
+    });
+    const validation = validateSyncUpdateProvenance(provenance, {
+      expectedPayloadHash: payloadHash,
+    });
+    return this.syncApplyAdmittedWithMetadata(
+      update,
+      createAdmittedSyncApplyContext({
+        source: 'document-sync-port',
+        docId: this.docId,
+        envelopeVersion: 'classified-raw',
+        updateId: provenance.updateIdentity.updateId,
+        payloadHash,
+        provenance,
+        validationDiagnostics: validation.diagnostics,
+      }),
+    );
+  }
+
+  async syncApplyAdmitted(
+    update: Uint8Array,
+    syncApplyContext: AdmittedSyncApplyContext,
+  ): Promise<MutationResult> {
+    const { mutationResult } = await this.syncApplyAdmittedWithMetadata(update, syncApplyContext);
+    return mutationResult;
+  }
+
+  async syncApplyWithMetadata(
+    update: Uint8Array,
+    syncApplyContext: AdmittedSyncApplyContext,
+  ): Promise<SyncApplyWithMetadataResult> {
+    return this.syncApplyAdmittedWithMetadata(update, syncApplyContext);
+  }
+
+  async syncApplyAdmittedWithMetadata(
+    update: Uint8Array,
+    syncApplyContext: AdmittedSyncApplyContext,
+  ): Promise<SyncApplyWithMetadataResult> {
     if (!this.engineCreated) {
       throw new BridgeError(
         'BRIDGE_NOT_STARTED',
@@ -1727,14 +1851,30 @@ export class ComputeCore {
     if (!this.isInitialized && update.length > 0) {
       this.coordinatorRegistry.markHydrationDeficit();
     }
-    const result = await this.mutateSystem('compute_apply_sync_update', () =>
-      this.transport.call<MutationTuple>('compute_apply_sync_update', {
-        docId: this.docId,
-        update,
-      }),
+    let syncApplyMetadata!: SyncApplyMutationMetadataWire;
+    const mutationResult = await this.mutateSystem(
+      'compute_apply_sync_update',
+      async () => {
+        const [viewportPatchesBinary, metadata] = await this.transport.call<
+          [Uint8Array, SyncApplyMutationMetadataWire]
+        >('compute_apply_sync_update', {
+          docId: this.docId,
+          update,
+          syncContext: toSyncApplyOperationContextWire(syncApplyContext),
+        });
+        syncApplyMetadata = metadata;
+        return [viewportPatchesBinary, metadata.mutationResult] as MutationTuple;
+      },
+      undefined,
+      {
+        operationContext: syncApplyContext?.operationContext,
+        syncApplyContext,
+      },
+      true,
     );
+    this.recordSyncApplyAdmissionDiagnostics(syncApplyContext);
     // Store the hydration result (overrides the empty init result)
-    this.initResult = result.recalc;
+    this.initResult = mutationResult.recalc;
     // Transition to HYDRATED if we were in CREATED or CONTEXT_SET
     if (this._phase === 'CREATED' || this._phase === 'CONTEXT_SET') {
       this._phase = 'HYDRATED';
@@ -1751,7 +1891,57 @@ export class ComputeCore {
       await this.fetchManager.forceRefreshAllViewports();
     }
 
-    return result;
+    return { mutationResult, metadata: syncApplyMetadata };
+  }
+
+  private recordSyncApplyAdmissionDiagnostics(syncApplyContext: AdmittedSyncApplyContext): void {
+    const provenance = syncApplyContext.provenance;
+    if (provenance.sourceKind === 'legacyRawUnknown') {
+      this.tryRecordSyncApplyDiagnostic({
+        code: 'provenance.legacyRawUnknown',
+        severity: 'warning',
+        command: 'compute_apply_sync_update',
+        message:
+          'Raw sync update admitted through the legacy adapter without authenticated provenance.',
+      });
+    }
+
+    const idempotencyKey = syncApplyIdempotencyKey(syncApplyContext);
+    const existing = this.syncApplyAdmissionLedger.get(idempotencyKey);
+    if (existing) {
+      existing.seenCount += 1;
+      this.tryRecordSyncApplyDiagnostic({
+        code: 'provenance.duplicateUpdate',
+        severity: 'warning',
+        command: 'compute_apply_sync_update',
+        message:
+          `Duplicate sync update admitted for ${idempotencyKey}; ` +
+          `firstOperationId=${existing.operationId}, seenCount=${existing.seenCount}.`,
+      });
+      return;
+    }
+
+    this.syncApplyAdmissionLedger.set(idempotencyKey, {
+      operationId: syncApplyContext.operationContext.operationId,
+      payloadHash: syncApplyContext.payloadHash,
+      sourceKind: provenance.sourceKind,
+      seenCount: 1,
+    });
+    if (this.syncApplyAdmissionLedger.size > SYNC_APPLY_ADMISSION_LEDGER_LIMIT) {
+      const oldestKey = this.syncApplyAdmissionLedger.keys().next().value;
+      if (oldestKey !== undefined) this.syncApplyAdmissionLedger.delete(oldestKey);
+    }
+  }
+
+  private tryRecordSyncApplyDiagnostic(
+    diagnostic: Parameters<typeof recordMutationAdmissionDiagnostic>[1],
+  ): void {
+    try {
+      recordMutationAdmissionDiagnostic(this.ctx, diagnostic);
+    } catch {
+      // Pre-context hydration may run with a DeferredContext. Admission still
+      // happens; diagnostics become observable once the document context exists.
+    }
   }
 
   async syncFullState(): Promise<Uint8Array> {
@@ -1859,4 +2049,32 @@ export class ComputeCore {
       console.error('[ComputeCore] Error syncing schema change to Rust:', err);
     }
   }
+}
+
+function syncApplyIdempotencyKey(context: AdmittedSyncApplyContext): string {
+  const identity = context.provenance.updateIdentity;
+  const origin =
+    identity.providerId ??
+    identity.stableOriginId ??
+    identity.providerRefId ??
+    identity.authorityRef ??
+    identity.roomId ??
+    identity.originKind;
+  const updateIdentity =
+    identity.updateId ?? identity.provenancePayloadHash ?? identity.payloadHash;
+  return [
+    context.provenance.sourceKind,
+    identity.originKind,
+    origin,
+    identity.epoch ?? 'no-epoch',
+    updateIdentity,
+  ].join(':');
+}
+
+async function sha256Hex(bytes: Uint8Array, caller: string): Promise<string> {
+  if (typeof globalThis.crypto?.subtle?.digest !== 'function') {
+    throw new Error(`${caller}: SHA-256 digest is unavailable`);
+  }
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', new Uint8Array(bytes));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }

@@ -1,8 +1,7 @@
 /**
  * FilterDropdownContent Component
  *
- * The content portion of the filter dropdown, extracted from FilterDropdown.tsx
- * for use with real DOM triggers (FilterButtonOverlay) instead of virtual anchors.
+ * Filter dropdown content used with real DOM triggers from FilterButtonOverlay.
  *
  * This component contains all the filter UI:
  * - Sort A-Z / Z-A buttons
@@ -17,11 +16,10 @@
  * follows columns on insert/delete. Layer 0's domain functions handle
  * all position resolution internally.
  *
- * @see FilterDropdown.tsx - Original component (still used for legacy virtual anchor path)
  * @see FilterButtonOverlay.tsx - Uses this content with real DOM triggers
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { FilterDropdownData, Worksheet } from '@mog-sdk/contracts/api';
 import { toCellId } from '@mog-sdk/contracts/cell-identity';
@@ -35,9 +33,11 @@ import { ConditionFilterPanel } from './ConditionFilterPanel';
 import { DateFiltersMenu } from './DateFiltersMenu';
 import { DateValueFilterList } from './DateValueFilterList';
 import { detectColumnType, getUniqueColors } from './filter-utils';
+import { FilterSubmenu } from './FilterSubmenu';
 import { NumberFiltersMenu } from './NumberFiltersMenu';
 import { SortByColorMenu } from './SortByColorMenu';
 import { TextFiltersMenu } from './TextFiltersMenu';
+import { Top10FilterDialog, type Top10FilterConfig } from './Top10FilterDialog';
 import { ValueFilterList, type ValueFilterSelection } from './ValueFilterList';
 
 export interface FilterDropdownContentProps {
@@ -57,7 +57,6 @@ export interface FilterDropdownContentProps {
 
 type FilterTab = 'values' | 'conditions';
 type ActiveSubmenu = 'number' | 'text' | 'date' | 'color' | 'sortByColor' | null;
-
 type FilterOperationReceipt = {
   readonly status: string;
   readonly effects: readonly unknown[];
@@ -177,8 +176,7 @@ async function sortFilterRange(
 /**
  * Filter dropdown content for AutoFilter header cells.
  *
- * This is the extracted content from FilterDropdown that can be used
- * with any Popover (virtual anchor or real DOM trigger).
+ * Filter dropdown content for AutoFilter header cells.
  */
 export function FilterDropdownContent({
   filterId,
@@ -190,6 +188,7 @@ export function FilterDropdownContent({
 }: FilterDropdownContentProps): React.ReactElement | null {
   const activeSheetId = useActiveSheetId();
   const wb = useWorkbook();
+  const contentRef = useRef<HTMLDivElement>(null);
 
   // Active tab state
   const [activeTab, setActiveTab] = useState<FilterTab>('values');
@@ -199,6 +198,8 @@ export function FilterDropdownContent({
 
   // Pending operator for condition panel (when switching from submenu)
   const [pendingOperator, setPendingOperator] = useState<FilterOperator | null>(null);
+
+  const [top10DialogOpen, setTop10DialogOpen] = useState(false);
 
   // Get filter state via Worksheet API (async)
   // Only store the fields we actually use (id + columnFilters)
@@ -212,7 +213,7 @@ export function FilterDropdownContent({
       return;
     }
     let stale = false;
-    const ws = wb.getSheetById(activeSheetId);
+    const ws = wb.getSheetById(activeSheetId) as unknown as Worksheet;
     void ws.filters.getInfo(filterId).then((info) => {
       if (!stale) setFilter(info ? { id: info.id, columnFilters: info.columnFilters } : null);
     });
@@ -255,7 +256,7 @@ export function FilterDropdownContent({
     }
     let stale = false;
     void (async () => {
-      const ws = wb.getSheetById(activeSheetId);
+      const ws = wb.getSheetById(activeSheetId) as unknown as Worksheet;
 
       const filterInfo = await ws.filters.getInfo(filterId);
       if (!filterInfo || stale) return;
@@ -337,7 +338,7 @@ export function FilterDropdownContent({
   const handleClearFilter = useCallback(() => {
     if (!filterId || !headerCellId || col === undefined) return;
 
-    const ws = wb.getSheetById(activeSheetId);
+    const ws = wb.getSheetById(activeSheetId) as unknown as Worksheet;
     void runFilterMutation(
       () => ws.filters.clearColumnFilter(col, filterId),
       () => {
@@ -348,11 +349,37 @@ export function FilterDropdownContent({
     );
   }, [wb, activeSheetId, filterId, headerCellId, col, onClose, onFilterApplied]);
 
+  const handleApplyTop10Filter = useCallback(
+    (config: Top10FilterConfig) => {
+      if (!filterId || !headerCellId || col === undefined) return;
+
+      const ws = wb.getSheetById(activeSheetId) as unknown as Worksheet;
+      void runFilterMutation(
+        () =>
+          ws.filters.setColumnFilter(
+            col,
+            {
+              type: 'top10',
+              topBottom: config,
+            },
+            filterId,
+          ),
+        () => {
+          setTop10DialogOpen(false);
+          onClose();
+          onFilterApplied?.();
+        },
+        'Top 10 filter did not apply.',
+      );
+    },
+    [wb, activeSheetId, filterId, headerCellId, col, onClose, onFilterApplied],
+  );
+
   // Sort handlers - integrated with sort system
   const handleSortAsc = useCallback(() => {
     if (!filterId || !headerCellId || col === undefined) return;
 
-    const ws = wb.getSheetById(activeSheetId);
+    const ws = wb.getSheetById(activeSheetId) as unknown as Worksheet;
     onClose();
     trackPendingFilterAction(async () => {
       await sortFilterRange(ws, filterId, col, 'asc');
@@ -363,7 +390,7 @@ export function FilterDropdownContent({
   const handleSortDesc = useCallback(() => {
     if (!filterId || !headerCellId || col === undefined) return;
 
-    const ws = wb.getSheetById(activeSheetId);
+    const ws = wb.getSheetById(activeSheetId) as unknown as Worksheet;
     onClose();
     trackPendingFilterAction(async () => {
       await sortFilterRange(ws, filterId, col, 'desc');
@@ -377,6 +404,56 @@ export function FilterDropdownContent({
     setActiveTab('conditions');
     setActiveSubmenu(null);
   }, []);
+
+  const openSubmenu = useCallback((submenu: NonNullable<ActiveSubmenu>) => {
+    setActiveSubmenu(submenu);
+  }, []);
+
+  const setSubmenuOpen = useCallback((submenu: NonNullable<ActiveSubmenu>, open: boolean) => {
+    setActiveSubmenu((current) => {
+      if (open) return submenu;
+      return current === submenu ? null : current;
+    });
+  }, []);
+
+  const handleSubmenuTriggerKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>, submenu: NonNullable<ActiveSubmenu>) => {
+      if (event.key === 'ArrowRight' || event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        event.stopPropagation();
+        openSubmenu(submenu);
+      }
+      if (event.key === 'ArrowLeft' || event.key === 'Escape') {
+        setActiveSubmenu(null);
+      }
+    },
+    [openSubmenu],
+  );
+
+  const focusMenuCommand = useCallback((position: 'first' | 'last') => {
+    const commands = Array.from(
+      contentRef.current?.querySelectorAll<HTMLButtonElement>(
+        'button[data-filter-menu-command="true"]:not(:disabled)',
+      ) ?? [],
+    ).filter((button) => button.offsetParent !== null);
+    const target = position === 'first' ? commands[0] : commands.at(-1);
+    target?.focus();
+  }, []);
+
+  const handleContentKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key === 'Home') {
+        event.preventDefault();
+        event.stopPropagation();
+        focusMenuCommand('first');
+      } else if (event.key === 'End') {
+        event.preventDefault();
+        event.stopPropagation();
+        focusMenuCommand('last');
+      }
+    },
+    [focusMenuCommand],
+  );
 
   // Don't render if missing required data (col is now required for correct API calls)
   if (!filterId || !headerCellId || col === undefined) {
@@ -398,65 +475,72 @@ export function FilterDropdownContent({
 
   return (
     <div
-      className="flex min-h-0 w-full flex-1 flex-col overflow-hidden"
+      ref={contentRef}
+      className="flex min-h-0 w-full flex-1 flex-col overflow-visible"
       data-testid="filter-dropdown-content"
+      onKeyDown={handleContentKeyDown}
     >
       {/* Sort buttons section */}
       <div className="shrink-0 border-b border-ss-border py-1">
-        <MenuItem onSelect={handleSortAsc}>
+        <MenuItem data-filter-menu-command="true" onSelect={handleSortAsc}>
           <span className="text-ss-text-secondary mr-2">↑</span>
           Sort A to Z
         </MenuItem>
-        <MenuItem onSelect={handleSortDesc}>
+        <MenuItem data-filter-menu-command="true" onSelect={handleSortDesc}>
           <span className="text-ss-text-secondary mr-2">↓</span>
           Sort Z to A
         </MenuItem>
 
         {/* Sort by Color - shown when column has colored cells */}
         {hasColors && (
-          <div className="relative">
-            <MenuItem
-              onSelect={() =>
-                setActiveSubmenu(activeSubmenu === 'sortByColor' ? null : 'sortByColor')
-              }
-              className="justify-between"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                className="text-ss-text-secondary mr-2"
+          <FilterSubmenu
+            open={activeSubmenu === 'sortByColor'}
+            onOpenChange={(open) => setSubmenuOpen('sortByColor', open)}
+            trigger={
+              <MenuItem
+                data-filter-menu-command="true"
+                data-filter-submenu-trigger="sortByColor"
+                aria-haspopup="menu"
+                aria-expanded={activeSubmenu === 'sortByColor'}
+                onSelect={() => openSubmenu('sortByColor')}
+                onMouseEnter={() => openSubmenu('sortByColor')}
+                onKeyDown={(event) => handleSubmenuTriggerKeyDown(event, 'sortByColor')}
+                className="justify-between"
               >
-                <rect x="4" y="4" width="6" height="6" rx="1" fill="#4CAF50" />
-                <rect x="4" y="14" width="6" height="6" rx="1" fill="#2196F3" />
-                <path
-                  d="M14 7h6M14 17h6M16 4l-2 3h4l-2 3M16 14l2 3h-4l2 3"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-              <span className="flex-1">Sort by Color</span>
-              <span className="text-ss-text-secondary">›</span>
-            </MenuItem>
-            {activeSubmenu === 'sortByColor' && (
-              <div className="absolute left-full top-0 ml-1 bg-ss-surface border border-ss-border rounded shadow-ss-lg z-ss-popover min-w-[180px]">
-                <SortByColorMenu
-                  sheetId={activeSheetId}
-                  filterId={filterId}
-                  headerCellId={brandedHeaderCellId}
-                  col={col}
-                  onClose={() => {
-                    setActiveSubmenu(null);
-                    onClose();
-                  }}
-                  onSortApplied={onFilterApplied}
-                />
-              </div>
-            )}
-          </div>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  className="text-ss-text-secondary mr-2"
+                >
+                  <rect x="4" y="4" width="6" height="6" rx="1" fill="#4CAF50" />
+                  <rect x="4" y="14" width="6" height="6" rx="1" fill="#2196F3" />
+                  <path
+                    d="M14 7h6M14 17h6M16 4l-2 3h4l-2 3M16 14l2 3h-4l2 3"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span className="flex-1">Sort by Color</span>
+                <span className="text-ss-text-secondary">›</span>
+              </MenuItem>
+            }
+          >
+            <SortByColorMenu
+              sheetId={activeSheetId}
+              filterId={filterId}
+              headerCellId={brandedHeaderCellId}
+              col={col}
+              onClose={() => {
+                setActiveSubmenu(null);
+                onClose();
+              }}
+              onSortApplied={onFilterApplied}
+            />
+          </FilterSubmenu>
         )}
       </div>
 
@@ -464,101 +548,124 @@ export function FilterDropdownContent({
       <div className="shrink-0 border-b border-ss-border py-1">
         {/* Number Filters - shown for number columns only */}
         {columnType === 'number' && (
-          <div className="relative">
-            <MenuItem
-              onSelect={() => setActiveSubmenu(activeSubmenu === 'number' ? null : 'number')}
-              className="justify-between"
-            >
-              <span className="flex-1">Number Filters</span>
-              <span className="text-ss-text-secondary">›</span>
-            </MenuItem>
-            {activeSubmenu === 'number' && (
-              <div className="absolute left-full top-0 ml-1 bg-ss-surface border border-ss-border rounded shadow-ss-lg z-ss-popover min-w-[180px]">
-                <NumberFiltersMenu
-                  filterId={filterId}
-                  headerCellId={brandedHeaderCellId}
-                  onClose={() => setActiveSubmenu(null)}
-                  onSwitchToConditions={handleSwitchToConditions}
-                />
-              </div>
-            )}
-          </div>
+          <FilterSubmenu
+            open={activeSubmenu === 'number'}
+            onOpenChange={(open) => setSubmenuOpen('number', open)}
+            trigger={
+              <MenuItem
+                data-filter-menu-command="true"
+                data-filter-submenu-trigger="number"
+                aria-haspopup="menu"
+                aria-expanded={activeSubmenu === 'number'}
+                onSelect={() => openSubmenu('number')}
+                onMouseEnter={() => openSubmenu('number')}
+                onKeyDown={(event) => handleSubmenuTriggerKeyDown(event, 'number')}
+                className="justify-between"
+              >
+                <span className="flex-1">Number Filters</span>
+                <span className="text-ss-text-secondary">›</span>
+              </MenuItem>
+            }
+          >
+            <NumberFiltersMenu
+              onClose={() => setActiveSubmenu(null)}
+              onSwitchToConditions={handleSwitchToConditions}
+              onOpenTop10={() => setTop10DialogOpen(true)}
+            />
+          </FilterSubmenu>
         )}
 
         {/* Date Filters - shown for date columns */}
         {columnType === 'date' && (
-          <div className="relative">
-            <MenuItem
-              onSelect={() => setActiveSubmenu(activeSubmenu === 'date' ? null : 'date')}
-              className="justify-between"
-            >
-              <span className="flex-1">Date Filters</span>
-              <span className="text-ss-text-secondary">›</span>
-            </MenuItem>
-            {activeSubmenu === 'date' && (
-              <div className="absolute left-full top-0 ml-1 bg-ss-surface border border-ss-border rounded shadow-ss-lg z-ss-popover min-w-[180px]">
-                <DateFiltersMenu
-                  filterId={filterId}
-                  headerCellId={brandedHeaderCellId}
-                  col={col}
-                  onClose={() => setActiveSubmenu(null)}
-                  onSwitchToConditions={handleSwitchToConditions}
-                  onFilterApplied={onFilterApplied}
-                />
-              </div>
-            )}
-          </div>
+          <FilterSubmenu
+            open={activeSubmenu === 'date'}
+            onOpenChange={(open) => setSubmenuOpen('date', open)}
+            trigger={
+              <MenuItem
+                data-filter-menu-command="true"
+                data-filter-submenu-trigger="date"
+                aria-haspopup="menu"
+                aria-expanded={activeSubmenu === 'date'}
+                onSelect={() => openSubmenu('date')}
+                onMouseEnter={() => openSubmenu('date')}
+                onKeyDown={(event) => handleSubmenuTriggerKeyDown(event, 'date')}
+                className="justify-between"
+              >
+                <span className="flex-1">Date Filters</span>
+                <span className="text-ss-text-secondary">›</span>
+              </MenuItem>
+            }
+          >
+            <DateFiltersMenu
+              filterId={filterId}
+              col={col}
+              onClose={() => setActiveSubmenu(null)}
+              onSwitchToConditions={handleSwitchToConditions}
+              onFilterApplied={onFilterApplied}
+            />
+          </FilterSubmenu>
         )}
 
         {/* Text Filters - shown for text and mixed columns */}
         {(columnType === 'text' || columnType === 'mixed') && (
-          <div className="relative">
-            <MenuItem
-              onSelect={() => setActiveSubmenu(activeSubmenu === 'text' ? null : 'text')}
-              className="justify-between"
-            >
-              <span className="flex-1">Text Filters</span>
-              <span className="text-ss-text-secondary">›</span>
-            </MenuItem>
-            {activeSubmenu === 'text' && (
-              <div className="absolute left-full top-0 ml-1 bg-ss-surface border border-ss-border rounded shadow-ss-lg z-ss-popover min-w-[180px]">
-                <TextFiltersMenu
-                  filterId={filterId}
-                  headerCellId={brandedHeaderCellId}
-                  onClose={() => setActiveSubmenu(null)}
-                  onSwitchToConditions={handleSwitchToConditions}
-                />
-              </div>
-            )}
-          </div>
+          <FilterSubmenu
+            open={activeSubmenu === 'text'}
+            onOpenChange={(open) => setSubmenuOpen('text', open)}
+            trigger={
+              <MenuItem
+                data-filter-menu-command="true"
+                data-filter-submenu-trigger="text"
+                aria-haspopup="menu"
+                aria-expanded={activeSubmenu === 'text'}
+                onSelect={() => openSubmenu('text')}
+                onMouseEnter={() => openSubmenu('text')}
+                onKeyDown={(event) => handleSubmenuTriggerKeyDown(event, 'text')}
+                className="justify-between"
+              >
+                <span className="flex-1">Text Filters</span>
+                <span className="text-ss-text-secondary">›</span>
+              </MenuItem>
+            }
+          >
+            <TextFiltersMenu
+              onClose={() => setActiveSubmenu(null)}
+              onSwitchToConditions={handleSwitchToConditions}
+            />
+          </FilterSubmenu>
         )}
 
         {/* Color Filters - shown when column has colored cells */}
         {hasColors && (
-          <div className="relative">
-            <MenuItem
-              onSelect={() => setActiveSubmenu(activeSubmenu === 'color' ? null : 'color')}
-              className="justify-between"
-            >
-              <span className="flex-1">Filter by Color</span>
-              <span className="text-ss-text-secondary">›</span>
-            </MenuItem>
-            {activeSubmenu === 'color' && (
-              <div className="absolute left-full top-0 ml-1 bg-ss-surface border border-ss-border rounded shadow-ss-lg z-ss-popover min-w-[180px]">
-                <ColorFiltersMenu
-                  sheetId={activeSheetId}
-                  filterId={filterId}
-                  headerCellId={brandedHeaderCellId}
-                  col={col}
-                  onClose={() => {
-                    setActiveSubmenu(null);
-                    onClose();
-                    onFilterApplied?.();
-                  }}
-                />
-              </div>
-            )}
-          </div>
+          <FilterSubmenu
+            open={activeSubmenu === 'color'}
+            onOpenChange={(open) => setSubmenuOpen('color', open)}
+            trigger={
+              <MenuItem
+                data-filter-menu-command="true"
+                data-filter-submenu-trigger="color"
+                aria-haspopup="menu"
+                aria-expanded={activeSubmenu === 'color'}
+                onSelect={() => openSubmenu('color')}
+                onMouseEnter={() => openSubmenu('color')}
+                onKeyDown={(event) => handleSubmenuTriggerKeyDown(event, 'color')}
+                className="justify-between"
+              >
+                <span className="flex-1">Filter by Color</span>
+                <span className="text-ss-text-secondary">›</span>
+              </MenuItem>
+            }
+          >
+            <ColorFiltersMenu
+              sheetId={activeSheetId}
+              filterId={filterId}
+              col={col}
+              onClose={() => {
+                setActiveSubmenu(null);
+                onClose();
+                onFilterApplied?.();
+              }}
+            />
+          </FilterSubmenu>
         )}
       </div>
 
@@ -611,6 +718,7 @@ export function FilterDropdownContent({
                 hasBlank={dropdownData.hasBlank}
                 blankCount={dropdownData.blankCount}
                 blankSelected={dropdownData.blankSelected}
+                preserveHiddenSearchSelections={currentCriteria?.type === 'value'}
                 onApply={handleApplyValueFilter}
                 onCancel={onClose}
               />
@@ -639,6 +747,11 @@ export function FilterDropdownContent({
           </button>
         </div>
       )}
+      <Top10FilterDialog
+        isOpen={top10DialogOpen}
+        onApply={handleApplyTop10Filter}
+        onCancel={() => setTop10DialogOpen(false)}
+      />
     </div>
   );
 }

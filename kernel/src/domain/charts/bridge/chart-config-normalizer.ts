@@ -11,7 +11,7 @@ import {
   normalizeImportedComboChart,
   normalizeImportedDisplayBlanksAsValue,
 } from '../../../bridges/compute/chart-import-normalization';
-import { resolveChartHeightCells, resolveChartWidthCells } from '../chart-size-units';
+import { resolveStoredChartHeightPoints, resolveStoredChartWidthPoints } from '../chart-size-units';
 import { isXYValueAxisChartType } from './axis-role';
 import {
   wireToAxisConfig,
@@ -352,21 +352,15 @@ export function toChartConfig(chart: ChartFloatingObject): ChartConfig {
   const displayBlanksAs = normalizeImportedDisplayBlanksAsValue(normalizedChart.displayBlanksAs) as
     | ChartConfig['displayBlanksAs']
     | undefined;
-  const widthCells =
-    layoutAuthority === 'chartSheet'
-      ? undefined
-      : resolveChartWidthCells(normalizedChart.widthCells, normalizedChart.width);
-  const heightCells =
-    layoutAuthority === 'chartSheet'
-      ? undefined
-      : resolveChartHeightCells(normalizedChart.heightCells, normalizedChart.height);
+  const widthPt = resolveStoredChartWidthPoints(normalizedChart) ?? 480;
+  const heightPt = resolveStoredChartHeightPoints(normalizedChart) ?? 225;
 
   return {
     type: narrowedType.type ?? 'bar',
     anchorRow: normalizedChart.anchor.anchorRow,
     anchorCol: normalizedChart.anchor.anchorCol,
-    width: widthCells ?? 4,
-    height: heightCells ?? 10,
+    width: widthPt,
+    height: heightPt,
     layoutAuthority,
     dataRange: normalizedChart.dataRange ?? '',
     seriesRange: normalizedChart.seriesRange,
@@ -439,8 +433,8 @@ export function toChartConfig(chart: ChartFloatingObject): ChartConfig {
       }
     ).stockSourceComposition,
     barShape: normalizedChart.barShape as ChartConfig['barShape'],
-    heightPt: normalizedChart.heightPt,
-    widthPt: normalizedChart.widthPt,
+    heightPt,
+    widthPt,
     leftPt: normalizedChart.leftPt,
     topPt: normalizedChart.topPt,
     wireframe: normalizedChart.wireframe,

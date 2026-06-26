@@ -10,6 +10,7 @@
 import type { SheetId } from '@mog-sdk/contracts/core';
 
 import type { DocumentContext } from '../../worksheet/operations/shared';
+import type { MutationAdmissionOptions } from '../../../bridges/compute';
 
 // =============================================================================
 // Sheet CRUD
@@ -22,8 +23,12 @@ import type { DocumentContext } from '../../worksheet/operations/shared';
  * @param name - Sheet name
  * @returns The new sheet ID
  */
-export async function createSheet(ctx: DocumentContext, name: string): Promise<SheetId> {
-  const result = await ctx.computeBridge.createSheet(name);
+export async function createSheet(
+  ctx: DocumentContext,
+  name: string,
+  options?: MutationAdmissionOptions,
+): Promise<SheetId> {
+  const result = await ctx.computeBridge.createSheet(name, options);
   return result.sheetId;
 }
 
@@ -35,9 +40,13 @@ export async function createSheet(ctx: DocumentContext, name: string): Promise<S
  * @param sheetId - Sheet to delete
  * @returns true if deleted, false if not (e.g., last sheet)
  */
-export async function removeSheet(ctx: DocumentContext, sheetId: SheetId): Promise<boolean> {
+export async function removeSheet(
+  ctx: DocumentContext,
+  sheetId: SheetId,
+  options?: MutationAdmissionOptions,
+): Promise<boolean> {
   try {
-    await ctx.computeBridge.removeSheet(sheetId);
+    await ctx.computeBridge.removeSheet(sheetId, options);
     return true;
   } catch {
     return false;
@@ -55,8 +64,9 @@ export async function renameSheet(
   ctx: DocumentContext,
   sheetId: SheetId,
   name: string,
+  options?: MutationAdmissionOptions,
 ): Promise<void> {
-  await ctx.computeBridge.renameSheet(sheetId, name);
+  await ctx.computeBridge.renameSheet(sheetId, name, options);
 }
 
 /**
@@ -71,9 +81,10 @@ export async function copySheet(
   ctx: DocumentContext,
   sourceSheetId: SheetId,
   newName: string,
+  options?: MutationAdmissionOptions,
 ): Promise<SheetId | null> {
   try {
-    const result = await ctx.computeBridge.copySheet(sourceSheetId, newName);
+    const result = await ctx.computeBridge.copySheet(sourceSheetId, newName, options);
     return result.newSheetId;
   } catch {
     return null;
@@ -96,9 +107,10 @@ export async function moveSheet(
   ctx: DocumentContext,
   sheetId: SheetId,
   toIndex: number,
+  options?: MutationAdmissionOptions,
 ): Promise<boolean> {
   try {
-    await ctx.computeBridge.moveSheet(sheetId, toIndex);
+    await ctx.computeBridge.moveSheet(sheetId, toIndex, options);
     return true;
   } catch {
     return false;

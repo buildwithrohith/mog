@@ -7,7 +7,7 @@
  * @module components/ChartEditor
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import type {
   AreaSubType,
@@ -18,6 +18,7 @@ import type {
   LineSubType,
   TrendlineType,
 } from '@mog/charts';
+import type { ChartAppModel, ChartAxisRole } from '@mog-sdk/contracts/data/chart-app-model';
 
 import { Button, Checkbox, Input, SectionLabel, Select, Tabs } from '@mog/shell/components/ui';
 import {
@@ -33,8 +34,16 @@ import {
 export interface ChartEditorProps {
   /** Chart configuration to edit */
   config: ChartConfig;
+  /** Semantic chart model for first-party controls. */
+  appModel?: ChartAppModel;
+  /** Initial tab to show when opening the editor. */
+  initialTab?: TabId;
   /** Called when config changes */
   onChange: (updates: Partial<ChartConfig>) => void;
+  /** Called when legend visibility changes semantically. */
+  onSetLegendVisible?: (visible: boolean) => void;
+  /** Called when an axis title changes semantically. */
+  onSetAxisTitle?: (axisRole: ChartAxisRole, title: string) => void;
   /** Called when editor should close */
   onClose: () => void;
   /** Called when chart should be deleted */
@@ -176,8 +185,43 @@ function ChartTypeIcon({ type }: { type: ChartType }) {
 // Component
 // =============================================================================
 
-export function ChartEditor({ config, onChange, onClose, onDelete }: ChartEditorProps) {
-  const [activeTab, setActiveTab] = useState<TabId>('data');
+export function ChartEditor({
+  config,
+  appModel,
+  initialTab = 'data',
+  onChange,
+  onSetLegendVisible,
+  onSetAxisTitle,
+  onClose,
+  onDelete,
+}: ChartEditorProps) {
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
+  const resolvedLegendVisible = appModel?.legend.visible ?? config.legend?.show !== false;
+  const resolvedCategoryAxisTitle = appModel
+    ? (appModel.axes.category.title ?? '')
+    : (config.axis?.categoryAxis?.title ?? config.axis?.xAxis?.title ?? '');
+  const resolvedValueAxisTitle = appModel
+    ? (appModel.axes.value.title ?? '')
+    : (config.axis?.valueAxis?.title ?? config.axis?.yAxis?.title ?? '');
+  const [legendVisibleDraft, setLegendVisibleDraft] = useState(resolvedLegendVisible);
+  const [categoryAxisTitleDraft, setCategoryAxisTitleDraft] = useState(resolvedCategoryAxisTitle);
+  const [valueAxisTitleDraft, setValueAxisTitleDraft] = useState(resolvedValueAxisTitle);
+
+  useEffect(() => {
+    setLegendVisibleDraft(resolvedLegendVisible);
+  }, [resolvedLegendVisible]);
+
+  useEffect(() => {
+    setCategoryAxisTitleDraft(resolvedCategoryAxisTitle);
+  }, [resolvedCategoryAxisTitle]);
+
+  useEffect(() => {
+    setValueAxisTitleDraft(resolvedValueAxisTitle);
+  }, [resolvedValueAxisTitle]);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   // Handlers
   const handleTitleChange = useCallback(
@@ -211,6 +255,11 @@ export function ChartEditor({ config, onChange, onClose, onDelete }: ChartEditor
 
   const handleLegendShowChange = useCallback(
     (checked: boolean) => {
+      setLegendVisibleDraft(checked);
+      if (onSetLegendVisible) {
+        onSetLegendVisible(checked);
+        return;
+      }
       onChange({
         legend: normalizeLegendConfig({
           ...config.legend,
@@ -219,7 +268,7 @@ export function ChartEditor({ config, onChange, onClose, onDelete }: ChartEditor
         }),
       });
     },
-    [config.legend, onChange],
+    [config.legend, onChange, onSetLegendVisible],
   );
 
   const handleLegendPositionChange = useCallback(
@@ -257,30 +306,56 @@ export function ChartEditor({ config, onChange, onClose, onDelete }: ChartEditor
     [config.colors, onChange],
   );
 
-  const handleAxisTitleChange = useCallback(
-    (axis: 'xAxis' | 'yAxis', title: string) => {
+  const handleAxisTitleChange = useCallback((axisRole: 'category' | 'value', title: string) => {
+    if (axisRole === 'category') {
+      setCategoryAxisTitleDraft(title);
+    } else {
+      setValueAxisTitleDraft(title);
+    }
+  }, []);
+
+  const commitAxisTitle = useCallback(
+    (axisRole: 'category' | 'value', title: string) => {
+      if (onSetAxisTitle) {
+        onSetAxisTitle(axisRole, title);
+        return;
+      }
+      const axis = axisRole === 'category' ? 'categoryAxis' : 'valueAxis';
+      const alias = axisRole === 'category' ? 'xAxis' : 'yAxis';
+      const nextAxis = {
+        ...(config.axis?.[axis] ?? config.axis?.[alias]),
+        title,
+      };
       onChange({
         axis: normalizeAxisConfig({
           ...config.axis,
-          [axis]: {
-            ...config.axis?.[axis],
-            title,
-          },
+          [axis]: nextAxis,
+          [alias]: nextAxis,
         }),
       });
     },
-    [config.axis, onChange],
+    [config.axis, onChange, onSetAxisTitle],
   );
 
+  const handleAxisTitleKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      event.currentTarget.blur();
+    }
+  }, []);
+
   const handleGridLinesChange = useCallback(
-    (axis: 'xAxis' | 'yAxis', show: boolean) => {
+    (axisRole: 'category' | 'value', show: boolean) => {
+      const axis = axisRole === 'category' ? 'categoryAxis' : 'valueAxis';
+      const alias = axisRole === 'category' ? 'xAxis' : 'yAxis';
+      const nextAxis = {
+        ...(config.axis?.[axis] ?? config.axis?.[alias]),
+        gridLines: show,
+      };
       onChange({
         axis: normalizeAxisConfig({
           ...config.axis,
-          [axis]: {
-            ...config.axis?.[axis],
-            gridLines: show,
-          },
+          [axis]: nextAxis,
+          [alias]: nextAxis,
         }),
       });
     },
@@ -288,14 +363,18 @@ export function ChartEditor({ config, onChange, onClose, onDelete }: ChartEditor
   );
 
   const handleMinorGridLinesChange = useCallback(
-    (axis: 'xAxis' | 'yAxis', show: boolean) => {
+    (axisRole: 'category' | 'value', show: boolean) => {
+      const axis = axisRole === 'category' ? 'categoryAxis' : 'valueAxis';
+      const alias = axisRole === 'category' ? 'xAxis' : 'yAxis';
+      const nextAxis = {
+        ...(config.axis?.[axis] ?? config.axis?.[alias]),
+        minorGridLines: show,
+      };
       onChange({
         axis: normalizeAxisConfig({
           ...config.axis,
-          [axis]: {
-            ...config.axis?.[axis],
-            minorGridLines: show,
-          },
+          [axis]: nextAxis,
+          [alias]: nextAxis,
         }),
       });
     },
@@ -538,7 +617,7 @@ export function ChartEditor({ config, onChange, onClose, onDelete }: ChartEditor
           <>
             <div className="mb-4">
               <Checkbox
-                checked={config.legend?.show !== false}
+                checked={legendVisibleDraft}
                 onChange={handleLegendShowChange}
                 label="Show legend"
               />
@@ -552,7 +631,7 @@ export function ChartEditor({ config, onChange, onClose, onDelete }: ChartEditor
                 value={config.legend?.position || 'bottom'}
                 onChange={handleLegendPositionChange}
                 options={LEGEND_POSITIONS.map((pos) => ({ value: pos.value, label: pos.label }))}
-                disabled={!config.legend?.show}
+                disabled={!legendVisibleDraft}
               />
             </div>
           </>
@@ -565,8 +644,10 @@ export function ChartEditor({ config, onChange, onClose, onDelete }: ChartEditor
                 X-Axis Title
               </SectionLabel>
               <Input
-                value={config.axis?.xAxis?.title || ''}
-                onChange={(e) => handleAxisTitleChange('xAxis', e.target.value)}
+                value={categoryAxisTitleDraft}
+                onChange={(e) => handleAxisTitleChange('category', e.target.value)}
+                onBlur={(e) => commitAxisTitle('category', e.target.value)}
+                onKeyDown={handleAxisTitleKeyDown}
                 placeholder="X-axis title"
               />
             </div>
@@ -576,43 +657,57 @@ export function ChartEditor({ config, onChange, onClose, onDelete }: ChartEditor
                 Y-Axis Title
               </SectionLabel>
               <Input
-                value={config.axis?.yAxis?.title || ''}
-                onChange={(e) => handleAxisTitleChange('yAxis', e.target.value)}
+                value={valueAxisTitleDraft}
+                onChange={(e) => handleAxisTitleChange('value', e.target.value)}
+                onBlur={(e) => commitAxisTitle('value', e.target.value)}
+                onKeyDown={handleAxisTitleKeyDown}
                 placeholder="Y-axis title"
               />
             </div>
 
             <div className="mb-4">
               <Checkbox
-                checked={config.axis?.xAxis?.gridLines || false}
-                onChange={(checked) => handleGridLinesChange('xAxis', checked)}
+                checked={
+                  config.axis?.categoryAxis?.gridLines ?? config.axis?.xAxis?.gridLines ?? false
+                }
+                onChange={(checked) => handleGridLinesChange('category', checked)}
                 label="X-axis grid lines"
               />
             </div>
 
             <div className="mb-4">
               <Checkbox
-                checked={config.axis?.xAxis?.minorGridLines || false}
-                onChange={(checked) => handleMinorGridLinesChange('xAxis', checked)}
+                checked={
+                  config.axis?.categoryAxis?.minorGridLines ??
+                  config.axis?.xAxis?.minorGridLines ??
+                  false
+                }
+                onChange={(checked) => handleMinorGridLinesChange('category', checked)}
                 label="X-axis minor grid lines"
-                disabled={!config.axis?.xAxis?.gridLines}
+                disabled={!(config.axis?.categoryAxis?.gridLines ?? config.axis?.xAxis?.gridLines)}
               />
             </div>
 
             <div className="mb-4">
               <Checkbox
-                checked={config.axis?.yAxis?.gridLines !== false}
-                onChange={(checked) => handleGridLinesChange('yAxis', checked)}
+                checked={config.axis?.valueAxis?.gridLines ?? config.axis?.yAxis?.gridLines ?? true}
+                onChange={(checked) => handleGridLinesChange('value', checked)}
                 label="Y-axis grid lines"
               />
             </div>
 
             <div className="mb-4">
               <Checkbox
-                checked={config.axis?.yAxis?.minorGridLines || false}
-                onChange={(checked) => handleMinorGridLinesChange('yAxis', checked)}
+                checked={
+                  config.axis?.valueAxis?.minorGridLines ??
+                  config.axis?.yAxis?.minorGridLines ??
+                  false
+                }
+                onChange={(checked) => handleMinorGridLinesChange('value', checked)}
                 label="Y-axis minor grid lines"
-                disabled={config.axis?.yAxis?.gridLines === false}
+                disabled={
+                  (config.axis?.valueAxis?.gridLines ?? config.axis?.yAxis?.gridLines) === false
+                }
               />
             </div>
           </>

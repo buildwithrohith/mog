@@ -25,13 +25,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { SCROLL_BUFFER_COLS, SCROLL_BUFFER_ROWS } from '../hooks/useScrollDimensions';
 import { useCoordinator } from '../../../hooks/shared/use-coordinator';
+import type { GridViewportLayoutSettings } from './viewport-size';
 
 export interface ScrollContainerProps {
-  workbookSettings: {
-    showVerticalScrollbar: boolean;
-    showHorizontalScrollbar: boolean;
-    autoHideScrollBars?: boolean;
-  };
+  viewportLayout: GridViewportLayoutSettings;
+  autoHideScrollBars?: boolean;
   /** Total scrollable content width (px) — base used-range content size */
   scrollWidth: number;
   /** Total scrollable content height (px) — base used-range content size */
@@ -116,12 +114,14 @@ export function computeScrollbarDragPosition(params: {
  * Scrollbar position is a pure function of InputCoordinator scroll state.
  */
 export function ScrollContainer({
-  workbookSettings,
+  viewportLayout,
+  autoHideScrollBars,
   scrollWidth: baseScrollWidth,
   scrollHeight: baseScrollHeight,
 }: ScrollContainerProps) {
   const coordinator = useCoordinator();
   const inputCoordinator = coordinator.input.inputCoordinator;
+  const reservedRightInset = Math.max(0, viewportLayout.reservedRightInset);
 
   // Current scroll position from InputCoordinator
   const [scrollX, setScrollX] = useState(0);
@@ -131,7 +131,7 @@ export function ScrollContainer({
   const [isActive, setIsActive] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const autoHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const autoHideEnabled = workbookSettings.autoHideScrollBars ?? false;
+  const autoHideEnabled = autoHideScrollBars ?? false;
 
   // Subscribe to scroll changes from InputCoordinator
   useEffect(() => {
@@ -177,6 +177,8 @@ export function ScrollContainer({
   // Compute scroll bounds for thumb positioning
   const maxScrollX = Math.max(0, scrollWidth - viewportWidth);
   const maxScrollY = Math.max(0, scrollHeight - viewportHeight);
+  const hasVerticalScrollbar = viewportLayout.showVerticalScrollbar && maxScrollY > 0;
+  const hasHorizontalScrollbar = viewportLayout.showHorizontalScrollbar && maxScrollX > 0;
 
   // Sync physics bounds with scrollbar UI
   // This ensures InputCoordinator's scroll physics uses the same bounds
@@ -191,7 +193,7 @@ export function ScrollContainer({
   return (
     <>
       {/* Vertical scrollbar */}
-      {workbookSettings.showVerticalScrollbar && maxScrollY > 0 && (
+      {hasVerticalScrollbar && (
         <ScrollbarTrack
           orientation="vertical"
           scrollPosition={scrollY}
@@ -199,18 +201,21 @@ export function ScrollContainer({
           viewportSize={viewportHeight}
           contentSize={scrollHeight}
           isVisible={isVisible}
+          reservedRightInset={reservedRightInset}
+          crossAxisScrollbarSize={hasHorizontalScrollbar ? SCROLL_BAR_WIDTH : 0}
           onScroll={(position) => inputCoordinator.scrollTo(scrollX, position)}
           onHoverChange={setIsHovered}
         />
       )}
 
       {/* Split Box - Vertical (placeholder for future split view) */}
-      {workbookSettings.showVerticalScrollbar && (
+      {viewportLayout.showVerticalScrollbar && (
         <div
           className="split-box-vertical absolute pointer-events-auto"
+          data-no-grid-pointer="true"
           style={{
             top: 0,
-            right: 0,
+            right: reservedRightInset,
             width: SCROLL_BAR_WIDTH,
             height: 8,
             cursor: 'row-resize',
@@ -227,7 +232,7 @@ export function ScrollContainer({
       )}
 
       {/* Horizontal scrollbar */}
-      {workbookSettings.showHorizontalScrollbar && maxScrollX > 0 && (
+      {hasHorizontalScrollbar && (
         <ScrollbarTrack
           orientation="horizontal"
           scrollPosition={scrollX}
@@ -235,15 +240,18 @@ export function ScrollContainer({
           viewportSize={viewportWidth}
           contentSize={scrollWidth}
           isVisible={isVisible}
+          reservedRightInset={reservedRightInset}
+          crossAxisScrollbarSize={hasVerticalScrollbar ? SCROLL_BAR_WIDTH : 0}
           onScroll={(position) => inputCoordinator.scrollTo(position, scrollY)}
           onHoverChange={setIsHovered}
         />
       )}
 
       {/* Split Box - Horizontal (placeholder for future split view) */}
-      {workbookSettings.showHorizontalScrollbar && (
+      {viewportLayout.showHorizontalScrollbar && (
         <div
           className="split-box-horizontal absolute pointer-events-auto"
+          data-no-grid-pointer="true"
           style={{
             bottom: 0,
             left: 0,
@@ -276,6 +284,8 @@ interface ScrollbarTrackProps {
   viewportSize: number;
   contentSize: number;
   isVisible: boolean;
+  reservedRightInset: number;
+  crossAxisScrollbarSize: number;
   onScroll: (position: number) => void;
   onHoverChange: (hovered: boolean) => void;
 }
@@ -287,6 +297,8 @@ function ScrollbarTrack({
   viewportSize,
   contentSize,
   isVisible,
+  reservedRightInset,
+  crossAxisScrollbarSize,
   onScroll,
   onHoverChange,
 }: ScrollbarTrackProps) {
@@ -298,7 +310,7 @@ function ScrollbarTrack({
   const isVertical = orientation === 'vertical';
 
   // Compute thumb geometry
-  const trackLength = isVertical ? viewportHeightFn(viewportSize) : viewportWidthFn(viewportSize);
+  const trackLength = getScrollbarTrackLength(viewportSize, crossAxisScrollbarSize);
   const thumbRatio = contentSize > 0 ? viewportSize / contentSize : 1;
   const thumbSize = Math.max(MIN_THUMB_SIZE, Math.round(trackLength * thumbRatio));
   const scrollableTrack = trackLength - thumbSize;
@@ -376,8 +388,8 @@ function ScrollbarTrack({
     ? {
         position: 'absolute',
         top: 0,
-        right: 0,
-        bottom: SCROLL_BAR_WIDTH,
+        right: reservedRightInset,
+        bottom: crossAxisScrollbarSize,
         width: SCROLL_BAR_WIDTH,
         boxSizing: 'border-box',
         backgroundColor: SCROLLBAR_TRACK_COLOR,
@@ -389,7 +401,7 @@ function ScrollbarTrack({
         position: 'absolute',
         left: 0,
         bottom: 0,
-        right: SCROLL_BAR_WIDTH,
+        right: crossAxisScrollbarSize + reservedRightInset,
         height: SCROLL_BAR_WIDTH,
         boxSizing: 'border-box',
         backgroundColor: SCROLLBAR_TRACK_COLOR,
@@ -426,6 +438,7 @@ function ScrollbarTrack({
       ref={trackRef}
       className="pointer-events-auto"
       style={trackStyle}
+      data-no-grid-pointer="true"
       onClick={handleTrackClick}
       onMouseEnter={() => onHoverChange(true)}
       onMouseLeave={() => onHoverChange(false)}
@@ -446,12 +459,9 @@ function ScrollbarTrack({
 // Helpers — track length accounting for scrollbar intersection area
 // =============================================================================
 
-/** Effective vertical track length (full height minus horizontal scrollbar) */
-function viewportHeightFn(viewportSize: number): number {
-  return Math.max(0, viewportSize - SCROLL_BAR_WIDTH);
-}
-
-/** Effective horizontal track length (full width minus vertical scrollbar) */
-function viewportWidthFn(viewportSize: number): number {
-  return Math.max(0, viewportSize - SCROLL_BAR_WIDTH);
+export function getScrollbarTrackLength(
+  viewportSize: number,
+  crossAxisScrollbarSize: number,
+): number {
+  return Math.max(0, viewportSize - crossAxisScrollbarSize);
 }

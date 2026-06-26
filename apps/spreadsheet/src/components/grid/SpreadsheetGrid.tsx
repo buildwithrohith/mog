@@ -70,12 +70,15 @@ import { ProtectionDialogs } from './dialogs/ProtectionDialogs';
 import { useEditorIntegration } from './effects/useEditorIntegration';
 import { useGroupingIntegration } from './effects/useGroupingIntegration';
 import { useInputListeners } from './effects/useInputListeners';
+import { usePivotAwareGridViewportLayout } from './effects/usePivotAwareGridViewportLayout';
 import { useRenderContextConfig } from './effects/useRenderContextConfig';
 import { useRendererDependencies } from './effects/useRendererDependencies';
 import { useRendererLifecycle } from './effects/useRendererLifecycle';
 import { useRendererSync } from './effects/useRendererSync';
 import { useRendererViewRestore } from './effects/useRendererViewRestore';
+import { useSheetZoomState } from './effects/useSheetZoomState';
 import { useSparklineCFIntegration } from './effects/useSparklineCFIntegration';
+import { createLiveViewportReader } from './hooks/liveViewportReader';
 import { useCellDataCallbacks } from './hooks/useCellDataCallbacks';
 // NOTE: useInputMessageTooltip is now called internally by InputMessageOverlay
 // for render isolation - see docs/ARCHITECTURE-CHECKLIST.md Section 15
@@ -166,11 +169,12 @@ export const SpreadsheetGrid = memo(function SpreadsheetGrid({
   const wb = useWorkbook();
   const activeSheetId = useActiveSheetId();
   const ws = wb.getSheetById(activeSheetId);
+  const getViewportForSheet = useCallback(
+    (sheetId: SheetId) => wb.getSheetById(sheetId).viewport,
+    [wb],
+  );
 
-  // PERFORMANCE: Subscribe only to active sheet's zoom level to prevent re-renders
-  // when other sheets' zoom levels change
-  const currentZoom = useUIStore((s) => s.zoomLevels[activeSheetId] ?? 1.0);
-  const setZoomLevel = useUIStore((s) => s.setZoomLevel);
+  const { currentZoom, setZoomLevel, persistZoomLevel } = useSheetZoomState(wb, activeSheetId);
   const openEditSparklineDialog = useUIStore((s) => s.openEditSparklineDialog);
 
   // Get UI Store API for per-sheet scroll position restoration
@@ -277,22 +281,26 @@ export const SpreadsheetGrid = memo(function SpreadsheetGrid({
     [groupingState.columnGroups, groupingState.groupingConfig],
   );
 
-  // Context menu state — openContextMenu stores hit-test target info,
-  // Radix ContextMenu owns open/close state and positioning.
   const openContextMenu = useUIStore((s) => s.openContextMenu);
   const closeContextMenu = useUIStore((s) => s.closeContextMenu);
   const closeObjectContextMenu = useUIStore((s) => s.closeObjectContextMenu);
 
-  // Get workbook settings for scrollbar visibility (Issue 7: View Options)
   const { settings: workbookSettings } = useWorkbookSettings();
+  const showHorizontalScrollbar = workbookSettings.showHorizontalScrollbar;
+  const showVerticalScrollbar = workbookSettings.showVerticalScrollbar;
+  const autoHideScrollBars = workbookSettings.autoHideScrollBars;
+  const gridViewportLayout = usePivotAwareGridViewportLayout({
+    showHorizontalScrollbar,
+    showVerticalScrollbar,
+    containerRef,
+    resize: rendererActions.resize,
+    coordinator,
+    isReady,
+  });
 
-  // Get sheet view options for header visibility (Canvas Interactive Element Layer)
-  // Used to compute header offset for CanvasInteractiveOverlay positioning
   const { viewOptions } = useSheetViewOptions(activeSheetId);
   const { rendererSkin } = useSpreadsheetDisplayMode();
 
-  // Compute header offset for CanvasInteractiveOverlay
-  // The overlay needs to be positioned after row/column headers
   const headerOffset = useMemo(() => {
     const { rowHeaderWidth, colHeaderHeight } = getEffectiveHeaderDimensions({
       showRowHeaders: viewOptions.showRowHeaders,
@@ -301,7 +309,6 @@ export const SpreadsheetGrid = memo(function SpreadsheetGrid({
     return { x: rowHeaderWidth, y: colHeaderHeight };
   }, [viewOptions.showRowHeaders, viewOptions.showColumnHeaders]);
 
-  // Protection alert dialog state
   // @see STREAM-H-EDITOR-PROTECTION.md
   const protectionAlertOpen = useUIStore((s) => s.protectionAlertOpen);
   const protectionAlertMessage = useUIStore((s) => s.protectionAlertMessage);
@@ -381,14 +388,11 @@ export const SpreadsheetGrid = memo(function SpreadsheetGrid({
     containerRef,
   });
 
-  // Remote cursors from collab sidecar presence
   const remoteCursors = useRemoteCursors();
 
-  // ViewportPositionIndex + ViewportMergeIndex created by renderer execution.
-  // We pass the viewport directly to useRendererDependencies.
   const activeViewport = useMemo(() => {
-    return wb.getSheetById(activeSheetId).viewport;
-  }, [wb, activeSheetId]);
+    return createLiveViewportReader(() => getViewportForSheet(activeSheetId));
+  }, [getViewportForSheet, activeSheetId]);
 
   // NOTE: useInputMessageTooltip is now called internally by InputMessageOverlay
   // for render isolation - see docs/ARCHITECTURE-CHECKLIST.md Section 15
@@ -402,17 +406,10 @@ export const SpreadsheetGrid = memo(function SpreadsheetGrid({
   // Use domain modules (Cells, Properties)
   // ==========================================================================
   const { getCellValue, getCellFormat, getSparklineRenderData } = useCellDataCallbacks({
-    viewport: ws.viewport,
+    getViewport: getViewportForSheet,
     sparklineManager,
   });
 
-  // ==========================================================================
-  // SET RENDERER DEPENDENCIES EFFECT
-  // Provides viewport + data callbacks to the state machine so SheetView
-  // (created in the 'initializing' state) can resolve the current sheet's
-  // ViewportReader and pull cell data on demand.
-  // Must run before MOUNT so dependencies are available when machine needs them.
-  // ==========================================================================
   // Sync SheetStateProvider backed by the kernel state mirror.
   // The mirror is populated by `MutationResultHandler.applyAndNotify` BEFORE
   // any event emission, so reads are correct on first paint and on every
@@ -446,14 +443,13 @@ export const SpreadsheetGrid = memo(function SpreadsheetGrid({
     rendererSkin,
   });
 
-  // Use extracted hook for renderer dependencies
   useRendererDependencies({
     coordinator,
     viewport: activeViewport,
     getCellValue,
     getCellFormat,
     activeSheetId,
-    workbookSettings,
+    viewportLayout: gridViewportLayout,
     sheetStateProvider,
     rendererSkin,
     uiStoreApi,
@@ -468,10 +464,6 @@ export const SpreadsheetGrid = memo(function SpreadsheetGrid({
   // ==========================================================================
   // Get page break preview mode from UI store
   const pageBreakPreviewMode = useUIStore((s) => s.pageBreakPreviewMode);
-
-  // Callback to check if a cell is a checkbox cell
-  // Use ViewportReader schema_type for sync checkbox detection.
-  // hasValidationErrors is now provided by useCellMetadataCache
 
   // Callback to get resolved table range (Cell Identity Model)
   // Inlined - resolveTableRange just returns table.range ?? null
@@ -762,8 +754,9 @@ export const SpreadsheetGrid = memo(function SpreadsheetGrid({
     getCellPositionForTrace,
     uiStoreApi,
 
-    binaryCellReader: ws.viewport.binaryCellReader,
-    binaryCellReaderForViewport: ws.viewport.binaryCellReaderForViewport,
+    getBinaryCellReader: () => getViewportForSheet(activeSheetId).binaryCellReader,
+    getBinaryCellReaderForViewport: (viewportId) =>
+      getViewportForSheet(activeSheetId).binaryCellReaderForViewport?.(viewportId),
   });
 
   // Use extracted hook for editor integration (checkbox toggle)
@@ -801,15 +794,14 @@ export const SpreadsheetGrid = memo(function SpreadsheetGrid({
     layoutReady: rendererActions.layoutReady,
   });
 
-  // Use extracted hook for renderer sync (combines multiple effects)
-  // PERFORMANCE: Uses granular hooks instead of full useRenderer()
   useRendererSync({
     containerRef,
     isReady,
     currentSheetId: rendererSheetId,
     activeSheetId,
     currentZoom,
-    workbookSettings,
+    showHorizontalScrollbar,
+    showVerticalScrollbar,
     coordinator,
     resize: rendererActions.resize,
     suspend: rendererActions.suspend,
@@ -817,6 +809,7 @@ export const SpreadsheetGrid = memo(function SpreadsheetGrid({
     switchSheet: rendererActions.switchSheet,
     setZoom: rendererActions.setZoom,
     setZoomLevel,
+    persistZoomLevel,
     unmount: rendererActions.unmount,
   });
 
@@ -913,9 +906,9 @@ export const SpreadsheetGrid = memo(function SpreadsheetGrid({
             </div>
           )}
 
-          {/* ScrollContainer - scrollbars and split boxes */}
           <ScrollContainer
-            workbookSettings={workbookSettings}
+            viewportLayout={gridViewportLayout}
+            autoHideScrollBars={autoHideScrollBars}
             scrollWidth={scrollWidth}
             scrollHeight={scrollHeight}
           />

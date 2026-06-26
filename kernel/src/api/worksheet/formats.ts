@@ -13,14 +13,15 @@ import type {
   CellRange,
   FormatChangeResult,
   ResolvedCellFormat,
-  SheetId,
   WorksheetFormats,
 } from '@mog-sdk/contracts/api';
-import type { NumberFormatType } from '@mog-sdk/contracts/core';
+import type { NumberFormatType, SheetId } from '@mog-sdk/contracts/core';
 import { MAX_COLS, MAX_ROWS } from '@mog-sdk/contracts/core';
+import type { VersionOperationContext } from '@mog-sdk/contracts/versioning';
 import { detectFormatType } from '@mog/spreadsheet-utils/number-formats';
 import { KernelError, unwrap } from '../../errors';
 
+import type { MutationAdmissionOptions } from '../../bridges/compute';
 import type { DocumentContext } from '../../context';
 import { resolveCell, resolveCellArgs } from '../internal/address-resolver';
 import {
@@ -28,6 +29,7 @@ import {
   setNumberFormatLocal as setNumFmtLocal,
 } from '../internal/number-format-locale';
 import { normalizeRange, parseCellRange } from '../internal/utils';
+import { createVersionOperationContext } from '../internal/version-operation-context';
 import {
   applyFormatToRange,
   getCellProperties as getCellPropertiesOp,
@@ -40,6 +42,13 @@ import {
   setRowProperties as setRowPropertiesOp,
 } from './operations/format-operations';
 import { assertFormatOperationsAllowed, assertFormatRangesAllowed } from './protection-guards';
+
+type FormatMutationOptions = MutationAdmissionOptions & {
+  readonly operationContext: VersionOperationContext;
+};
+
+const FORMAT_DOMAIN_IDS = ['formats'] as const;
+const DIRECT_CELL_FORMAT_DOMAIN_IDS = ['cells.formats.direct'] as const;
 
 export class WorksheetFormatsImpl implements WorksheetFormats {
   constructor(
@@ -63,6 +72,7 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
       this.sheetId,
       [[row, col, row, col]],
       format,
+      createDirectFormatMutationOptions(this.ctx, this.sheetId, 'formats.set'),
     );
     return { cellCount: result.propertyChanges?.length ?? 0 };
   }
@@ -83,6 +93,7 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
       this.sheetId,
       [[n.startRow, n.startCol, n.endRow, n.endCol]],
       b,
+      createDirectFormatMutationOptions(this.ctx, this.sheetId, 'formats.setRange'),
     );
     return { cellCount: result.propertyChanges?.length ?? 0 };
   }
@@ -90,17 +101,26 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
   async setRanges(ranges: CellRange[], format: CellFormat): Promise<void> {
     this._ensureWritable('formats.setRanges');
     await assertFormatRangesAllowed(this.ctx, this.sheetId, ranges);
+    const nextOptions = createGroupedFormatMutationOptions(
+      this.ctx,
+      this.sheetId,
+      'formats.setRanges',
+    );
     const boundedRanges: Array<[number, number, number, number]> = [];
     const promises: Promise<unknown>[] = [];
 
     for (const range of ranges) {
       if (range.isFullColumn) {
         for (let col = range.startCol; col <= range.endCol; col++) {
-          promises.push(this.ctx.computeBridge.setColFormat(this.sheetId, col, format));
+          promises.push(
+            this.ctx.computeBridge.setColFormat(this.sheetId, col, format, nextOptions()),
+          );
         }
       } else if (range.isFullRow) {
         for (let row = range.startRow; row <= range.endRow; row++) {
-          promises.push(this.ctx.computeBridge.setRowFormat(this.sheetId, row, format));
+          promises.push(
+            this.ctx.computeBridge.setRowFormat(this.sheetId, row, format, nextOptions()),
+          );
         }
       } else {
         boundedRanges.push([range.startRow, range.startCol, range.endRow, range.endCol]);
@@ -108,7 +128,14 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
     }
 
     if (boundedRanges.length > 0) {
-      promises.push(this.ctx.computeBridge.setFormatForRanges(this.sheetId, boundedRanges, format));
+      promises.push(
+        this.ctx.computeBridge.setFormatForRanges(
+          this.sheetId,
+          boundedRanges,
+          format,
+          nextOptions(DIRECT_CELL_FORMAT_DOMAIN_IDS),
+        ),
+      );
     }
 
     if (promises.length > 0) {
@@ -127,15 +154,21 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
     this._ensureWritable('formats.clearCell');
     const { row, col } = resolveCell(a, b);
     await assertFormatOperationsAllowed(this.ctx, this.sheetId, ['formatCells']);
-    await this.ctx.computeBridge.clearFormatForRanges(this.sheetId, [[row, col, row, col]]);
+    await this.ctx.computeBridge.clearFormatForRanges(
+      this.sheetId,
+      [[row, col, row, col]],
+      createDirectFormatMutationOptions(this.ctx, this.sheetId, 'formats.clearCell'),
+    );
   }
 
   async clear(): Promise<void> {
     this._ensureWritable('formats.clear');
     await assertFormatOperationsAllowed(this.ctx, this.sheetId, ['formatCells']);
-    await this.ctx.computeBridge.clearFormatForRanges(this.sheetId, [
-      [0, 0, MAX_ROWS - 1, MAX_COLS - 1],
-    ]);
+    await this.ctx.computeBridge.clearFormatForRanges(
+      this.sheetId,
+      [[0, 0, MAX_ROWS - 1, MAX_COLS - 1]],
+      createDirectFormatMutationOptions(this.ctx, this.sheetId, 'formats.clear'),
+    );
   }
 
   async clearRange(a: string | CellRange): Promise<void> {
@@ -149,9 +182,11 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
     }
     const n = normalizeRange(range);
     await assertFormatRangesAllowed(this.ctx, this.sheetId, [range]);
-    await this.ctx.computeBridge.clearFormatForRanges(this.sheetId, [
-      [n.startRow, n.startCol, n.endRow, n.endCol],
-    ]);
+    await this.ctx.computeBridge.clearFormatForRanges(
+      this.sheetId,
+      [[n.startRow, n.startCol, n.endRow, n.endCol]],
+      createDirectFormatMutationOptions(this.ctx, this.sheetId, 'formats.clearRange'),
+    );
   }
 
   async clearRanges(ranges: CellRange[]): Promise<void> {
@@ -161,7 +196,11 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
       return [n.startRow, n.startCol, n.endRow, n.endCol];
     });
     if (tuples.length > 0) {
-      await this.ctx.computeBridge.clearFormatForRanges(this.sheetId, tuples);
+      await this.ctx.computeBridge.clearFormatForRanges(
+        this.sheetId,
+        tuples,
+        createDirectFormatMutationOptions(this.ctx, this.sheetId, 'formats.clearRanges'),
+      );
     }
   }
 
@@ -199,15 +238,25 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
     const current = await this.get(row, col);
     const currentIndent = current?.indent ?? 0;
     const newIndent = Math.max(0, Math.min(250, currentIndent + amount));
-    await this.ctx.computeBridge.setFormatForRanges(this.sheetId, [[row, col, row, col]], {
-      indent: newIndent,
-    });
+    await this.ctx.computeBridge.setFormatForRanges(
+      this.sheetId,
+      [[row, col, row, col]],
+      {
+        indent: newIndent,
+      },
+      createDirectFormatMutationOptions(this.ctx, this.sheetId, 'formats.adjustIndent'),
+    );
   }
 
   async clearFill(a: string | number, b?: number): Promise<void> {
     const { row, col } = resolveCell(a, b);
     const rangeTuple: [number, number, number, number] = [row, col, row, col];
     await assertFormatOperationsAllowed(this.ctx, this.sheetId, ['formatCells']);
+    const nextOptions = createGroupedFormatMutationOptions(
+      this.ctx,
+      this.sheetId,
+      'formats.clearFill',
+    );
 
     // Read the SPARSE cell format (not the resolved one) so we only re-apply
     // actual cell-level overrides, not inherited cascade values.
@@ -215,7 +264,11 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
     const current = (result?.cells?.[0]?.format as CellFormat | undefined) ?? null;
 
     // Clear all formatting on the cell first.
-    await this.ctx.computeBridge.clearFormatForRanges(this.sheetId, [rangeTuple]);
+    await this.ctx.computeBridge.clearFormatForRanges(
+      this.sheetId,
+      [rangeTuple],
+      nextOptions(DIRECT_CELL_FORMAT_DOMAIN_IDS),
+    );
 
     if (current) {
       // Strip fill-related properties and re-apply everything else.
@@ -223,13 +276,23 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
         current;
       const hasRest = Object.keys(rest).length > 0;
       if (hasRest) {
-        await this.ctx.computeBridge.setFormatForRanges(this.sheetId, [rangeTuple], rest);
+        await this.ctx.computeBridge.setFormatForRanges(
+          this.sheetId,
+          [rangeTuple],
+          rest,
+          nextOptions(DIRECT_CELL_FORMAT_DOMAIN_IDS),
+        );
       }
     }
   }
 
   async clearFillForRanges(ranges: CellRange[]): Promise<void> {
     await assertFormatRangesAllowed(this.ctx, this.sheetId, ranges);
+    const nextOptions = createGroupedFormatMutationOptions(
+      this.ctx,
+      this.sheetId,
+      'formats.clearFillForRanges',
+    );
     for (const range of ranges) {
       const n = normalizeRange(range);
       const rangeTuple: [number, number, number, number] = [
@@ -249,7 +312,11 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
       );
 
       // Clear all format for the range
-      await this.ctx.computeBridge.clearFormatForRanges(this.sheetId, [rangeTuple]);
+      await this.ctx.computeBridge.clearFormatForRanges(
+        this.sheetId,
+        [rangeTuple],
+        nextOptions(DIRECT_CELL_FORMAT_DOMAIN_IDS),
+      );
 
       // Re-apply non-fill properties for each cell that had overrides
       for (const cell of result?.cells ?? []) {
@@ -269,6 +336,7 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
             this.sheetId,
             [[cell.row, cell.col, cell.row, cell.col]],
             rest,
+            nextOptions(DIRECT_CELL_FORMAT_DOMAIN_IDS),
           );
         }
       }
@@ -312,9 +380,14 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
     }
     const internalFormat = setNumFmtLocal(localFormat, locale);
     await assertFormatOperationsAllowed(this.ctx, this.sheetId, ['formatCells']);
-    await this.ctx.computeBridge.setFormatForRanges(this.sheetId, [[row, col, row, col]], {
-      numberFormat: internalFormat,
-    });
+    await this.ctx.computeBridge.setFormatForRanges(
+      this.sheetId,
+      [[row, col, row, col]],
+      {
+        numberFormat: internalFormat,
+      },
+      createDirectFormatMutationOptions(this.ctx, this.sheetId, 'formats.setNumberFormatLocal'),
+    );
   }
 
   async applyPattern(
@@ -323,7 +396,14 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
     targetRange: CellRange,
   ): Promise<void> {
     await assertFormatRangesAllowed(this.ctx, this.sheetId, [targetRange]);
-    await applyFormatToRange(this.ctx, this.sheetId, format, sourceRange, targetRange);
+    await applyFormatToRange(
+      this.ctx,
+      this.sheetId,
+      format,
+      sourceRange,
+      targetRange,
+      createDirectFormatMutationOptions(this.ctx, this.sheetId, 'formats.applyFormatToRange'),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -362,6 +442,7 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
         this.ctx,
         this.sheetId,
         updates as Array<{ row: number; col: number; format: CellFormat }>,
+        createDirectFormatMutationOptions(this.ctx, this.sheetId, 'formats.setCellProperties'),
       ),
     );
   }
@@ -372,7 +453,14 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
 
   async setRowProperties(updates: Map<number, Partial<CellFormat>>): Promise<void> {
     await assertFormatOperationsAllowed(this.ctx, this.sheetId, ['formatRows']);
-    unwrap(await setRowPropertiesOp(this.ctx, this.sheetId, updates as Map<number, CellFormat>));
+    unwrap(
+      await setRowPropertiesOp(
+        this.ctx,
+        this.sheetId,
+        updates as Map<number, CellFormat>,
+        createFormatMutationOptions(this.ctx, this.sheetId, 'formats.setRowProperties'),
+      ),
+    );
   }
 
   async getColumnProperties(cols: number[]): Promise<Map<number, CellFormat>> {
@@ -381,6 +469,73 @@ export class WorksheetFormatsImpl implements WorksheetFormats {
 
   async setColumnProperties(updates: Map<number, Partial<CellFormat>>): Promise<void> {
     await assertFormatOperationsAllowed(this.ctx, this.sheetId, ['formatColumns']);
-    unwrap(await setColumnPropertiesOp(this.ctx, this.sheetId, updates as Map<number, CellFormat>));
+    unwrap(
+      await setColumnPropertiesOp(
+        this.ctx,
+        this.sheetId,
+        updates as Map<number, CellFormat>,
+        createFormatMutationOptions(this.ctx, this.sheetId, 'formats.setColumnProperties'),
+      ),
+    );
   }
+}
+
+function createDirectFormatMutationOptions(
+  ctx: DocumentContext,
+  sheetId: SheetId,
+  operationIdPrefix: string,
+  groupId?: string,
+): FormatMutationOptions {
+  return createFormatMutationOptions(
+    ctx,
+    sheetId,
+    operationIdPrefix,
+    DIRECT_CELL_FORMAT_DOMAIN_IDS,
+    groupId,
+  );
+}
+
+function createFormatMutationOptions(
+  ctx: DocumentContext,
+  sheetId: SheetId,
+  operationIdPrefix: string,
+  domainIds: readonly string[] = FORMAT_DOMAIN_IDS,
+  groupId?: string,
+): FormatMutationOptions {
+  return {
+    operationContext: createVersionOperationContext(ctx, {
+      operationIdPrefix,
+      sheetIds: [sheetId],
+      domainIds,
+      groupId,
+    }),
+  };
+}
+
+function createGroupedFormatMutationOptions(
+  ctx: DocumentContext,
+  sheetId: SheetId,
+  operationIdPrefix: string,
+): (domainIds?: readonly string[]) => FormatMutationOptions {
+  let groupId: string | undefined;
+  return (domainIds: readonly string[] = FORMAT_DOMAIN_IDS) => {
+    if (!groupId) {
+      const firstOptions = ensureFormatMutationGroup(
+        createFormatMutationOptions(ctx, sheetId, operationIdPrefix, domainIds),
+      );
+      groupId = firstOptions.operationContext.groupId;
+      return firstOptions;
+    }
+    return createFormatMutationOptions(ctx, sheetId, operationIdPrefix, domainIds, groupId);
+  };
+}
+
+function ensureFormatMutationGroup(options: FormatMutationOptions): FormatMutationOptions {
+  const groupId = options.operationContext.groupId ?? options.operationContext.operationId;
+  return {
+    operationContext: {
+      ...options.operationContext,
+      groupId,
+    },
+  };
 }

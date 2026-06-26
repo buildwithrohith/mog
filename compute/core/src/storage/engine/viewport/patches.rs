@@ -73,7 +73,7 @@ impl YrsComputeEngine {
                     Ok(cid) => id_to_hex(cid.as_u128()),
                     Err(_) => continue,
                 };
-                let table_fmt = services::tables::resolve_table_format_at_cell(
+                let table_fmt = services::resolve_structured_format_at_cell(
                     &self.mirror,
                     &sheet_id,
                     pos.row,
@@ -337,7 +337,7 @@ impl YrsComputeEngine {
                 .map(|cell_id| id_to_hex(cell_id.as_u128()))
                 .unwrap_or_default();
             let table_fmt =
-                services::tables::resolve_table_format_at_cell(&self.mirror, sheet_id, row, col);
+                services::resolve_structured_format_at_cell(&self.mirror, sheet_id, row, col);
             let effective = properties::get_effective_format(
                 &self.stores.storage,
                 sheet_id,
@@ -369,6 +369,10 @@ impl YrsComputeEngine {
                 position: Some(snapshot_types::CellPosition { row, col }),
                 value,
                 display_text: None,
+                old_display_text: None,
+                old_formula: None,
+                new_formula: None,
+                number_format: None,
                 format_idx: Some(format_idx),
                 extra_flags: 0,
                 old_value: None,
@@ -428,8 +432,12 @@ impl YrsComputeEngine {
                     sheet_id: sheet_id_str.clone(),
                     position: Some(snapshot_types::CellPosition { row, col }),
                     value,
-                    display_text: None, // filled by enrich_display_text below
-                    format_idx: None,   // filled by format enrichment in patch loop
+                    display_text: None,
+                    old_display_text: None,
+                    old_formula: None,
+                    new_formula: None,
+                    number_format: None, // filled by enrich_display_text below
+                    format_idx: None,    // filled by format enrichment in patch loop
                     extra_flags: 0,
                     old_value: None,
                 });
@@ -489,7 +497,7 @@ impl YrsComputeEngine {
                     Ok(cid) => id_to_hex(cid.as_u128()),
                     Err(_) => continue,
                 };
-                let table_fmt = services::tables::resolve_table_format_at_cell(
+                let table_fmt = services::resolve_structured_format_at_cell(
                     &self.mirror,
                     sid,
                     pos.row,
@@ -614,12 +622,8 @@ impl YrsComputeEngine {
                     });
 
                 let cell_hex = id_to_hex(cell_id_raw);
-                let table_fmt = services::tables::resolve_table_format_at_cell(
-                    &self.mirror,
-                    sheet_id,
-                    row,
-                    col,
-                );
+                let table_fmt =
+                    services::resolve_structured_format_at_cell(&self.mirror, sheet_id, row, col);
                 let effective = properties::get_effective_format(
                     &self.stores.storage,
                     sheet_id,
@@ -652,6 +656,10 @@ impl YrsComputeEngine {
                 position: Some(snapshot_types::CellPosition { row, col }),
                 value,
                 display_text: None,
+                old_display_text: None,
+                old_formula: None,
+                new_formula: None,
+                number_format: None,
                 format_idx: Some(format_idx),
                 extra_flags: 0,
                 old_value: None,
@@ -717,7 +725,11 @@ impl YrsComputeEngine {
                         sheet_id: sheet_id_str.clone(),
                         position: Some(crate::snapshot::CellPosition { row, col }),
                         value,
-                        display_text: None, // enriched by prepare_recalc_for_flush
+                        display_text: None,
+                        old_display_text: None,
+                        old_formula: None,
+                        new_formula: None,
+                        number_format: None, // enriched by prepare_recalc_for_flush
                         format_idx: None,
                         extra_flags: 0,
                         old_value: None,
@@ -754,8 +766,7 @@ impl YrsComputeEngine {
                 .resolve_cell_id(sheet_id, SheetPos::new(row, col))
                 .map(|cid| id_to_hex(cid.as_u128()))
                 .unwrap_or_default();
-            let table_fmt =
-                services::tables::resolve_table_format_at_cell(mirror, sheet_id, row, col);
+            let table_fmt = services::resolve_structured_format_at_cell(mirror, sheet_id, row, col);
             let mut effective = properties::get_effective_format(
                 &stores.storage,
                 sheet_id,
@@ -851,7 +862,7 @@ impl YrsComputeEngine {
                     });
                 let cell_hex = id_to_hex(cell_id_raw);
                 let table_fmt =
-                    services::tables::resolve_table_format_at_cell(mirror, sheet_id, row, col);
+                    services::resolve_structured_format_at_cell(mirror, sheet_id, row, col);
                 let effective = properties::get_effective_format(
                     &stores.storage,
                     sheet_id,
@@ -884,6 +895,10 @@ impl YrsComputeEngine {
                     position: Some(snapshot_types::CellPosition { row, col }),
                     value,
                     display_text: None,
+                    old_display_text: None,
+                    old_formula: None,
+                    new_formula: None,
+                    number_format: None,
                     format_idx: Some(format_idx),
                     extra_flags: 0,
                     old_value: None,

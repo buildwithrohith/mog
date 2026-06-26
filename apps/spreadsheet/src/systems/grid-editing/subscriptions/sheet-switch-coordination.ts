@@ -12,7 +12,7 @@
 
 import type { ActorRefFrom } from 'xstate';
 
-import type { Workbook } from '@mog-sdk/contracts/api';
+import type { WorkbookInternal } from '@mog-sdk/contracts/api';
 import { sheetId as toSheetId, type CellRange, type SheetId } from '@mog-sdk/contracts/core';
 import type { CellCoord } from '@mog-sdk/contracts/rendering';
 import type { Point } from '@mog-sdk/contracts/viewport';
@@ -68,12 +68,14 @@ export interface SheetSwitchImportDurabilityGate {
   awaitImportDurability(): Promise<void>;
 }
 
+type ImportedViewSelection = ReturnType<WorkbookInternal['mirror']['getViewSelection']>;
+
 /**
  * Configuration for sheet switch coordination.
  */
 export interface SheetSwitchCoordinationConfig {
   /** Workbook API for event subscriptions */
-  workbook: Workbook;
+  workbook: WorkbookInternal;
   /** Import durability gate for host-backed XLSX documents. */
   importDurability?: SheetSwitchImportDurabilityGate;
   editorActor: EditorActor;
@@ -153,6 +155,48 @@ export interface SheetSwitchCoordinationConfig {
    *
    */
   refreshLayoutCallbacks?: () => void;
+}
+
+function importedSelectionToViewState(selection: ImportedViewSelection): SheetViewState | null {
+  if (!selection) return null;
+
+  return {
+    ranges: selection.ranges,
+    activeCell: selection.activeCell,
+    anchor: null,
+    anchorCol: null,
+    anchorRow: null,
+    scrollTop: 0,
+    scrollLeft: 0,
+  };
+}
+
+function isDefaultA1SheetViewState(state: SheetViewState): boolean {
+  const onlyA1Range =
+    state.ranges.length === 1 &&
+    state.ranges[0]?.startRow === 0 &&
+    state.ranges[0]?.startCol === 0 &&
+    state.ranges[0]?.endRow === 0 &&
+    state.ranges[0]?.endCol === 0;
+
+  return (
+    state.activeCell.row === 0 &&
+    state.activeCell.col === 0 &&
+    onlyA1Range &&
+    state.anchor === null &&
+    state.anchorCol === null &&
+    state.anchorRow === null
+  );
+}
+
+function resolveRestorableSheetViewState(
+  savedState: SheetViewState | undefined,
+  importedSelection: ImportedViewSelection,
+): SheetViewState | null {
+  const importedState = importedSelectionToViewState(importedSelection);
+  if (!savedState) return importedState;
+  if (importedState && isDefaultA1SheetViewState(savedState)) return importedState;
+  return savedState;
 }
 
 /**
@@ -260,6 +304,30 @@ export function setupSheetSwitchCoordination(config: SheetSwitchCoordinationConf
     scheduleScrollFlushAfterDurability();
   };
 
+  const refreshActiveSheetRuntimeAfterCheckout = (): void => {
+    refreshLayoutCallbacks?.();
+
+    const selectionSnapshot = selectionActor.getSnapshot();
+    const selectionState = selectionSnapshot.context;
+    const isFormulaEditing = editorSelectors.isFormulaEditing(editorActor.getSnapshot());
+
+    selectionActor.send({
+      type: 'SET_SELECTION',
+      ranges: selectionSelectors.ranges(selectionSnapshot),
+      activeCell: selectionState.activeCell,
+      anchor: isFormulaEditing ? null : selectionState.anchor,
+      anchorCol: isFormulaEditing ? null : selectionState.anchorCol,
+      anchorRow: isFormulaEditing ? null : selectionState.anchorRow,
+      source: 'restore',
+    });
+
+    onSheetSwitchComplete?.();
+
+    if (chartActor) {
+      chartActor.send({ type: 'SHEET_SWITCHED' });
+    }
+  };
+
   const rendererSub = rendererActor.subscribe((state) => {
     // When renderer enters 'ready' state after a sheet switch, restore selection
     if (state.value === 'ready' && pendingRestoreSheetId !== null) {
@@ -277,7 +345,11 @@ export function setupSheetSwitchCoordination(config: SheetSwitchCoordinationConf
 
       // Restore selection state for the new sheet
       if (getSheetViewState) {
-        const savedState = getSheetViewState(toSheetId(targetSheetId));
+        const targetTypedSheetId = toSheetId(targetSheetId);
+        const savedState = resolveRestorableSheetViewState(
+          getSheetViewState(targetTypedSheetId),
+          workbook.mirror.getViewSelection(targetTypedSheetId),
+        );
 
         if (savedState) {
           // Validate saved selection is within bounds
@@ -426,6 +498,16 @@ export function setupSheetSwitchCoordination(config: SheetSwitchCoordinationConf
       })
     : () => {}; // No-op if callback not provided
 
+  const versionCheckoutMaterializedUnsub = workbook.on(
+    'workbook:version-checkout-materialized',
+    () => {
+      const currentSheetId = rendererActor.getSnapshot().context.currentSheetId;
+      if (currentSheetId) {
+        refreshActiveSheetRuntimeAfterCheckout();
+      }
+    },
+  );
+
   // Return cleanup function
   return () => {
     disposed = true;
@@ -433,5 +515,6 @@ export function setupSheetSwitchCoordination(config: SheetSwitchCoordinationConf
     rendererSub.unsubscribe();
     unsubSheetSwitch();
     sheetDeletedUnsub();
+    versionCheckoutMaterializedUnsub();
   };
 }

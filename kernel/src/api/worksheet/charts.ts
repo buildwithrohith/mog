@@ -26,6 +26,7 @@ import type {
   SingleAxisConfig,
   WorksheetCharts,
 } from '@mog-sdk/contracts/api';
+import type { ChartAppModel, ChartAxisRole } from '@mog-sdk/contracts/data/chart-app-model';
 
 import type { CellRange } from '@mog-sdk/contracts/core';
 import type {
@@ -47,6 +48,7 @@ import {
   assertSupportedNativeXlsxChartConfig,
   awaitChartReadScope,
   awaitSheetMaterialized,
+  chartMutationOptions,
   chartSeriesCount,
   requireChart,
   requireChartSeriesForMutation,
@@ -74,7 +76,20 @@ import {
   buildChartAddReceipt,
   buildChartDuplicateReceipt,
 } from './charts/receipts';
-import { removeChartWithReceipt, updateChartWithReceipt } from './charts/mutations';
+import {
+  bringWorksheetChartForward,
+  bringWorksheetChartToFront,
+  linkWorksheetChartToTable,
+  sendWorksheetChartBackward,
+  sendWorksheetChartToBack,
+  unlinkWorksheetChartFromTable,
+  updateRawWorksheetChart,
+} from './charts/bridge-mutations';
+import {
+  clearWorksheetCharts,
+  removeChartWithReceipt,
+  updateChartWithReceipt,
+} from './charts/mutations';
 import {
   addChartSeriesMutation,
   addChartTrendlineMutation,
@@ -82,7 +97,6 @@ import {
   removeChartSeriesMutation,
   removeChartTrendlineMutation,
   reorderChartSeriesMutation,
-  setChartAxisTitleMutation,
   setChartCategoryNamesMutation,
   setChartDataLabelDimensionMutation,
   setChartPointDataLabelMutation,
@@ -91,6 +105,15 @@ import {
   updateChartSeriesMutation,
   updateChartTrendlineMutation,
 } from './chart-mutation-receipts';
+import {
+  setChartAxisTitleAppModelMutation,
+  setChartAxisVisibleMutation,
+  setChartLegendVisibleMutation,
+  setChartTitleVisibleMutation,
+  switchChartSeriesOrientationMutation,
+} from './chart-app-model-mutations';
+import { getWorksheetChartAppModel } from './chart-app-model-read';
+import { assertChartSourceRefsResolvable } from './chart-source-validation';
 
 // =============================================================================
 // Implementation
@@ -117,6 +140,7 @@ export class WorksheetChartsImpl implements WorksheetCharts {
     if (!config.dataRange && !hasSeriesValues)
       throw invalidChartConfig('dataRange is required when series[].values are not provided');
     await awaitSheetMaterialized(this.ctx, this.sheetId);
+    await assertChartSourceRefsResolvable(this.ctx, config);
 
     // Generate a stable ID once and pass it through the entire pipeline.
     // If the caller already provided an ID (e.g., via config), preserve it.
@@ -129,7 +153,11 @@ export class WorksheetChartsImpl implements WorksheetCharts {
       id: chartId,
     } as ChartConfig)) as ChartConfig;
     const internalConfig = chartConfigToInternal(configWithId);
-    const result = await this.ctx.computeBridge.createChart(this.sheetId, internalConfig);
+    const result = await this.ctx.computeBridge.createChart(
+      this.sheetId,
+      internalConfig,
+      chartMutationOptions(this.ctx, this.sheetId, 'charts.create'),
+    );
     // Extract the actual chart ID assigned by the Rust engine (may differ from our generated ID)
     const change = result?.floatingObjectChanges?.[0];
     const actualId = change?.objectId ?? change?.data?.id ?? chartId;
@@ -164,14 +192,16 @@ export class WorksheetChartsImpl implements WorksheetCharts {
     return raw ? serializedChartToChart(raw) : null;
   }
 
+  async getAppModel(chartId: string, options?: ChartReadOptions): Promise<ChartAppModel | null> {
+    return getWorksheetChartAppModel(this.ctx, this.sheetId, chartId, options);
+  }
+
   async update(chartId: string, updates: Partial<ChartConfig>): Promise<ChartUpdateReceipt> {
     return updateChartWithReceipt(this.ctx, this.sheetId, chartId, updates);
   }
 
   async updateRaw(chartId: string, fields: Record<string, unknown>): Promise<void> {
-    await awaitSheetMaterialized(this.ctx, this.sheetId);
-    const resolvedChartId = await resolveChartIdInput(this.ctx, this.sheetId, chartId);
-    await this.ctx.computeBridge.updateChart(this.sheetId, resolvedChartId, fields);
+    await updateRawWorksheetChart(this.ctx, this.sheetId, chartId, fields);
   }
 
   async remove(chartId: string): Promise<ChartRemoveReceipt> {
@@ -188,9 +218,11 @@ export class WorksheetChartsImpl implements WorksheetCharts {
 
   async clear(): Promise<void> {
     const charts = await this.list();
-    for (const chart of charts) {
-      await this.remove(chart.id);
-    }
+    await clearWorksheetCharts(
+      this.ctx,
+      this.sheetId,
+      charts.map((chart) => chart.id),
+    );
   }
 
   // ===========================================================================
@@ -294,35 +326,19 @@ export class WorksheetChartsImpl implements WorksheetCharts {
   // ===========================================================================
 
   async bringToFront(chartId: string): Promise<void> {
-    await awaitSheetMaterialized(this.ctx, this.sheetId);
-    await this.ctx.computeBridge.bringChartToFront(
-      this.sheetId,
-      await resolveChartIdInput(this.ctx, this.sheetId, chartId),
-    );
+    await bringWorksheetChartToFront(this.ctx, this.sheetId, chartId);
   }
 
   async sendToBack(chartId: string): Promise<void> {
-    await awaitSheetMaterialized(this.ctx, this.sheetId);
-    await this.ctx.computeBridge.sendChartToBack(
-      this.sheetId,
-      await resolveChartIdInput(this.ctx, this.sheetId, chartId),
-    );
+    await sendWorksheetChartToBack(this.ctx, this.sheetId, chartId);
   }
 
   async bringForward(chartId: string): Promise<void> {
-    await awaitSheetMaterialized(this.ctx, this.sheetId);
-    await this.ctx.computeBridge.bringChartForward(
-      this.sheetId,
-      await resolveChartIdInput(this.ctx, this.sheetId, chartId),
-    );
+    await bringWorksheetChartForward(this.ctx, this.sheetId, chartId);
   }
 
   async sendBackward(chartId: string): Promise<void> {
-    await awaitSheetMaterialized(this.ctx, this.sheetId);
-    await this.ctx.computeBridge.sendChartBackward(
-      this.sheetId,
-      await resolveChartIdInput(this.ctx, this.sheetId, chartId),
-    );
+    await sendWorksheetChartBackward(this.ctx, this.sheetId, chartId);
   }
 
   // ===========================================================================
@@ -330,20 +346,11 @@ export class WorksheetChartsImpl implements WorksheetCharts {
   // ===========================================================================
 
   async linkToTable(chartId: string, tableId: string): Promise<void> {
-    await awaitSheetMaterialized(this.ctx, this.sheetId);
-    await this.ctx.computeBridge.linkChartToTable(
-      this.sheetId,
-      await resolveChartIdInput(this.ctx, this.sheetId, chartId),
-      tableId,
-    );
+    await linkWorksheetChartToTable(this.ctx, this.sheetId, chartId, tableId);
   }
 
   async unlinkFromTable(chartId: string): Promise<void> {
-    await awaitSheetMaterialized(this.ctx, this.sheetId);
-    await this.ctx.computeBridge.unlinkChartFromTable(
-      this.sheetId,
-      await resolveChartIdInput(this.ctx, this.sheetId, chartId),
-    );
+    await unlinkWorksheetChartFromTable(this.ctx, this.sheetId, chartId);
   }
 
   async isLinkedToTable(chartId: string): Promise<boolean> {
@@ -740,10 +747,28 @@ export class WorksheetChartsImpl implements WorksheetCharts {
 
   async setAxisTitle(
     chartId: string,
-    axisType: 'category' | 'value',
-    formula: string,
+    axisType: ChartAxisRole,
+    title: string,
   ): Promise<ChartMutationReceipt> {
-    return setChartAxisTitleMutation(this.ctx, this.sheetId, chartId, axisType, formula);
+    return setChartAxisTitleAppModelMutation(this.ctx, this.sheetId, chartId, axisType, title);
+  }
+
+  async setAxisVisible(
+    chartId: string,
+    axisRole: ChartAxisRole,
+    visible: boolean,
+  ): Promise<ChartMutationReceipt> {
+    return setChartAxisVisibleMutation(this.ctx, this.sheetId, chartId, axisRole, visible);
+  }
+
+  async setLegendVisible(chartId: string, visible: boolean): Promise<ChartMutationReceipt> {
+    return setChartLegendVisibleMutation(this.ctx, this.sheetId, chartId, visible);
+  }
+  async setChartTitleVisible(chartId: string, visible: boolean): Promise<ChartMutationReceipt> {
+    return setChartTitleVisibleMutation(this.ctx, this.sheetId, chartId, visible);
+  }
+  async switchSeriesOrientation(chartId: string): Promise<ChartMutationReceipt> {
+    return switchChartSeriesOrientationMutation(this.ctx, this.sheetId, chartId);
   }
 
   async setCategoryNames(chartId: string, range: string): Promise<ChartMutationReceipt> {

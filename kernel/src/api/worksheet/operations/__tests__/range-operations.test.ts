@@ -18,6 +18,7 @@ function createMockCtx(overrides: Record<string, jest.Mock> = {}): any {
   const order: string[] = [];
   return {
     order,
+    userTimezone: 'UTC',
     awaitMaterialized: jest.fn().mockImplementation(async (scope: string) => {
       order.push(`await:${scope}`);
     }),
@@ -25,6 +26,9 @@ function createMockCtx(overrides: Record<string, jest.Mock> = {}): any {
       queryRange: jest.fn().mockResolvedValue({ cells: [], merges: [] }),
       setCellsByPosition: jest.fn().mockImplementation(async () => {
         order.push('setCellsByPosition');
+      }),
+      setDateValue: jest.fn().mockImplementation(async () => {
+        order.push('setDateValue');
       }),
       clearRangeByPosition: jest.fn().mockImplementation(async () => {
         order.push('clearRangeByPosition');
@@ -54,6 +58,42 @@ describe('clearRange', () => {
     expect(result.cellCount).toBe(12);
     expect(ctx.computeBridge.clearRangeByPosition).toHaveBeenCalledWith(SHEET_ID, 0, 0, 2, 3);
     expect(ctx.order).toEqual(['await:allSheets', 'clearRangeByPosition']);
+  });
+
+  it('passes mutation admission options to clearRangeByPosition', async () => {
+    const ctx = createMockCtx();
+    const options = {
+      operationContext: {
+        operationId: 'worksheet.clearData:1',
+        kind: 'mutation',
+        author: { authorId: 'user-1', actorKind: 'user' },
+        createdAt: '2026-06-20T00:00:00.000Z',
+        sheetIds: [SHEET_ID],
+        domainIds: ['cells'],
+        capturePolicy: 'commitEligible',
+        writeAdmissionMode: 'capture',
+      },
+    };
+
+    await RangeOps.clearRange(
+      ctx,
+      SHEET_ID,
+      { sheetId: SHEET_ID, startRow: 0, startCol: 0, endRow: 1, endCol: 1 },
+      options as any,
+    );
+
+    const captureOptions = {
+      ...options,
+      directEditRanges: [{ sheetId: SHEET_ID, startRow: 0, startCol: 0, endRow: 1, endCol: 1 }],
+    };
+    expect(ctx.computeBridge.clearRangeByPosition).toHaveBeenCalledWith(
+      SHEET_ID,
+      0,
+      0,
+      1,
+      1,
+      captureOptions,
+    );
   });
 
   it('throws on swapped range bounds (startRow > endRow)', async () => {
@@ -159,6 +199,51 @@ describe('setRange', () => {
     expect(ctx.computeBridge.setCellsByPosition).toHaveBeenCalledWith(SHEET_ID, [
       { row: 0, col: 0, input: { kind: 'parse', text: '=SUM(A1:A10)' } },
     ]);
+  });
+
+  it('routes Date values through setDateValue instead of string coercion', async () => {
+    const ctx = createMockCtx();
+    await RangeOps.setRange(ctx, SHEET_ID, 0, 0, [
+      ['start', new Date('2026-01-01T00:00:00.000Z')],
+      [new Date('2026-02-01T00:00:00.000Z'), null],
+    ]);
+
+    expect(ctx.computeBridge.setCellsByPosition).toHaveBeenCalledWith(SHEET_ID, [
+      { row: 0, col: 0, input: { kind: 'parse', text: 'start' } },
+      { row: 1, col: 1, input: { kind: 'clear' } },
+    ]);
+    expect(ctx.computeBridge.setDateValue).toHaveBeenNthCalledWith(1, SHEET_ID, 0, 1, 2026, 1, 1);
+    expect(ctx.computeBridge.setDateValue).toHaveBeenNthCalledWith(2, SHEET_ID, 1, 0, 2026, 2, 1);
+    expect(ctx.order).toEqual([
+      'await:allSheets',
+      'setCellsByPosition',
+      'setDateValue',
+      'setDateValue',
+    ]);
+  });
+
+  it('passes mutation admission options to setCellsByPosition', async () => {
+    const ctx = createMockCtx();
+    const options = {
+      operationContext: {
+        operationId: 'worksheet.setRange:1',
+        kind: 'mutation',
+        author: { authorId: 'user-1', actorKind: 'user' },
+        createdAt: '2026-06-20T00:00:00.000Z',
+        sheetIds: [SHEET_ID],
+        domainIds: ['cells'],
+        capturePolicy: 'commitEligible',
+        writeAdmissionMode: 'capture',
+      },
+    };
+
+    await RangeOps.setRange(ctx, SHEET_ID, 0, 0, [['hello']], options as any);
+
+    expect(ctx.computeBridge.setCellsByPosition).toHaveBeenCalledWith(
+      SHEET_ID,
+      [{ row: 0, col: 0, input: { kind: 'parse', text: 'hello' } }],
+      options,
+    );
   });
 
   it('throws on invalid start address', async () => {

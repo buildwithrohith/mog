@@ -3,6 +3,7 @@ import type { IChartBridge } from '@mog-sdk/contracts/bridges';
 import type { SheetId } from '@mog-sdk/contracts/core';
 import type { DocumentImportWarning } from '@mog-sdk/contracts/document';
 import type { IEventBus } from '@mog-sdk/contracts/events';
+import type { FeatureGates } from '@mog-sdk/contracts/feature-gates';
 import type { ISpreadsheetKernelContext } from '@mog-sdk/contracts/kernel';
 import type { PivotExpansionStateProvider } from '@mog-sdk/contracts/pivot';
 import type { DocumentSecurityConfig } from '@mog-sdk/contracts/security';
@@ -15,6 +16,7 @@ import type {
 import type { TrapError } from '@mog/transport';
 import type { PresenceState, RoomSnapshot, SidecarStatus } from '../../document/collab/ws-sidecar';
 import type { DocumentByteSyncPort, Provider } from '../../document/providers/provider';
+import type { DocumentWorkbookVersioningLifecycleConfig } from '../../document/version-store/lifecycle';
 
 export interface DocumentHandleTrapRecovery {
   onTrap(listener: (trap: TrapError) => void): () => void;
@@ -24,12 +26,15 @@ export interface DocumentHandleTrapRecovery {
 
 export interface DocumentHandleWorkbookConfig {
   stateProvider?: WorkbookStateProvider;
+  featureGates?: FeatureGates;
+  readFeatureGates?: () => FeatureGates;
   previouslySaved?: boolean;
   name?: string;
   readOnly?: boolean;
   onSave?: (buffer: Uint8Array) => Promise<void>;
   writeFile?: (path: string, data: Uint8Array) => Promise<void>;
   importWarnings?: readonly DocumentImportWarning[];
+  versioning?: DocumentWorkbookVersioningLifecycleConfig;
 }
 
 export interface CollaborationSidecarConfig {

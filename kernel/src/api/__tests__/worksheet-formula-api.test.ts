@@ -156,6 +156,22 @@ const RangeOps = await import('../worksheet/operations/range-operations');
 
 const SHEET_ID = sheetId('sheet-1');
 
+function expectVersionOperationOptions(operationIdPrefix: string, domainIds: readonly string[]) {
+  return expect.objectContaining({
+    operationContext: expect.objectContaining({
+      operationId: expect.stringMatching(
+        new RegExp(`^${operationIdPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:`),
+      ),
+      kind: 'mutation',
+      author: expect.objectContaining({ actorKind: 'user' }),
+      sheetIds: [SHEET_ID],
+      domainIds,
+      capturePolicy: 'commitEligible',
+      writeAdmissionMode: 'capture',
+    }),
+  });
+}
+
 function createMockCtx(): any {
   return {
     writeGate: {
@@ -206,8 +222,24 @@ describe('Worksheet formula API ergonomics', () => {
     await ws.setCell('A1', 'SUM(A1:A10)', { asFormula: true });
     await ws.setCell('A2', '=SUM(A1:A10)', { asFormula: true });
 
-    expect(CellOps.setCell).toHaveBeenNthCalledWith(1, ctx, SHEET_ID, 0, 0, '=SUM(A1:A10)');
-    expect(CellOps.setCell).toHaveBeenNthCalledWith(2, ctx, SHEET_ID, 1, 0, '=SUM(A1:A10)');
+    expect(CellOps.setCell).toHaveBeenNthCalledWith(
+      1,
+      ctx,
+      SHEET_ID,
+      0,
+      0,
+      '=SUM(A1:A10)',
+      expectVersionOperationOptions('worksheet.setCell', ['cells']),
+    );
+    expect(CellOps.setCell).toHaveBeenNthCalledWith(
+      2,
+      ctx,
+      SHEET_ID,
+      1,
+      0,
+      '=SUM(A1:A10)',
+      expectVersionOperationOptions('worksheet.setCell', ['cells']),
+    );
   });
 
   it('setCell rejects formula-looking strings missing equals unless text intent is explicit', async () => {
@@ -239,7 +271,29 @@ describe('Worksheet formula API ergonomics', () => {
     (CellOps.setCell as jest.Mock).mockResolvedValue(undefined);
     await ws.setValue('A1', '=SUM(B1:B10)', { asText: true });
 
-    expect(CellOps.setCell).toHaveBeenCalledWith(ctx, SHEET_ID, 0, 0, "'=SUM(B1:B10)");
+    expect(CellOps.setCell).toHaveBeenCalledWith(
+      ctx,
+      SHEET_ID,
+      0,
+      0,
+      "'=SUM(B1:B10)",
+      expectVersionOperationOptions('worksheet.setValue', ['cells']),
+    );
+  });
+
+  it('setCell stores numeric-looking strings literally when asText is explicit', async () => {
+    (CellOps.setCell as jest.Mock).mockResolvedValue(undefined);
+
+    await ws.setCell('A1', '90210', { asText: true });
+
+    expect(CellOps.setCell).toHaveBeenCalledWith(
+      ctx,
+      SHEET_ID,
+      0,
+      0,
+      "'90210",
+      expectVersionOperationOptions('worksheet.setCell', ['cells']),
+    );
   });
 
   it('setFormula normalizes bare formulas before delegating to the cell write path', async () => {
@@ -247,7 +301,14 @@ describe('Worksheet formula API ergonomics', () => {
 
     await ws.setFormula('A1', 'SUM(B1:B10)');
 
-    expect(CellOps.setCell).toHaveBeenCalledWith(ctx, SHEET_ID, 0, 0, '=SUM(B1:B10)');
+    expect(CellOps.setCell).toHaveBeenCalledWith(
+      ctx,
+      SHEET_ID,
+      0,
+      0,
+      '=SUM(B1:B10)',
+      expectVersionOperationOptions('worksheet.setFormula', ['cells']),
+    );
   });
 
   it('setFormula rejects a missing formula argument with runnable guidance', async () => {
@@ -303,9 +364,12 @@ describe('Worksheet formula API ergonomics', () => {
     const result = await ws.setCells([{ cell: 'B2', formula: 'SUM(A1:A3)' }]);
 
     expect(result).toEqual({ cellsWritten: 1, errors: null });
-    expect(CellOps.setCells).toHaveBeenCalledWith(ctx, SHEET_ID, [
-      { address: 'B2', value: '=SUM(A1:A3)' },
-    ]);
+    expect(CellOps.setCells).toHaveBeenCalledWith(
+      ctx,
+      SHEET_ID,
+      [{ address: 'B2', value: '=SUM(A1:A3)' }],
+      expectVersionOperationOptions('worksheet.setCells', ['cells']),
+    );
 
     jest.clearAllMocks();
     await expect(
@@ -334,7 +398,14 @@ describe('Worksheet formula API ergonomics', () => {
 
     await ws.setFormulas('A1:B1', [['SUM(C1:C3)', '=D1*2']]);
 
-    expect(RangeOps.setRange).toHaveBeenCalledWith(ctx, SHEET_ID, 0, 0, [['=SUM(C1:C3)', '=D1*2']]);
+    expect(RangeOps.setRange).toHaveBeenCalledWith(
+      ctx,
+      SHEET_ID,
+      0,
+      0,
+      [['=SUM(C1:C3)', '=D1*2']],
+      expectVersionOperationOptions('worksheet.setFormulas', ['cells']),
+    );
   });
 
   it('setFormulas rejects missing or malformed formula grids with exact paths', async () => {

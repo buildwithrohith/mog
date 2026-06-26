@@ -194,3 +194,76 @@ export type {
 // =============================================================================
 
 export { getFunctionCatalog, getFunctionInfo, getWorkbookSnapshot } from './api';
+
+export {
+  SnapshotRootCaptureError,
+  WORKBOOK_SNAPSHOT_ROOT_OBJECT_TYPE,
+  YRS_FULL_STATE_SNAPSHOT_ROOT_ENCODING,
+  YRS_FULL_STATE_SNAPSHOT_ROOT_KIND,
+  YRS_FULL_STATE_SNAPSHOT_ROOT_SCHEMA_VERSION,
+  YRS_FULL_STATE_SNAPSHOT_ROOT_SOURCE,
+  captureWorkbookSnapshotRootRecord,
+  captureYrsFullStateSnapshotRootPayload,
+  createWorkbookSnapshotRootRecord,
+  createYrsFullStateSnapshotRootPayload,
+  decodeWorkbookSnapshotRootRecord,
+  decodeYrsFullStateSnapshotRootPayload,
+  validateWorkbookSnapshotRootRecord,
+  validateYrsFullStateSnapshotRootPayload,
+  type SnapshotRootByteSyncPort,
+  type SnapshotRootCaptureErrorCode,
+  type WorkbookSnapshotRootPayload,
+  type WorkbookSnapshotRootRecord,
+  type YrsFullStateSnapshotRootPayload,
+} from './document/version-store/snapshot-root-capture';
+
+export {
+  SnapshotRootReloadService,
+  createSnapshotRootReloadService,
+  type SnapshotRootCurrentWorkbookMutationGuarantee,
+  type SnapshotRootFreshLifecycleHydrationInput,
+  type SnapshotRootFreshLifecycleHydrationResult,
+  type SnapshotRootFreshLifecycleHydrator,
+  type SnapshotRootFreshLifecycleMutationGuarantee,
+  type SnapshotRootReloadDiagnostic,
+  type SnapshotRootReloadDiagnosticCode,
+  type SnapshotRootReloadError,
+  type SnapshotRootReloadErrorCode,
+  type SnapshotRootReloadInput,
+  type SnapshotRootReloadResult,
+  type SnapshotRootReloadServiceOptions,
+  type SnapshotRootReloadSourceKind,
+} from './document/version-store/snapshot-root-reload-service';
+
+export {
+  createDocumentLifecycleSnapshotRootHydrator,
+  type DocumentLifecycleSnapshotRootHydratorOptions,
+  type SnapshotRootFreshLifecycleMaterialization,
+} from './api/document/snapshot-root-lifecycle-hydrator';
+
+export {
+  SnapshotRootMaterializationService,
+  createSnapshotRootMaterializationService,
+  type SnapshotRootMaterializationDiagnostic,
+  type SnapshotRootMaterializationDiagnosticCode,
+  type SnapshotRootMaterializationResult,
+  type SnapshotRootMaterializationServiceOptions,
+} from './document/version-store/snapshot-root-materialization-service';
+
+export {
+  VersionPersistence,
+  createVersionPersistence,
+  type VersionPersistenceBoundaryDiagnostic,
+  type VersionPersistenceBoundaryDiagnosticCode,
+  type VersionPersistenceBoundaryDiagnosticSource,
+  type VersionPersistenceBoundaryKind,
+  type VersionPersistenceBoundaryRequest,
+  type VersionPersistenceBoundaryResult,
+  type VersionPersistenceOptions,
+  type VersionPersistenceReloadDiagnostic,
+  type VersionPersistenceReloadDiagnosticCode,
+  type VersionPersistenceReloadDiagnosticSource,
+  type VersionPersistenceReloadRequest,
+  type VersionPersistenceReloadResult,
+  type VersionPersistenceSnapshotRootMaterializer,
+} from './document/version-store/version-persistence';

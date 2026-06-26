@@ -667,6 +667,111 @@ export interface CameraData {
   error?: string;
 }
 
+export interface CanonicalCellValue {
+  valueKind: string;
+  canonicalValue?: unknown;
+  digest?: ObjectDigest;
+}
+
+export interface CanonicalDirectFormat {
+  properties?: Record<string, unknown>;
+  digest?: ObjectDigest;
+}
+
+export interface CanonicalFormula {
+  normalizedFormula: string;
+  dependencyObjectIds?: string[];
+  refs?: CanonicalFormulaRef[];
+  dynamicArray: boolean;
+  volatile: boolean;
+  aggregate: boolean;
+  digest?: ObjectDigest;
+}
+
+export type CanonicalFormulaRef =
+  | { kind: "cell" } & CanonicalFormulaRef_cell
+  | { kind: "range" } & CanonicalFormulaRef_range
+  | { kind: "rectRange" } & CanonicalFormulaRef_rectRange
+  | { kind: "fullRow" } & CanonicalFormulaRef_fullRow
+  | { kind: "rowRange" } & CanonicalFormulaRef_rowRange
+  | { kind: "fullColumn" } & CanonicalFormulaRef_fullColumn
+  | { kind: "columnRange" } & CanonicalFormulaRef_columnRange;
+
+export interface CanonicalFormulaRef_cell {
+  objectId: string;
+  sheetId: string;
+  row: number;
+  column: number;
+  rowAbsolute: boolean;
+  columnAbsolute: boolean;
+}
+
+export interface CanonicalFormulaRef_columnRange {
+  sheetId: string;
+  startObjectId: string;
+  endObjectId: string;
+  startColumn: number;
+  endColumn: number;
+  startAbsolute: boolean;
+  endAbsolute: boolean;
+}
+
+export interface CanonicalFormulaRef_fullColumn {
+  objectId: string;
+  sheetId: string;
+  column: number;
+  absolute: boolean;
+}
+
+export interface CanonicalFormulaRef_fullRow {
+  objectId: string;
+  sheetId: string;
+  row: number;
+  absolute: boolean;
+}
+
+export interface CanonicalFormulaRef_range {
+  sheetId: string;
+  startObjectId: string;
+  endObjectId: string;
+  startRow: number;
+  startColumn: number;
+  endRow: number;
+  endColumn: number;
+  startRowAbsolute: boolean;
+  startColumnAbsolute: boolean;
+  endRowAbsolute: boolean;
+  endColumnAbsolute: boolean;
+}
+
+export interface CanonicalFormulaRef_rectRange {
+  sheetId: string;
+  startRowObjectId: string;
+  startColumnObjectId: string;
+  endRowObjectId: string;
+  endColumnObjectId: string;
+  startRow: number;
+  startColumn: number;
+  endRow: number;
+  endColumn: number;
+  startRowAbsolute: boolean;
+  startColumnAbsolute: boolean;
+  endRowAbsolute: boolean;
+  endColumnAbsolute: boolean;
+}
+
+export interface CanonicalFormulaRef_rowRange {
+  sheetId: string;
+  startObjectId: string;
+  endObjectId: string;
+  startRow: number;
+  endRow: number;
+  startAbsolute: boolean;
+  endAbsolute: boolean;
+}
+
+export type CapturePolicyWire = "commitEligible" | "excluded" | "derivedOnly" | "rootCreation" | "historyGap" | "shadowOnly";
+
 export interface CategoryLabelFormatData {
   formatCode?: string;
   points?: CategoryPointLabelFormatData[];
@@ -692,6 +797,10 @@ export interface CellChange {
   position?: CellPosition;
   value: CellValue;
   displayText?: string;
+  oldDisplayText?: string;
+  oldFormula?: string;
+  newFormula?: string;
+  numberFormat?: string;
   formatIdx?: number;
   extraFlags: number;
   oldValue?: CellValue;
@@ -1031,6 +1140,7 @@ export interface ChartDrawingFrameOoxmlProps {
   clientDataPrintsWithSheet: boolean | null;
   relationshipId: string | null;
   relationshipTarget: string | null;
+  rawAlternateContent?: string;
 }
 
 export interface ChartExReplayData {
@@ -1127,6 +1237,7 @@ export interface ChartOoxmlProps {
   chartAuxiliaryParts?: ChartAuxiliaryPart[];
   standardChartProvenance?: StandardChartProvenance;
   standardChartExportAuthority?: StandardChartExportAuthority;
+  chartExReplay?: ChartExReplayData;
   isChartEx?: boolean;
 }
 
@@ -1313,6 +1424,8 @@ export interface ChartSpec {
   categoryLabelLevel?: number;
   seriesNameLevel?: number;
   showAllFieldButtons?: boolean;
+  showLines?: boolean;
+  smoothLines?: boolean;
   secondPlotSize?: number;
   varyByCategories?: boolean;
   titleHAlign?: string;
@@ -1328,6 +1441,7 @@ export interface ChartSpec {
   chartRelationships?: ChartRelationshipData[];
   chartAuxiliaryFiles?: [string, Uint8Array][];
   chartAuxiliaryParts?: ChartAuxiliaryPart[];
+  chartExReplay?: ChartExReplayData;
   standardChartProvenance?: StandardChartProvenance;
   standardChartExportAuthority?: StandardChartExportAuthority;
   isChartEx: boolean;
@@ -3046,6 +3160,7 @@ export interface MoveTarget_delta {
 
 export interface MutationResult {
   recalc: RecalcResult;
+  authoredCellChanges?: CellChange[];
   propertyChanges?: PropertyChange[];
   dimensionChanges?: DimensionChange[];
   mergeChanges?: MergeChange[];
@@ -3126,6 +3241,12 @@ export interface NumberGrouping {
   start: number;
   end: number;
   interval: number;
+}
+
+export interface ObjectDigest {
+  algorithm: VersionObjectDigestAlgorithm;
+  value: string;
+  byteLength?: number;
 }
 
 export interface ObjectFill {
@@ -4469,6 +4590,124 @@ export interface SelectionAggregates {
   max: number | null;
 }
 
+export interface SemanticCellState {
+  objectId: string;
+  sheetId: string;
+  row: number;
+  column: number;
+  value?: CanonicalCellValue;
+  formula?: CanonicalFormula;
+  directFormat?: CanonicalDirectFormat;
+  digest?: ObjectDigest;
+}
+
+export interface SemanticChange {
+  changeId: string;
+  kind: SemanticChangeKind;
+  domainId: string;
+  objectId: string;
+  objectKind: SemanticObjectKind;
+  beforeDigest?: ObjectDigest;
+  afterDigest?: ObjectDigest;
+}
+
+export type SemanticChangeKind = "added" | "removed" | "updated";
+
+export interface SemanticColumnState {
+  objectId: string;
+  sheetId: string;
+  index: number;
+  ordinal: number;
+  explicitWidthChars?: number;
+  hidden: boolean;
+  digest?: ObjectDigest;
+}
+
+export interface SemanticCompletenessDiagnostic {
+  severity: SemanticDiagnosticSeverity;
+  code: string;
+  domainId: string;
+  domainClass: VersionDomainClass;
+  capabilityState: VersionDomainCapabilityState;
+  status: SemanticDomainCoverageStatus;
+  message?: string;
+  objectIds?: string[];
+}
+
+export type SemanticDiagnosticSeverity = "info" | "warning" | "error";
+
+export interface SemanticDomainCoverage {
+  domainId: string;
+  domainClass: VersionDomainClass;
+  capabilityState: VersionDomainCapabilityState;
+  status: SemanticDomainCoverageStatus;
+  diagnostics?: SemanticCompletenessDiagnostic[];
+}
+
+export type SemanticDomainCoverageStatus = "complete" | "derived" | "excluded" | "transient" | "unsupported" | "opaque-preserved" | "opaque-blocking";
+
+export interface SemanticDomainState {
+  domainId: string;
+  domainClass: VersionDomainClass;
+  capabilityState: VersionDomainCapabilityState;
+  objects?: Record<string, SemanticObjectDigest>;
+}
+
+export interface SemanticObjectDigest {
+  objectId: string;
+  objectKind: SemanticObjectKind;
+  domainId: string;
+  digest: ObjectDigest;
+}
+
+export type SemanticObjectKind = "workbook" | "sheet" | "row" | "column" | "cell" | "cell-value" | "cell-formula" | "direct-format" | "domain-attachment";
+
+export interface SemanticRowState {
+  objectId: string;
+  sheetId: string;
+  index: number;
+  ordinal: number;
+  explicitHeightPoints?: number;
+  effectiveHidden: boolean;
+  manualHidden: boolean;
+  structuralHidden: boolean;
+  filterHidden: boolean;
+  cacheHiddenWithoutOwner: boolean;
+  digest?: ObjectDigest;
+}
+
+export interface SemanticSheetState {
+  sheetId: string;
+  name: string;
+  rowCount: number;
+  columnCount: number;
+  rows: Record<string, SemanticRowState>;
+  columns: Record<string, SemanticColumnState>;
+  cells: Record<string, SemanticCellState>;
+  digest?: ObjectDigest;
+}
+
+export interface SemanticWorkbookDiff {
+  beforeDigest: ObjectDigest;
+  afterDigest: ObjectDigest;
+  changes: SemanticChange[];
+  coverage?: SemanticDomainCoverage[];
+  diagnostics?: SemanticCompletenessDiagnostic[];
+}
+
+export interface SemanticWorkbookState {
+  schemaVersion: string;
+  workbookId?: string;
+  domains: Record<string, SemanticDomainState>;
+  sheets: Record<string, SemanticSheetState>;
+}
+
+export interface SemanticWorkbookStateEnvelope {
+  state: SemanticWorkbookState;
+  stateDigest: ObjectDigest;
+  coverage?: SemanticDomainCoverage[];
+}
+
 export interface SerializedFloatingObjectGroup {
   id: string;
   sheetId: string;
@@ -5301,6 +5540,24 @@ export interface SubtotalResult {
   affectedRange: SheetRange;
 }
 
+export interface SyncApplyMutationMetadataWire {
+  mutationResult: MutationResult;
+  provenanceReport: SyncProvenanceApplyReport;
+}
+
+export interface SyncApplyOperationContextWire {
+  operationContext: VersionOperationContextWire;
+}
+
+export type SyncProvenanceApplyEvaluationStatus = "notEvaluated";
+
+export interface SyncProvenanceApplyReport {
+  appliedContext: SyncApplyOperationContextWire;
+  pendingSegmentStatus: SyncProvenanceApplyEvaluationStatus;
+  pendingSegmentIds: string[];
+  batchDurabilityStatus: SyncProvenanceApplyEvaluationStatus;
+}
+
 export interface Table {
   id: string;
   ooxmlTableId?: number;
@@ -5981,6 +6238,116 @@ export interface ValueFilter {
   included: CellValue[];
   includeBlanks: boolean;
 }
+
+export type VersionActorKindWire = "user" | "service" | "system" | "migration" | "automation";
+
+export interface VersionAuthorWire {
+  authorId: string;
+  actorKind: VersionActorKindWire;
+  displayName?: string;
+  clientId?: string;
+  sessionId?: string;
+}
+
+export type VersionCaptureDiagnosticsSinkRecordKindWire = "version-capture-failure";
+
+export type VersionCaptureFailureCodeWire = "missing_redaction_key" | "write_admission_blocked" | "capture_serialization_failed" | "diagnostics_sink_unavailable";
+
+export interface VersionCaptureFailureSinkRecordWire {
+  schemaVersion: number;
+  recordKind: VersionCaptureDiagnosticsSinkRecordKindWire;
+  diagnosticId: string;
+  observedAt: string;
+  stage: VersionCaptureFailureStageWire;
+  code: VersionCaptureFailureCodeWire;
+  severity: VersionDiagnosticSeverityWire;
+  message: string;
+  operationId?: string;
+  domainIds?: string[];
+  capturePolicy: CapturePolicyWire;
+  writeAdmissionMode: VersionWriteAdmissionModeWire;
+  redactionPolicy: VersionRedactionPolicyWire;
+  redactionKeys?: VersionRedactionKeyWire[];
+  missingRedactionFields?: string[];
+  debug?: Record<string, unknown>;
+}
+
+export type VersionCaptureFailureStageWire = "admission" | "capture";
+
+export type VersionDiagnosticSeverityWire = "info" | "warning" | "error";
+
+export type VersionDomainCapabilityState = "not-started" | "contracted" | "supported" | "derived" | "excluded" | "opaque-preserved" | "opaque-blocking";
+
+export type VersionDomainClass = "authored" | "derived" | "transient" | "packageFidelity" | "secret" | "external";
+
+export type VersionObjectDigestAlgorithm = "sha256" | "sha512" | "blake3" | "opaque";
+
+export interface VersionOperationContextWire {
+  operationId: string;
+  kind: VersionOperationKindWire;
+  author: VersionAuthorWire;
+  createdAt: string;
+  workbookId?: string;
+  sheetIds?: string[];
+  domainIds: string[];
+  groupId?: string;
+  capturePolicy: CapturePolicyWire;
+  writeAdmissionMode: VersionWriteAdmissionModeWire;
+  clientRequestId?: string;
+  collaboration?: VersionSyncOperationContextWire;
+}
+
+export type VersionOperationKindWire = "mutation" | "semantic-operation" | "derived-output-promotion" | "sync-import" | "sync-export" | "merge" | "revert" | "review";
+
+export type VersionRedactionKeySubjectWire = "author" | "session" | "provider" | "debug";
+
+export interface VersionRedactionKeyWire {
+  keyId: string;
+  subject: VersionRedactionKeySubjectWire;
+  sourceField: string;
+  digest: ObjectDigest;
+  policy: VersionRedactionPolicyWire;
+}
+
+export type VersionRedactionPolicyWire = "none" | "metadata-only" | "content-redacted" | "opaque-digest-only" | "drop";
+
+export type VersionSyncAuthorStateWire = "singleRemote" | "mixedRemote" | "unknown" | "agent" | "system";
+
+export type VersionSyncCommitGroupingWire = "none" | "pendingRemote" | "excludedLifecycle" | "blockedMissingRedactionKey" | "blockedBatchFailure" | "blockedMixedRemote" | "blockedUnknownRemote" | "blockedUnverified";
+
+export interface VersionSyncOperationContextWire {
+  sourceKind: VersionSyncSourceKindWire;
+  originKind: VersionSyncOriginKindWire;
+  stableOriginId?: string;
+  providerId?: string;
+  providerKind?: string;
+  authorityRef?: string;
+  roomId?: string;
+  epoch?: string;
+  updateId?: string;
+  sequence?: string;
+  payloadHash: string;
+  provenancePayloadHash?: string;
+  trustStatus: VersionSyncTrustStatusWire;
+  authorState: VersionSyncAuthorStateWire;
+  remoteSessionId?: string;
+  correlationId?: string;
+  causationIds?: string[];
+  replay: boolean;
+  system: boolean;
+  commitGrouping: VersionSyncCommitGroupingWire;
+  validationDiagnosticCount: number;
+  exclusionReason?: string;
+  exclusionSubreason?: string;
+}
+
+export type VersionSyncOriginKindWire = "provider" | "room" | "import" | "system" | "legacyRaw";
+
+export type VersionSyncSourceKindWire = "providerReplay" | "providerLiveInbound" | "providerMixedInbound" | "collaborationHydration" | "collaborationLiveRemote" | "collaborationMixedRemote" | "importHydration" | "systemRepair" | "legacyRawUnknown";
+
+export type VersionSyncTrustStatusWire = "verified" | "trustedLocalSystem" | "unverified" | "legacyRaw";
+
+export type VersionWriteAdmissionModeWire = "capture" | "shadowOnly" | "captureDisabledNoHistory" | "captureSuspendedWithGap" | "block";
 
 export type VerticalAlign = "top" | "middle" | "bottom" | "justified" | "distributed";
 

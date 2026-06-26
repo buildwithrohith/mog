@@ -37,6 +37,11 @@ import {
 import { parseCellKey } from './clipboard-utils';
 import { shouldResetNumberFormatBeforeExternalPaste } from './external-paste-format-reset';
 import { isDenseCoreCopyUnsafeForSource } from './full-shape-ranges';
+import {
+  expandTablesForPastedValues,
+  rangeFromPastedValueUpdates,
+  type PasteTableInfo,
+} from './paste-table-expansion';
 
 // =============================================================================
 // Constants
@@ -228,29 +233,6 @@ export interface PasteStoreOperations {
     | Promise<{ success: boolean; movedCount: number; error?: string }>
     | { success: boolean; movedCount: number; error?: string };
   /**
-   * Move whole-table metadata when a cut-paste moves the table's entire range.
-   * Implementations should be a no-op if the backing engine already moved it.
-   */
-  moveTablesForCutPaste?(
-    sourceSheetId: SheetId,
-    sourceRange: CellRange,
-    targetSheetId: SheetId,
-    targetRow: number,
-    targetCol: number,
-  ): Promise<void> | void;
-  /**
-   * Move whole-pivot metadata when a cut-paste moves the pivot's entire output
-   * range. Implementations should be a no-op if the backing engine already
-   * moved it.
-   */
-  movePivotsForCutPaste?(
-    sourceSheetId: SheetId,
-    sourceRange: CellRange,
-    targetSheetId: SheetId,
-    targetRow: number,
-    targetCol: number,
-  ): Promise<void> | void;
-  /**
    * Get CellId at a given position.
    * Comments in Clipboard - needed to attach comments to pasted cells.
    */
@@ -367,6 +349,8 @@ export interface PasteStoreOperations {
    * @param width - Width in pixels (or undefined for default)
    */
   setColumnWidth?(sheetId: SheetId, col: number, width: number | undefined): void;
+  getTables?(sheetId: SheetId): Promise<PasteTableInfo[]> | PasteTableInfo[];
+  resizeTable?(sheetId: SheetId, tableName: string, rangeA1: string): Promise<void> | void;
 }
 
 // =============================================================================
@@ -1231,6 +1215,14 @@ export async function executePaste(
     if (!useCoreCopyRange && formatUpdates.length > 0) {
       await applyCellFormatUpdates(store, sheetId, formatUpdates);
     }
+
+    await expandTablesForPastedValues(
+      store,
+      sheetId,
+      useCoreCopyRange && coreCopyType !== 'formats'
+        ? affectedRange
+        : rangeFromPastedValueUpdates(valueUpdates),
+    );
 
     // Step 7: Recreate merges from clipboard
     // Only when pasting all (not values/formulas/formats only)

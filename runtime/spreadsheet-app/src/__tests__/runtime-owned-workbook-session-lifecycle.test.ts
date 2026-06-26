@@ -1,15 +1,28 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { PUBLIC_VERSION_DOMAIN_DEFAULT_MANIFEST_MATRIX_ROW_IDS } from '@mog-sdk/contracts/versioning';
+import type { DocumentHandle, DocumentHandleWorkbookConfig } from '@mog-sdk/kernel';
+
+import { mergeFeatureGates } from '../feature-gates';
 import { createSpreadsheetRuntime } from '../runtime';
+import { WORKBOOK_FACADE_CAPABILITY_MATRIX } from '../workbook-facade-capability-matrix';
 import type {
+  SpreadsheetCapability,
   SpreadsheetRuntime,
   SpreadsheetRuntimeOptions,
   SpreadsheetSaveRequest,
   SpreadsheetSaveResult,
 } from '../public-types';
 import { SPREADSHEET_RUNTIME_ATTACHMENT_CONTROLLER } from '../attachment-runtime';
-import type { RegisteredSpreadsheetAppBridge } from '../runtime-types';
+import {
+  attachRuntimeDefaultVersioning,
+  decorateRuntimeOwnedHandleWithDefaultVersioning,
+  type RegisteredSpreadsheetAppBridge,
+} from '../runtime-types';
+import { loadDocumentForSource } from '../shell-documents';
+
+type WorkbookConfig = DocumentHandleWorkbookConfig;
 
 function savedResult(request: SpreadsheetSaveRequest): SpreadsheetSaveResult {
   return {
@@ -47,10 +60,268 @@ function runtimeOptions(runtimeId: string): SpreadsheetRuntimeOptions {
   };
 }
 
+function runtimeOptionsWithDeniedCapabilities(
+  runtimeId: string,
+  deniedCapabilities: ReadonlySet<SpreadsheetCapability>,
+): SpreadsheetRuntimeOptions {
+  return {
+    runtimeId,
+    host: {
+      persistenceMode: 'host-owned-ephemeral',
+      authority: {
+        resolveActor(ref) {
+          return {
+            actorId: ref.actorId,
+            kind: ref.kind ?? 'host',
+            displayName: ref.displayName,
+          };
+        },
+        authorize(_actor, capability) {
+          return deniedCapabilities.has(capability)
+            ? {
+                decision: 'denied',
+                policyVersion: 'runtime-test',
+                reason: `denied ${capability}`,
+              }
+            : { decision: 'allowed', policyVersion: 'runtime-test' };
+        },
+      },
+    },
+    onSaveRequest: savedResult,
+  };
+}
+
 async function disposeRuntime(runtime: SpreadsheetRuntime | undefined): Promise<void> {
   if (!runtime) return;
   await runtime.dispose();
 }
+
+test('runtime attachment default versioning decorates document handle workbook creation', async () => {
+  const capturedConfigs: WorkbookConfig[] = [];
+  const handle = {
+    documentId: 'runtime-default-versioning-doc',
+    workbook: async (config?: WorkbookConfig) => {
+      capturedConfigs.push(config ?? {});
+      return {};
+    },
+  } as DocumentHandle;
+
+  decorateRuntimeOwnedHandleWithDefaultVersioning(handle);
+  await handle.workbook({ name: 'Runtime default versioning' });
+
+  const config = capturedConfigs[0];
+  assert.equal(config.versioning?.providerSelection?.kind, 'indexeddb');
+  assert.equal(config.versioning?.providerSelection?.requireDurablePersistence, true);
+  assert.equal(config.versioning?.domainSupportManifest?.workbookId, handle.documentId);
+  assert.deepEqual(
+    config.versioning?.domainSupportManifest?.domains.map((domain) => domain.matrixRowId),
+    [...PUBLIC_VERSION_DOMAIN_DEFAULT_MANIFEST_MATRIX_ROW_IDS],
+  );
+});
+
+test('runtime attachment default versioning opens provider read-only when document handle is read-only', async () => {
+  const capturedConfigs: WorkbookConfig[] = [];
+  let readOnly = false;
+  const handle = {
+    documentId: 'runtime-default-versioning-readonly-doc',
+    get isReadOnly() {
+      return readOnly;
+    },
+    workbook: async (config?: WorkbookConfig) => {
+      capturedConfigs.push(config ?? {});
+      return {};
+    },
+  } as DocumentHandle;
+
+  decorateRuntimeOwnedHandleWithDefaultVersioning(handle);
+  readOnly = true;
+  await handle.workbook({ name: 'Runtime default versioning read-only' });
+
+  assert.equal(capturedConfigs[0].versioning?.providerSelection?.kind, 'indexeddb');
+  assert.equal(capturedConfigs[0].versioning?.providerSelection?.requireDurablePersistence, true);
+  assert.equal(capturedConfigs[0].versioning?.providerSelection?.readOnly, true);
+});
+
+test('runtime attachment default versioning defers import root initialization while import durability is pending', async () => {
+  const capturedConfigs: WorkbookConfig[] = [];
+  const handle = {
+    documentId: 'runtime-default-versioning-import-doc',
+    isImportDurabilityPending: true,
+    workbook: async (config?: WorkbookConfig) => {
+      capturedConfigs.push(config ?? {});
+      return {};
+    },
+  } as DocumentHandle;
+
+  decorateRuntimeOwnedHandleWithDefaultVersioning(handle);
+  await handle.workbook({ name: 'Runtime default versioning imported workbook' });
+
+  assert.equal(capturedConfigs[0].versioning?.providerSelection?.kind, 'indexeddb');
+  assert.equal(capturedConfigs[0].versioning?.providerSelection?.requireDurablePersistence, true);
+  assert.equal(capturedConfigs[0].versioning?.providerSelection?.initializeTiming, 'deferred');
+});
+
+test('runtime attachment default versioning preserves caller versioning overrides', async () => {
+  const capturedConfigs: WorkbookConfig[] = [];
+  const handle = {
+    documentId: 'runtime-default-versioning-overrides-doc',
+    workbook: async (config?: WorkbookConfig) => {
+      capturedConfigs.push(config ?? {});
+      return {};
+    },
+  } as DocumentHandle;
+  const providerSelection = {
+    kind: 'memory',
+    requireDurablePersistence: false,
+  } as const satisfies NonNullable<NonNullable<WorkbookConfig['versioning']>['providerSelection']>;
+
+  decorateRuntimeOwnedHandleWithDefaultVersioning(handle);
+  decorateRuntimeOwnedHandleWithDefaultVersioning(handle);
+  await handle.workbook({
+    versioning: {
+      providerSelection,
+      requireDomainSupportManifest: true,
+    },
+  });
+
+  assert.equal(capturedConfigs.length, 1);
+  assert.equal(capturedConfigs[0].versioning?.providerSelection, providerSelection);
+  assert.equal(capturedConfigs[0].versioning?.requireDomainSupportManifest, true);
+  assert.equal(
+    capturedConfigs[0].versioning?.domainSupportManifest?.workbookId,
+    'runtime-default-versioning-overrides-doc',
+  );
+});
+
+test('spreadsheet app shell document loading propagates read-only handles to default versioning', async () => {
+  const capturedConfigs: WorkbookConfig[] = [];
+  let readOnly = false;
+  const handle = {
+    documentId: 'runtime-shell-default-versioning-readonly-doc',
+    eventBus: {
+      onAll() {
+        return undefined;
+      },
+    },
+    registerChartImageExporter() {
+      // Test handle only records that the runtime installs the exporter.
+    },
+    dispose() {
+      return undefined;
+    },
+    get isReadOnly() {
+      return readOnly;
+    },
+    workbook: async (config?: WorkbookConfig) => {
+      capturedConfigs.push(config ?? {});
+      return {};
+    },
+  };
+  const shell = {
+    documentManager: {
+      async createDocument() {
+        return handle;
+      },
+    },
+  } as never;
+
+  const loaded = await loadDocumentForSource(
+    shell,
+    'runtime-shell-default-versioning-readonly-doc',
+    { kind: 'blank' },
+  );
+
+  readOnly = true;
+  await loaded.handle.workbook();
+
+  assert.equal(capturedConfigs[0].versioning?.providerSelection?.kind, 'indexeddb');
+  assert.equal(capturedConfigs[0].versioning?.providerSelection?.requireDurablePersistence, true);
+  assert.equal(capturedConfigs[0].versioning?.providerSelection?.readOnly, true);
+});
+
+test('spreadsheet app shell document loading defers default versioning for imported handles', async () => {
+  const capturedConfigs: WorkbookConfig[] = [];
+  const handle = {
+    documentId: 'runtime-shell-default-versioning-import-doc',
+    eventBus: {
+      onAll() {
+        return undefined;
+      },
+    },
+    registerChartImageExporter() {
+      // Test handle only records that the runtime installs the exporter.
+    },
+    dispose() {
+      return undefined;
+    },
+    isImportDurabilityPending: true,
+    workbook: async (config?: WorkbookConfig) => {
+      capturedConfigs.push(config ?? {});
+      return {};
+    },
+  };
+  const shell = {
+    documentManager: {
+      async loadDocument() {
+        return handle;
+      },
+    },
+  } as never;
+
+  const loaded = await loadDocumentForSource(shell, 'runtime-shell-default-versioning-import-doc', {
+    kind: 'xlsx-bytes',
+    bytes: new Uint8Array([1, 2, 3]),
+  });
+
+  await loaded.handle.workbook();
+
+  assert.equal(capturedConfigs[0].versioning?.providerSelection?.kind, 'indexeddb');
+  assert.equal(capturedConfigs[0].versioning?.providerSelection?.requireDurablePersistence, true);
+  assert.equal(capturedConfigs[0].versioning?.providerSelection?.initializeTiming, 'deferred');
+});
+
+test('runtime version feature gates fail closed until default versioning is attached', () => {
+  const unavailable = mergeFeatureGates(undefined, undefined, undefined, undefined, {
+    versionControl: false,
+  });
+  assert.equal(unavailable.capabilities?.versionControl, false);
+  assert.equal(unavailable.capabilities?.versionControlMerge, false);
+  assert.equal(unavailable.capabilities?.['versionControl.merge'], false);
+
+  const available = mergeFeatureGates(undefined, undefined, undefined, undefined, {
+    versionControl: true,
+  });
+  assert.equal(available.capabilities?.versionControl, undefined);
+
+  const hostDisabled = mergeFeatureGates(
+    { capabilities: { versionControl: false } },
+    undefined,
+    undefined,
+    undefined,
+    { versionControl: true },
+  );
+  assert.equal(hostDisabled.capabilities?.versionControl, false);
+});
+
+test('runtime default versioning attachment honors skipped document readiness', () => {
+  const result = attachRuntimeDefaultVersioning({
+    documentId: 'runtime-default-versioning-skipped-doc',
+    shell: {
+      documentManager: {
+        getDocument() {
+          throw new Error('skip must not read document handle');
+        },
+      },
+    } as never,
+    documentVersioning: { status: 'skipped' },
+  });
+
+  assert.deepEqual(result, {
+    status: 'unavailable',
+    documentId: 'runtime-default-versioning-skipped-doc',
+    reason: 'document-versioning-skipped',
+  });
+});
 
 test('runtime-owned workbook session stays usable headlessly and is disposed explicitly', async () => {
   let runtime: SpreadsheetRuntime | undefined;
@@ -240,6 +511,215 @@ test('read-only inspection, screenshot, and dependency reads do not dirty a clea
 
     assert.deepEqual(dirtyStates, []);
     unsubscribeDirty();
+  } finally {
+    await disposeRuntime(runtime);
+  }
+});
+
+test('version surface status remains available without version read grant', async () => {
+  let runtime: SpreadsheetRuntime | undefined;
+  try {
+    const versionMatrix = WORKBOOK_FACADE_CAPABILITY_MATRIX.WorkbookVersion;
+    const assertVersionCapabilityEntry = (
+      methodName: keyof typeof versionMatrix,
+      expected: readonly SpreadsheetCapability[],
+    ) => {
+      const entry = versionMatrix[methodName] as {
+        readonly capability?: SpreadsheetCapability;
+        readonly capabilities?: readonly SpreadsheetCapability[];
+      };
+      assert.equal(entry.capability, undefined);
+      assert.deepEqual(entry.capabilities, expected);
+    };
+
+    assert.deepEqual(versionMatrix.getSurfaceStatus.capabilities, []);
+    assert.equal(versionMatrix.getSurfaceStatus.capability, undefined);
+    assertVersionCapabilityEntry('getStatus', ['version:read']);
+    assertVersionCapabilityEntry('getReview', ['version:reviewRead']);
+    assertVersionCapabilityEntry('createReview', ['version:reviewWrite']);
+    assertVersionCapabilityEntry('getReviewDiff', ['version:diff']);
+    assert.deepEqual(versionMatrix.getReviewDiff.conditionalCapabilities, [
+      {
+        when: {
+          argumentIndex: 0,
+          path: ['reviewId'],
+          presence: 'present',
+        },
+        capabilities: ['version:reviewRead'],
+      },
+    ]);
+    assertVersionCapabilityEntry('createProposal', ['version:proposal']);
+    assertVersionCapabilityEntry('acceptProposal', ['version:proposal', 'version:branch']);
+    assertVersionCapabilityEntry('revert', ['version:revert']);
+    assertVersionCapabilityEntry('promotePendingRemote', [
+      'version:remotePromote',
+      'version:provenance',
+    ]);
+
+    const deniedVersionCapabilities = new Set<SpreadsheetCapability>([
+      'version:read',
+      'version:diff',
+      'version:commit',
+      'version:branch',
+      'version:checkout',
+      'version:reviewRead',
+      'version:reviewWrite',
+      'version:proposal',
+      'version:mergePreview',
+      'version:mergeApply',
+      'version:revert',
+      'version:provenance',
+      'version:remotePromote',
+    ]);
+    runtime = await createSpreadsheetRuntime(
+      runtimeOptionsWithDeniedCapabilities(
+        'runtime-version-surface-status-capability-free',
+        deniedVersionCapabilities,
+      ),
+    );
+    await runtime.ready;
+
+    const workbook = await runtime.openWorkbook({
+      workbookId: 'runtime-version-surface-status-capability-free-workbook',
+      source: { kind: 'blank' },
+    });
+    await workbook.ready;
+    const actor = await workbook.resolveActor({ actorId: 'reader', kind: 'user' });
+    const facade = actor.getWorkbook();
+
+    const surface = await facade.version.getSurfaceStatus();
+    assert.equal(surface.schemaVersion, 1);
+    assert.equal(surface.capabilities['version:read'].enabled, false);
+
+    assert.throws(
+      () => void facade.version.getStatus(),
+      /Capability "version:read" is denied for WorkbookVersion\.getStatus/,
+    );
+    assert.deepEqual(await facade.version.getHead(), {
+      ok: false,
+      error: {
+        code: 'version_capability_unavailable',
+        capability: 'version:read',
+        dependency: 'hostCapability',
+        reason: 'Capability "version:read" is denied for WorkbookVersion.getHead',
+        retryable: false,
+      },
+    });
+    const applyMergeDenied = await facade.version.applyMerge(
+      {} as Parameters<typeof facade.version.applyMerge>[0],
+    );
+    assert.equal(applyMergeDenied.ok, false);
+    if (!applyMergeDenied.ok) {
+      assert.equal(applyMergeDenied.error.code, 'version_capability_unavailable');
+      if (applyMergeDenied.error.code === 'version_capability_unavailable') {
+        assert.equal(applyMergeDenied.error.capability, 'version:mergePreview');
+        assert.deepEqual(applyMergeDenied.error.diagnostics?.[0]?.data?.deniedCapabilities, [
+          'version:mergePreview',
+          'version:mergeApply',
+          'version:branch',
+        ]);
+      }
+    }
+    const revertDenied = await facade.version.revert(
+      {} as Parameters<typeof facade.version.revert>[0],
+    );
+    assert.deepEqual(revertDenied, {
+      ok: false,
+      error: {
+        code: 'version_capability_unavailable',
+        capability: 'version:revert',
+        dependency: 'hostCapability',
+        reason: 'Capability "version:revert" is denied for WorkbookVersion.revert',
+        retryable: false,
+      },
+    });
+    const promoteRemoteDenied = await facade.version.promotePendingRemote();
+    assert.equal(promoteRemoteDenied.ok, false);
+    if (!promoteRemoteDenied.ok) {
+      assert.equal(promoteRemoteDenied.error.code, 'version_capability_unavailable');
+      if (promoteRemoteDenied.error.code === 'version_capability_unavailable') {
+        assert.equal(promoteRemoteDenied.error.capability, 'version:remotePromote');
+        assert.deepEqual(promoteRemoteDenied.error.diagnostics?.[0]?.data?.deniedCapabilities, [
+          'version:remotePromote',
+          'version:provenance',
+        ]);
+      }
+    }
+    const getReviewDenied = await facade.version.getReview({ reviewId: 'review-1' });
+    assert.deepEqual(getReviewDenied, {
+      ok: false,
+      error: {
+        code: 'version_capability_unavailable',
+        capability: 'version:reviewRead',
+        dependency: 'hostCapability',
+        reason: 'Capability "version:reviewRead" is denied for WorkbookVersion.getReview',
+        retryable: false,
+      },
+    });
+    const createReviewDenied = await facade.version.createReview(
+      {} as Parameters<typeof facade.version.createReview>[0],
+    );
+    assert.deepEqual(createReviewDenied, {
+      ok: false,
+      error: {
+        code: 'version_capability_unavailable',
+        capability: 'version:reviewWrite',
+        dependency: 'hostCapability',
+        reason: 'Capability "version:reviewWrite" is denied for WorkbookVersion.createReview',
+        retryable: false,
+      },
+    });
+    const reviewDiffDenied = await facade.version.getReviewDiff({ reviewId: 'review-1' });
+    assert.equal(reviewDiffDenied.ok, false);
+    if (!reviewDiffDenied.ok) {
+      assert.equal(reviewDiffDenied.error.code, 'version_capability_unavailable');
+      if (reviewDiffDenied.error.code === 'version_capability_unavailable') {
+        assert.equal(reviewDiffDenied.error.capability, 'version:diff');
+        assert.deepEqual(reviewDiffDenied.error.diagnostics?.[0]?.data?.deniedCapabilities, [
+          'version:diff',
+          'version:reviewRead',
+        ]);
+      }
+    }
+  } finally {
+    await disposeRuntime(runtime);
+  }
+});
+
+test('version review diff conditionally requires review read only for review-id targets', async () => {
+  let runtime: SpreadsheetRuntime | undefined;
+  try {
+    runtime = await createSpreadsheetRuntime(
+      runtimeOptionsWithDeniedCapabilities(
+        'runtime-version-review-diff-conditional-capability',
+        new Set<SpreadsheetCapability>(['version:reviewRead']),
+      ),
+    );
+    await runtime.ready;
+
+    const workbook = await runtime.openWorkbook({
+      workbookId: 'runtime-version-review-diff-conditional-capability-workbook',
+      source: { kind: 'blank' },
+    });
+    await workbook.ready;
+    const actor = await workbook.resolveActor({ actorId: 'reader', kind: 'user' });
+    const facade = actor.getWorkbook();
+
+    const baseCommitId = `commit:sha256:${'a'.repeat(64)}` as const;
+    const headCommitId = `commit:sha256:${'b'.repeat(64)}` as const;
+    const commitRangeDiff = await facade.version.getReviewDiff({ baseCommitId, headCommitId });
+    if (!commitRangeDiff.ok) {
+      assert.notEqual(commitRangeDiff.error.code, 'version_capability_unavailable');
+    }
+
+    const reviewDiff = await facade.version.getReviewDiff({ reviewId: 'review-1' });
+    assert.equal(reviewDiff.ok, false);
+    if (!reviewDiff.ok) {
+      assert.equal(reviewDiff.error.code, 'version_capability_unavailable');
+      if (reviewDiff.error.code === 'version_capability_unavailable') {
+        assert.equal(reviewDiff.error.capability, 'version:reviewRead');
+      }
+    }
   } finally {
     await disposeRuntime(runtime);
   }

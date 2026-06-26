@@ -4,6 +4,7 @@
 //! cells are edited, cleared, sorted, batch-set, or undone.
 
 use super::*;
+use crate::engine_types::queries::FindInRangeOptions;
 use crate::snapshot::{CellData, SheetSnapshot, WorkbookSnapshot};
 use value_types::{CellValue, FiniteF64};
 
@@ -282,6 +283,112 @@ fn test_integration_set_cell_with_formula_deps() {
     // C1: old=21, new=201
     assert_old_value(changes, 0, 2, Some(num(21.0)));
     assert_new_value(changes, 0, 2, num(201.0));
+}
+
+#[test]
+fn test_integration_change_records_include_display_formula_and_number_format() {
+    let snap = formula_deps_snapshot();
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(snap).unwrap();
+    assert_eq!(
+        *engine.mirror().get_cell_value(&cell_id_b1()).unwrap(),
+        num(20.0)
+    );
+
+    let (_patches, mutation_result) = engine
+        .set_cell(
+            &sheet_id(),
+            cell_id_b1(),
+            0,
+            1,
+            crate::bridge_types::CellInput::Parse {
+                text: "=A1*3".into(),
+            },
+        )
+        .unwrap();
+
+    let changes = &mutation_result.recalc.changed_cells;
+    let b1_change = find_change(changes, 0, 1)
+        .expect("B1 should appear in changed_cells after formula overwrite");
+
+    assert_eq!(b1_change.old_value, Some(num(20.0)));
+    assert_eq!(b1_change.value, num(30.0));
+    assert_eq!(b1_change.old_display_text.as_deref(), Some("20"));
+    assert_eq!(b1_change.display_text.as_deref(), Some("30"));
+    assert_eq!(b1_change.old_formula.as_deref(), Some("=A1*2"));
+    assert_eq!(b1_change.new_formula.as_deref(), Some("=A1*3"));
+    assert_eq!(b1_change.number_format.as_deref(), Some("General"));
+}
+
+#[test]
+fn test_integration_parsed_formula_overwrite_includes_before_snapshots() {
+    let snap = formula_deps_snapshot();
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(snap).unwrap();
+
+    let (_patches, mutation_result) = engine
+        .set_cell_value_parsed(&sheet_id(), 0, 1, "=A1*3")
+        .unwrap();
+
+    let b1_change = find_change(&mutation_result.recalc.changed_cells, 0, 1)
+        .expect("B1 should appear in changed_cells after parsed formula overwrite");
+
+    assert_eq!(b1_change.old_value, Some(num(20.0)));
+    assert_eq!(b1_change.value, num(30.0));
+    assert_eq!(b1_change.old_display_text.as_deref(), Some("20"));
+    assert_eq!(b1_change.display_text.as_deref(), Some("30"));
+    assert_eq!(b1_change.old_formula.as_deref(), Some("=A1*2"));
+    assert_eq!(b1_change.new_formula.as_deref(), Some("=A1*3"));
+}
+
+#[test]
+fn test_integration_parsed_value_to_formula_has_no_old_formula() {
+    let snap = simple_snapshot();
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(snap).unwrap();
+
+    let (_patches, mutation_result) = engine
+        .set_cell_value_parsed(&sheet_id(), 0, 1, "=A1*3")
+        .unwrap();
+
+    let b1_change = find_change(&mutation_result.recalc.changed_cells, 0, 1)
+        .expect("B1 should appear in changed_cells after parsed value-to-formula edit");
+
+    assert_eq!(b1_change.old_value, Some(num(20.0)));
+    assert_eq!(b1_change.value, num(30.0));
+    assert_eq!(b1_change.old_formula, None);
+    assert_eq!(b1_change.new_formula.as_deref(), Some("=A1*3"));
+}
+
+#[test]
+fn test_integration_set_cells_by_position_formula_overwrite_includes_before_snapshots() {
+    let snap = formula_deps_snapshot();
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(snap).unwrap();
+
+    let output = engine
+        .apply_mutation(EngineMutation::SetCellsByPosition {
+            edits: vec![(
+                sheet_id(),
+                0,
+                1,
+                crate::bridge_types::CellInput::Parse {
+                    text: "=A1*3".into(),
+                },
+            )],
+            skip_cycle_check: false,
+        })
+        .unwrap();
+
+    let mutation_result = match output {
+        MutationOutput::Recalc(result) => result,
+        _ => panic!("expected recalc mutation output"),
+    };
+    let b1_change = find_change(&mutation_result.recalc.changed_cells, 0, 1)
+        .expect("B1 should appear in changed_cells after SetCellsByPosition formula overwrite");
+
+    assert_eq!(b1_change.old_value, Some(num(20.0)));
+    assert_eq!(b1_change.value, num(30.0));
+    assert_eq!(b1_change.old_display_text.as_deref(), Some("20"));
+    assert_eq!(b1_change.display_text.as_deref(), Some("30"));
+    assert_eq!(b1_change.old_formula.as_deref(), Some("=A1*2"));
+    assert_eq!(b1_change.new_formula.as_deref(), Some("=A1*3"));
 }
 
 // ===================================================================
@@ -786,4 +893,42 @@ fn test_integration_clear_range_old_values() {
         "expected at least 3 changes, got {}",
         changes.len()
     );
+}
+
+#[test]
+fn test_integration_replace_all_returns_changed_cells_and_count() {
+    let snap = simple_snapshot();
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(snap).unwrap();
+
+    let (_patches, mutation_result) = engine
+        .replace_all_in_range(
+            &sheet_id(),
+            0,
+            0,
+            1,
+            1,
+            "0".to_string(),
+            "5".to_string(),
+            FindInRangeOptions {
+                text: "0".to_string(),
+                case_sensitive: None,
+                whole_cell: None,
+                include_formulas: None,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(mutation_result.extract_data::<u32>(), Some(2));
+    let changes = &mutation_result.recalc.changed_cells;
+
+    assert_old_value(changes, 0, 0, Some(num(10.0)));
+    assert_new_value(changes, 0, 0, num(15.0));
+    assert_old_value(changes, 0, 1, Some(num(20.0)));
+    assert_new_value(changes, 0, 1, num(25.0));
+    let a2_change = find_change(changes, 1, 0)
+        .expect("formula dependency should recalculate after replaceAll changes A1/B1");
+    assert_eq!(a2_change.old_formula.as_deref(), Some("=A1+B1"));
+    assert_eq!(a2_change.new_formula.as_deref(), Some("=A1+B1"));
+    assert_old_value(changes, 1, 0, Some(num(30.0)));
+    assert_new_value(changes, 1, 0, num(40.0));
 }

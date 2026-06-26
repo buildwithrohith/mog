@@ -26,7 +26,7 @@
  * Charts
  */
 
-import type { ChartConfig, SerializedChart } from '@mog/charts';
+import { DEFAULT_CHART_COLORS, type ChartConfig, type SerializedChart } from '@mog/charts';
 import type {
   ActionDependencies,
   ActionHandler,
@@ -36,7 +36,6 @@ import type {
 import type { ISheetViewGeometry, ISheetViewViewport } from '@mog-sdk/sheet-view';
 import { type SheetId, sheetId } from '@mog-sdk/contracts/core';
 
-import { normalizeChartConfig } from '../../adapters/charts/chart-config-adapter';
 import { pasteChartFromClipboard } from './chart-clipboard';
 import { deselectChartObjects, selectChartObject } from './chart-selection';
 import { resolveChartCreationSourceRange, resolveChartSourceRange } from './chart-source-range';
@@ -318,7 +317,7 @@ export const CHANGE_CHART_TYPE: AsyncActionHandler = async (
  * Payload: { chartId: string }
  *
  * This is triggered from the context menu.
- * Uses Mutations layer for chart duplication.
+ * Uses the worksheet chart API so duplicate semantics stay centralized.
  */
 export const DUPLICATE_CHART: AsyncActionHandler = async (deps, payload): Promise<ActionResult> => {
   const chartId = payload?.chartId;
@@ -330,17 +329,7 @@ export const DUPLICATE_CHART: AsyncActionHandler = async (deps, payload): Promis
   const ws = deps.workbook.getSheetById(sheetId);
 
   try {
-    const existing = await ws.charts.get(chartId);
-    if (!existing) {
-      return { handled: false, error: `Chart ${chartId} not found` };
-    }
-
-    const { id: _id, createdAt: _c, updatedAt: _u, ...chartConfig } = existing;
-    const newChart = await ws.charts.add({
-      ...chartConfig,
-      anchorRow: (existing.anchorRow ?? 0) + 2,
-      anchorCol: (existing.anchorCol ?? 0) + 2,
-    });
+    const newChart = await ws.charts.duplicate(chartId);
 
     if (newChart.chart.id) {
       selectChartObject(deps, newChart.chart.id);
@@ -552,11 +541,28 @@ export const APPLY_SELECT_DATA: AsyncActionHandler = async (deps): Promise<Actio
 
   // Update chart with new data via unified Worksheet API
   try {
-    await ws.charts.update(dialogState.chartId, {
+    await ws.charts.setSourceData(dialogState.chartId, {
       dataRange: dialogState.dataRange,
-      seriesOrientation: dialogState.orientation,
       // Note: Full implementation would update series configurations
     });
+    const appModel = await ws.charts.getAppModel(dialogState.chartId, {
+      materialization: 'available',
+    });
+    const currentOrientation = appModel?.source.orientation;
+    if (
+      (currentOrientation && currentOrientation !== dialogState.orientation) ||
+      (!currentOrientation && dialogState.orientation === 'rows')
+    ) {
+      const switchReceipt = await ws.charts.switchSeriesOrientation(dialogState.chartId);
+      if (switchReceipt.status !== 'applied') {
+        return {
+          handled: false,
+          error:
+            switchReceipt.diagnostics[0]?.message ??
+            'Chart source binding does not support switching series orientation',
+        };
+      }
+    }
   } catch (e: any) {
     return { handled: false, error: e.message ?? String(e) };
   }
@@ -990,10 +996,8 @@ export const CREATE_EMBEDDED_CHART: AsyncActionHandler = async (
   const chartType = payload?.type || 'column';
   const chartSubType = payload?.subType;
 
-  // Default chart size in cells (not pixels!)
-  // 8 cells wide × 15 cells tall ≈ 640×300px with default cell sizes
-  const DEFAULT_WIDTH_CELLS = 8;
-  const DEFAULT_HEIGHT_CELLS = 15;
+  const DEFAULT_WIDTH_PT = 480;
+  const DEFAULT_HEIGHT_PT = 225;
 
   // Default position when no selection
   const DEFAULT_POSITION = { anchorRow: 2, anchorCol: 2 };
@@ -1008,8 +1012,8 @@ export const CREATE_EMBEDDED_CHART: AsyncActionHandler = async (
         dataRange: '',
         anchorRow: position.anchorRow,
         anchorCol: position.anchorCol,
-        width: DEFAULT_WIDTH_CELLS,
-        height: DEFAULT_HEIGHT_CELLS,
+        width: DEFAULT_WIDTH_PT,
+        height: DEFAULT_HEIGHT_PT,
       });
       if (newChart.chart.id) {
         selectChartObject(deps, newChart.chart.id);
@@ -1041,8 +1045,8 @@ export const CREATE_EMBEDDED_CHART: AsyncActionHandler = async (
         : {}),
       anchorRow: position.anchorRow,
       anchorCol: position.anchorCol,
-      width: DEFAULT_WIDTH_CELLS,
-      height: DEFAULT_HEIGHT_CELLS,
+      width: DEFAULT_WIDTH_PT,
+      height: DEFAULT_HEIGHT_PT,
     });
     if (newChart.chart.id) {
       selectChartObject(deps, newChart.chart.id);
@@ -1171,47 +1175,51 @@ export const INSERT_CHART_FROM_WIZARD: AsyncActionHandler = async (deps): Promis
   const sourceRange = ranges && ranges.length > 0 ? ranges[0] : null;
   const position = await getSmartChartPosition(deps, sourceRange, DEFAULT_POSITION, sheetId);
 
-  // Default chart size in cells (not pixels!)
-  const DEFAULT_WIDTH_CELLS = 8;
-  const DEFAULT_HEIGHT_CELLS = 15;
+  const DEFAULT_WIDTH_PT = 480;
+  const DEFAULT_HEIGHT_PT = 225;
 
   // Create chart via unified Worksheet API
   // Note: ChartConfig uses 'axis' property with xAxis/yAxis sub-properties
   try {
-    const newChart = await ws.charts.add(
-      normalizeChartConfig({
-        type: dialogState.chartType,
-        subType: dialogState.variantId as ChartConfig['subType'],
-        dataRange: dialogState.dataRange,
-        seriesOrientation: dialogState.seriesInRows ? 'rows' : 'columns',
-        title: dialogState.title,
-        axis:
-          dialogState.xAxis || dialogState.yAxis
-            ? {
-                xAxis: {
-                  type: 'category' as const,
-                  title: dialogState.xAxis?.title || undefined,
-                  min: dialogState.xAxis?.min,
-                  max: dialogState.xAxis?.max,
-                  gridLines: dialogState.xAxis?.showGridlines,
-                },
-                yAxis: {
-                  type: 'value' as const,
-                  title: dialogState.yAxis?.title || undefined,
-                  min: dialogState.yAxis?.min,
-                  max: dialogState.yAxis?.max,
-                  gridLines: dialogState.yAxis?.showGridlines,
-                },
-              }
-            : undefined,
-        legend: dialogState.legend,
-        dataLabels: { show: dialogState.showDataLabels },
-        anchorRow: position.anchorRow,
-        anchorCol: position.anchorCol,
-        width: DEFAULT_WIDTH_CELLS,
-        height: DEFAULT_HEIGHT_CELLS,
-      }),
-    );
+    const newChart = await ws.charts.add({
+      type: dialogState.chartType,
+      subType: dialogState.variantId as ChartConfig['subType'],
+      dataRange: dialogState.dataRange,
+      seriesOrientation: dialogState.seriesInRows ? 'rows' : 'columns',
+      title: dialogState.title,
+      axis: {
+        categoryAxis: {
+          axisType: 'category',
+          type: 'category',
+          visible: true,
+          show: true,
+          title: dialogState.xAxis.title || undefined,
+          min: dialogState.xAxis.min,
+          max: dialogState.xAxis.max,
+          gridLines: dialogState.xAxis.showGridlines,
+        },
+        valueAxis: {
+          axisType: 'value',
+          type: 'value',
+          visible: true,
+          show: true,
+          title: dialogState.yAxis.title || undefined,
+          min: dialogState.yAxis.min,
+          max: dialogState.yAxis.max,
+          gridLines: dialogState.yAxis.showGridlines,
+        },
+      },
+      legend: {
+        show: dialogState.legend.show,
+        visible: dialogState.legend.show,
+        position: dialogState.legend.position,
+      },
+      dataLabels: { show: dialogState.showDataLabels },
+      anchorRow: position.anchorRow,
+      anchorCol: position.anchorCol,
+      width: DEFAULT_WIDTH_PT,
+      height: DEFAULT_HEIGHT_PT,
+    });
     if (newChart.chart.id) {
       selectChartObject(deps, newChart.chart.id);
     }
@@ -1347,18 +1355,16 @@ export const RESET_CHART_STYLE: AsyncActionHandler = async (
   deps,
   payload,
 ): Promise<ActionResult> => {
-  const chartId = payload?.chartId;
+  const chartId = getChartIdFromPayloadOrSelectedObject(deps, payload);
   if (!chartId) {
     return { handled: false, error: 'Missing chartId in payload' };
   }
 
   const ws = deps.workbook.activeSheet;
 
-  // Reset style-related properties to undefined (use defaults)
-  // Note: ChartConfig has limited styling options - just colors for now
   try {
     await ws.charts.update(chartId, {
-      colors: undefined,
+      colors: [...DEFAULT_CHART_COLORS],
     });
   } catch (e: any) {
     return { handled: false, error: e.message ?? String(e) };
@@ -1401,17 +1407,17 @@ export const OPEN_MOVE_CHART_DIALOG: ActionHandler = (deps, payload): ActionResu
  */
 // SCOPE: deferred to dialog component does not exist yet
 export const OPEN_FORMAT_CHART_AREA: ActionHandler = (deps, payload): ActionResult => {
-  const chartId = payload?.chartId;
+  const chartId = getChartIdFromPayloadOrSelectedObject(deps, payload);
   if (!chartId) {
     return { handled: false, error: 'Missing chartId in payload' };
   }
 
-  // Delegate to UI layer to open the format panel
-  if (!deps.onUIAction) {
-    return notHandled('disabled');
-  }
+  const uiStore = getUIStore(deps);
+  uiStore.getState().setChartEditorTab?.('style');
+  selectChartObject(deps, chartId);
+  deps.commands.chart.startEdit();
 
-  deps.onUIAction(`OPEN_FORMAT_CHART_AREA:${chartId}`);
+  deps.onUIAction?.(`OPEN_FORMAT_CHART_AREA:${chartId}`);
   return handled();
 };
 

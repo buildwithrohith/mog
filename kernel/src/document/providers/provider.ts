@@ -20,6 +20,15 @@
 
 import type { StorageProviderCapabilities } from '@mog-sdk/types-document/storage/provider-capabilities';
 import type { StorageProviderIdentity } from '@mog-sdk/types-document/storage/provider-identity';
+import type {
+  ProviderInboundUpdateEnvelopeV2,
+  SyncUpdateProvenance,
+  SyncUpdateValidationDiagnostic,
+} from '@mog-sdk/types-document/storage';
+import type {
+  MutationResult,
+  SyncApplyMutationMetadataWire,
+} from '../../bridges/compute/compute-types.gen';
 
 /**
  * The transport-side interface: persistence, replication, or both.
@@ -200,6 +209,68 @@ export type ProviderCheckpointResult =
 export type ProviderAttachReturn = ProviderAttachResult | void;
 export type ProviderCheckpointReturn = ProviderCheckpointResult | void;
 
+export type SyncUpdateAdmissionSource =
+  | 'provider-inbound'
+  | 'provider-replay'
+  | 'document-sync-port';
+export type SyncUpdateAdmissionEnvelopeVersion =
+  | 'provider-inbound-update-v1'
+  | 'provider-inbound-update-v2'
+  | 'provider-replay'
+  | 'provenance-only'
+  | 'classified-raw';
+
+export interface SyncUpdateAdmissionMetadata {
+  readonly source: SyncUpdateAdmissionSource;
+  readonly docId: string;
+  readonly envelopeVersion: SyncUpdateAdmissionEnvelopeVersion;
+  readonly providerRefId?: string;
+  readonly providerEpoch?: string;
+  readonly updateId?: string;
+  readonly payloadHash: string;
+  readonly provenance: SyncUpdateProvenance;
+  readonly validationDiagnostics: readonly SyncUpdateValidationDiagnostic[];
+}
+
+export interface ProviderInboundApplyUpdateMetadata extends SyncUpdateAdmissionMetadata {
+  readonly source: 'provider-inbound';
+  readonly envelopeVersion: 'provider-inbound-update-v1' | 'provider-inbound-update-v2';
+  readonly providerRefId: string;
+  readonly providerEpoch: string;
+  readonly updateId: string;
+}
+
+export interface ProviderReplayApplyUpdateMetadata extends SyncUpdateAdmissionMetadata {
+  readonly source: 'provider-replay';
+  readonly envelopeVersion: 'provider-replay';
+}
+
+export type ProviderDocApplyUpdateMetadata =
+  | ProviderInboundApplyUpdateMetadata
+  | ProviderReplayApplyUpdateMetadata;
+
+export interface ProviderDocApplyUpdateResult {
+  readonly mutationResult: MutationResult;
+  readonly metadata: SyncApplyMutationMetadataWire;
+}
+
+export type ProviderDocApplyUpdateReturn = ProviderDocApplyUpdateResult | void;
+
+export type ClassifiedRawSyncUpdateProvenance = Exclude<
+  SyncUpdateProvenance,
+  Extract<
+    SyncUpdateProvenance,
+    { readonly sourceKind: 'providerLiveInbound' | 'collaborationLiveRemote' }
+  >
+> & {
+  readonly capturePolicy: 'excluded' | 'derivedOnly';
+};
+
+export interface DocumentByteSyncPortApplyUpdateMetadata extends SyncUpdateAdmissionMetadata {
+  readonly source: 'document-sync-port';
+  readonly envelopeVersion: 'provider-inbound-update-v2' | 'provenance-only' | 'classified-raw';
+}
+
 /**
  * The doc-side interface: a thin handle over the engine's yrs Doc.
  *
@@ -215,8 +286,13 @@ export interface ProviderDoc {
   /**
    * Apply a yrs `update_v1` byte stream into the doc. Idempotent
    * (re-applying the same update is a no-op per yrs CRDT semantics).
+   * Implementations may resolve with sync-apply metadata; Providers can
+   * ignore the result.
    */
-  applyUpdate(update: Uint8Array): Promise<void>;
+  applyUpdate(
+    update: Uint8Array,
+    metadata?: ProviderDocApplyUpdateMetadata,
+  ): Promise<ProviderDocApplyUpdateReturn>;
 
   /**
    * Encode all updates the local doc has that the remote (described by
@@ -235,7 +311,16 @@ export interface ProviderDoc {
  * Canonical document byte-sync capability.
  *
  * Providers receive this capability as `ProviderDoc`; trusted document
- * adapters may expose the same byte-sync port under document vocabulary.
- * Keep this as a type alias so there is one source-owned contract.
+ * adapters expose the richer document byte-sync port under document
+ * vocabulary. `applyUpdate(update)` remains the legacy raw compatibility
+ * method. New sync callers should use one of the provenance-aware admission
+ * methods so classification happens before Rust mutates Yrs.
  */
-export type DocumentByteSyncPort = ProviderDoc;
+export interface DocumentByteSyncPort extends ProviderDoc {
+  applyUpdateWithProvenance(update: Uint8Array, provenance: SyncUpdateProvenance): Promise<void>;
+  applyProviderEnvelope(envelope: ProviderInboundUpdateEnvelopeV2): Promise<void>;
+  applyClassifiedRawUpdate(
+    update: Uint8Array,
+    provenance: ClassifiedRawSyncUpdateProvenance,
+  ): Promise<void>;
+}

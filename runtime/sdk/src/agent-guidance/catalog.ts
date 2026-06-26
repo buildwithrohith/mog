@@ -117,6 +117,191 @@ if (receipt.status === "applied") {
     .map((effect) => effect.range);
 }`;
 
+const versionStoreConfigSnippet = `import { createWorkbook } from "@mog-sdk/sdk";
+
+const wb = await createWorkbook({
+  documentId: "budget-2026",
+  userTimezone: "UTC",
+  versionStore: {
+    kind: "memory-durable-snapshot",
+    workspaceId: "finance",
+    principalScope: "analyst-1",
+  },
+});`;
+
+const versionCommitSnippet = `const headResult = await wb.version.getHead();
+if (!headResult.ok) {
+  throw new Error(headResult.error.reason);
+}
+if (!headResult.value.refRevision) {
+  throw new Error("Current version head is not attached to a mutable ref");
+}
+const commitResult = await wb.version.commit({
+  message: "Update forecast inputs",
+  expectedHead: {
+    commitId: headResult.value.id,
+    revision: headResult.value.refRevision,
+  },
+});
+if (!commitResult.ok) {
+  throw new Error(commitResult.error.reason);
+}
+const commitId = commitResult.value.id;`;
+
+const versionBranchSnippet = `const targetHeadResult = await wb.version.getHead();
+if (!targetHeadResult.ok) {
+  throw new Error(targetHeadResult.error.reason);
+}
+const branchResult = await wb.version.createBranch({
+  name: "refs/heads/budget-q1",
+  targetCommitId: targetHeadResult.value.id,
+  expectedAbsent: true,
+});
+if (!branchResult.ok) {
+  throw new Error(branchResult.error.reason);
+}
+const branchRef = branchResult.value;`;
+
+const versionCheckoutSnippet = `wb.markClean();
+const checkoutResult = await wb.version.checkout({
+  kind: "ref",
+  name: "refs/heads/budget-q1",
+}, {
+  requireClean: true,
+});
+if (!checkoutResult.ok) {
+  throw new Error(checkoutResult.error.reason);
+}
+if (checkoutResult.value.materialization !== "applied") {
+  throw new Error("Checkout planned but did not materialize workbook state");
+}`;
+
+const versionMergePreviewSnippet = `const mainRefResult = await wb.version.readRef("refs/heads/main");
+if (!mainRefResult.ok || mainRefResult.value.status !== "success") {
+  throw new Error(
+    mainRefResult.ok
+      ? mainRefResult.value.diagnostics[0]?.safeMessage ?? "Main ref unavailable"
+      : mainRefResult.error.reason,
+  );
+}
+const expectedTargetHead = {
+  commitId: mainRefResult.value.ref.commitId,
+  revision: mainRefResult.value.ref.revision,
+};
+const mergeInput = {
+  base: baseCommitId,
+  ours: expectedTargetHead.commitId,
+  theirs: branchCommitId,
+};
+const previewResult = await wb.version.merge(mergeInput, {
+  mode: "preview",
+  targetRef: "refs/heads/main",
+  expectedTargetHead,
+  persistReviewRecord: true,
+});
+if (!previewResult.ok) {
+  throw new Error(previewResult.error.reason);
+}
+const preview = previewResult.value;
+if (preview.status === "blocked") {
+  throw new Error(preview.diagnostics.map((diagnostic) => diagnostic.safeMessage).join("\\n"));
+}
+const resolutions = preview.status === "conflicted"
+  ? preview.conflicts.map((conflict) => {
+      const option =
+        conflict.resolutionOptions.find((candidate) => candidate.kind === "acceptTheirs") ??
+        conflict.resolutionOptions[0];
+      if (!option) {
+        throw new Error("No resolution option for " + conflict.conflictId);
+      }
+      return {
+        conflictId: conflict.conflictId,
+        expectedConflictDigest: conflict.conflictDigest,
+        optionId: option.optionId,
+        kind: option.kind,
+      };
+    })
+  : [];`;
+
+const versionApplyMergeSnippet = `const applyTargetRefResult = await wb.version.readRef("refs/heads/main");
+if (!applyTargetRefResult.ok || applyTargetRefResult.value.status !== "success") {
+  throw new Error(
+    applyTargetRefResult.ok
+      ? applyTargetRefResult.value.diagnostics[0]?.safeMessage ?? "Main ref unavailable"
+      : applyTargetRefResult.error.reason,
+  );
+}
+const applyExpectedTargetHead = {
+  commitId: applyTargetRefResult.value.ref.commitId,
+  revision: applyTargetRefResult.value.ref.revision,
+};
+const applyResult = await wb.version.applyMerge(
+  {
+    base: baseCommitId,
+    ours: applyExpectedTargetHead.commitId,
+    theirs: branchCommitId,
+    resolutions,
+  },
+  {
+    mode: "apply",
+    targetRef: "refs/heads/main",
+    expectedTargetHead: applyExpectedTargetHead,
+  },
+);
+if (!applyResult.ok) {
+  throw new Error(applyResult.error.reason);
+}
+const applied = applyResult.value;
+if (applied.status === "blocked" || applied.status === "staleTargetHead") {
+  throw new Error(applied.diagnostics.map((diagnostic) => diagnostic.safeMessage).join("\\n"));
+}
+if (applied.status === "conflicted") {
+  throw new Error("Merge still has " + applied.requiredResolutionCount + " unresolved conflicts");
+}
+if (applied.status === "planned") {
+  throw new Error("applyMerge planned the merge but did not mutate the target ref");
+}
+const newHeadId = applied.commitRef.id;`;
+
+const versionRevertSnippet = `const targetRefResult = await wb.version.readRef("refs/heads/main");
+if (!targetRefResult.ok || targetRefResult.value.status !== "success") {
+  throw new Error(
+    targetRefResult.ok
+      ? targetRefResult.value.diagnostics[0]?.safeMessage ?? "Main ref unavailable"
+      : targetRefResult.error.reason,
+  );
+}
+const commitToRevertId = branchCommit.id;
+const revertResult = await wb.version.revert(
+  {
+    target: { kind: "commit", commitId: commitToRevertId },
+    targetRef: "refs/heads/main",
+    expectedTargetHead: {
+      commitId: targetRefResult.value.ref.commitId,
+      revision: targetRefResult.value.ref.revision,
+    },
+    preflight: {
+      cas: {
+        refName: "refs/heads/main",
+        expectedRevision: targetRefResult.value.ref.revision,
+      },
+    },
+    reason: "Back out scenario commit",
+  },
+  { includeDiagnostics: true },
+);
+if (!revertResult.ok) {
+  throw new Error(revertResult.error.reason);
+}
+const reverted = revertResult.value;
+if (reverted.status === "rejected" || reverted.status === "requires-review") {
+  throw new Error(reverted.diagnostics.map((diagnostic) => diagnostic.safeMessage).join("\\n"));
+}
+if (reverted.status === "planned") {
+  throw new Error("revert planned the change but did not mutate the target ref");
+}
+const revertCommitId = reverted.commitRef?.id;`;
+
 export const apiGuidanceCatalog = [
   {
     id: 'officejs.bootstrap',
@@ -444,6 +629,69 @@ export const apiGuidanceCatalog = [
     ],
     confidence: 0.86,
     blocking: true,
+  },
+  {
+    id: 'mog-version.public-api-examples',
+    dialect: 'mog-version',
+    category: 'workbook',
+    matchers: [
+      { id: 'mog-version.workbook-commit-guess', kind: 'call', symbol: 'wb.commit' },
+      { id: 'mog-version.workbook-branch-guess', kind: 'call', symbol: 'wb.branch' },
+      { id: 'mog-version.workbook-create-branch-guess', kind: 'call', symbol: 'wb.createBranch' },
+      { id: 'mog-version.workbook-checkout-guess', kind: 'call', symbol: 'wb.checkout' },
+      { id: 'mog-version.workbook-preview-merge-guess', kind: 'call', symbol: 'wb.previewMerge' },
+      { id: 'mog-version.workbook-merge-preview-guess', kind: 'call', symbol: 'wb.mergePreview' },
+      { id: 'mog-version.workbook-apply-merge-guess', kind: 'call', symbol: 'wb.applyMerge' },
+      { id: 'mog-version.workbook-revert-guess', kind: 'call', symbol: 'wb.revert' },
+      { id: 'mog-version.create-version-store-guess', kind: 'call', symbol: 'createVersionStore' },
+      {
+        id: 'mog-version.workbook-version-store-guess',
+        kind: 'member-chain',
+        symbol: 'wb.versionStore',
+      },
+    ],
+    message: 'Workbook version history APIs are exposed through the `wb.version` public API slice.',
+    suggestion:
+      'Configure version history with `createWorkbook({ documentId, versionStore })`, then use `wb.version.commit`, `wb.version.createBranch`, `wb.version.checkout`, `wb.version.merge`, `wb.version.applyMerge`, and `wb.version.revert`; every operation returns a VersionResult and merge/revert calls also return status receipts.',
+    mogReplacements: [
+      {
+        path: 'createWorkbook',
+        snippet: versionStoreConfigSnippet,
+        note: 'Version-store config belongs to createWorkbook options. Supported public kinds are memory, in-memory, memory-durable-snapshot, indexeddb, and browser; use documentId/workspaceId/principalScope for scope.',
+      },
+      {
+        path: 'wb.version.commit',
+        snippet: versionCommitSnippet,
+        note: 'Commit captures the current workbook working state and advances the active or explicit target ref. Read the head first and pass expectedHead so stale ref writes fail closed.',
+      },
+      {
+        path: 'wb.version.createBranch',
+        snippet: versionBranchSnippet,
+        note: 'Create public refs under refs/heads/<branch-name> for branch workflows.',
+      },
+      {
+        path: 'wb.version.checkout',
+        snippet: versionCheckoutSnippet,
+        note: 'Checkout refuses dirty or unsafe state and reports whether workbook state was materialized.',
+      },
+      {
+        path: 'wb.version.merge',
+        snippet: versionMergePreviewSnippet,
+        note: 'Merge is read-only by default; inspect blocked/conflicted/clean/fast-forward statuses before applying, and carry the accepted preview target head into applyMerge.',
+      },
+      {
+        path: 'wb.version.applyMerge',
+        snippet: versionApplyMergeSnippet,
+        note: 'Apply merge with a concrete target ref and the expected target head from the accepted preview so stale refs fail closed. If preview was conflicted, pass one resolution per conflict with the previewed conflictId, digest, optionId, and kind.',
+      },
+      {
+        path: 'wb.version.revert',
+        snippet: versionRevertSnippet,
+        note: 'Revert with an explicit target ref and expected target head; dry-run first with { dryRun: true } when the host needs review before mutation.',
+      },
+    ],
+    confidence: 0.86,
+    blocking: false,
   },
   {
     id: 'officejs.formatting',

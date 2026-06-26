@@ -734,6 +734,8 @@ export interface PivotValueField {
   aggregation: 'sum' | 'count' | 'average' | 'max' | 'min';
   /** Custom label for the value field */
   label?: string;
+  /** Optional "Show Values As" calculation for this value field. */
+  showValuesAs?: ShowValuesAsConfig;
 }
 
 /** Placement-first field insertion spec for a pivot table handle. */
@@ -816,6 +818,20 @@ export interface PivotHandleInfo {
   availableMethods: string[];
 }
 
+/** Current pivot handle configuration: full stored config plus ergonomic public field summaries. */
+export interface PivotHandleConfig extends DataPivotTableConfig {
+  /** Source data range in A1 notation, qualified with the source sheet. */
+  dataSource: string;
+  /** Field names in the row area. */
+  rowFields: string[];
+  /** Field names in the column area. */
+  columnFields: string[];
+  /** Value field configurations. */
+  valueFields: PivotValueField[];
+  /** Field names in the filter area. */
+  filterFields: string[];
+}
+
 /**
  * Handle for interacting with an existing pivot table.
  *
@@ -827,8 +843,8 @@ export interface PivotTableHandle {
   getName(): string;
   /** Side-effect-free handle-local introspection bound to this pivot ID. */
   getInfo(options?: PivotHandleInfoOptions): Promise<PivotHandleInfo>;
-  /** Get the current configuration including all fields */
-  getConfig(): PivotTableConfig;
+  /** Get the current stored configuration plus public field summaries. */
+  getConfig(): PivotHandleConfig;
   /** Update the pivot table data configuration. */
   update(
     updates: Partial<Omit<DataPivotTableConfig, 'id' | 'createdAt'>>,
@@ -963,6 +979,8 @@ export interface PivotTableInfo {
   valueFields?: PivotValueField[];
   /** Filter field names */
   filterFields?: string[];
+  /** Layout settings when present */
+  layout?: PivotTableLayout;
 }
 
 // =============================================================================
@@ -1594,6 +1612,8 @@ export interface ViewOptions {
   showRowHeaders: boolean;
   /** Whether column headers are shown */
   showColumnHeaders: boolean;
+  /** Sheet zoom scale as a percentage, e.g. 125 for 125% */
+  zoomScale?: number;
 }
 
 /** Scroll position (cell-level, not pixel-level). */
@@ -2248,6 +2268,8 @@ export interface SheetSettingsInfo {
   isProtected: boolean;
   /** Whether the sheet uses right-to-left layout */
   rightToLeft: boolean;
+  /** Sheet zoom scale as a percentage, e.g. 125 for 125% */
+  zoomScale?: number;
 }
 
 // Outline Settings (1i: Outline Settings for domain module elimination)

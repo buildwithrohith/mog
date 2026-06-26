@@ -1,8 +1,26 @@
 import { ChevronDownSvg } from '@mog/icons';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CellError, CellValue } from '@mog-sdk/contracts/core';
-import type { PivotFieldItems, PivotItemInfo, PlacementId, SortOrder } from '@mog-sdk/contracts/pivot';
+import type {
+  PivotFieldItems,
+  PivotItemInfo,
+  PlacementId,
+  SortOrder,
+} from '@mog-sdk/contracts/pivot';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@mog/shell/components/ui';
 
+import type {
+  PivotOverlayDismissReason,
+  PivotTransientOverlay,
+} from '../../ui-store/slices/dialogs/pivot-dialog';
 import { pivotReadbackAttributes } from '../../systems/pivot';
 import {
   hasPivotFilterPlacements,
@@ -12,29 +30,28 @@ import {
   type PivotReportFilterControlLayout,
 } from './pivot-layer-layout';
 
-export interface OpenPivotHeaderMenu {
-  pivotId: string;
-  placementId: PlacementId;
-}
-
 interface PivotLayerOverlayProps {
   marker: PivotMarker;
-  openHeaderMenu: OpenPivotHeaderMenu | null;
-  onToggleHeaderMenu: (menu: OpenPivotHeaderMenu | null) => void;
+  openTransientOverlay: PivotTransientOverlay;
+  onOpenPivotOverlay: (overlay: Exclude<PivotTransientOverlay, null>) => void;
+  onClosePivotOverlays: (reason: PivotOverlayDismissReason) => void;
   onApplyHeaderSort: (
     marker: PivotMarker,
     control: PivotFieldHeaderControlLayout,
     sortOrder: SortOrder | null,
   ) => void;
   onStartEditingPivot: (pivotId: string) => void;
+  onRestoreGridFocus: () => void;
 }
 
 export function PivotLayerOverlay({
   marker,
-  openHeaderMenu,
-  onToggleHeaderMenu,
+  openTransientOverlay,
+  onOpenPivotOverlay,
+  onClosePivotOverlays,
   onApplyHeaderSort,
   onStartEditingPivot,
+  onRestoreGridFocus,
 }: PivotLayerOverlayProps) {
   const config = marker.pivot.config;
   const showEmptyState = !hasPivotOutputPlacements(config);
@@ -75,13 +92,23 @@ export function PivotLayerOverlay({
       {showHeaderControls && (
         <PivotHeaderControls
           marker={marker}
-          openHeaderMenu={openHeaderMenu}
-          onToggleHeaderMenu={onToggleHeaderMenu}
+          openTransientOverlay={openTransientOverlay}
+          onOpenPivotOverlay={onOpenPivotOverlay}
+          onClosePivotOverlays={onClosePivotOverlays}
           onApplyHeaderSort={onApplyHeaderSort}
           onStartEditingPivot={onStartEditingPivot}
+          onRestoreGridFocus={onRestoreGridFocus}
         />
       )}
-      {showFilterControls && <ReportFilterControls marker={marker} />}
+      {showFilterControls && (
+        <ReportFilterControls
+          marker={marker}
+          openTransientOverlay={openTransientOverlay}
+          onOpenPivotOverlay={onOpenPivotOverlay}
+          onClosePivotOverlays={onClosePivotOverlays}
+          onRestoreGridFocus={onRestoreGridFocus}
+        />
+      )}
       {showEmptyState && (
         <PivotEmptyState marker={marker} onStartEditingPivot={onStartEditingPivot} />
       )}
@@ -91,10 +118,12 @@ export function PivotLayerOverlay({
 
 function PivotHeaderControls({
   marker,
-  openHeaderMenu,
-  onToggleHeaderMenu,
+  openTransientOverlay,
+  onOpenPivotOverlay,
+  onClosePivotOverlays,
   onApplyHeaderSort,
   onStartEditingPivot,
+  onRestoreGridFocus,
 }: PivotLayerOverlayProps) {
   return (
     <div className="absolute inset-0 pointer-events-none">
@@ -104,12 +133,15 @@ function PivotHeaderControls({
           marker={marker}
           control={control}
           isOpen={
-            openHeaderMenu?.pivotId === marker.id &&
-            openHeaderMenu?.placementId === control.placementId
+            openTransientOverlay?.kind === 'field-header-menu' &&
+            openTransientOverlay.pivotId === marker.id &&
+            openTransientOverlay.placementId === control.placementId
           }
-          onToggleHeaderMenu={onToggleHeaderMenu}
+          onOpenPivotOverlay={onOpenPivotOverlay}
+          onClosePivotOverlays={onClosePivotOverlays}
           onApplyHeaderSort={onApplyHeaderSort}
           onStartEditingPivot={onStartEditingPivot}
+          onRestoreGridFocus={onRestoreGridFocus}
         />
       ))}
     </div>
@@ -120,22 +152,26 @@ interface PivotHeaderControlProps {
   marker: PivotMarker;
   control: PivotFieldHeaderControlLayout;
   isOpen: boolean;
-  onToggleHeaderMenu: (menu: OpenPivotHeaderMenu | null) => void;
+  onOpenPivotOverlay: (overlay: Exclude<PivotTransientOverlay, null>) => void;
+  onClosePivotOverlays: (reason: PivotOverlayDismissReason) => void;
   onApplyHeaderSort: (
     marker: PivotMarker,
     control: PivotFieldHeaderControlLayout,
     sortOrder: SortOrder | null,
   ) => void;
   onStartEditingPivot: (pivotId: string) => void;
+  onRestoreGridFocus: () => void;
 }
 
 function PivotHeaderControl({
   marker,
   control,
   isOpen,
-  onToggleHeaderMenu,
+  onOpenPivotOverlay,
+  onClosePivotOverlays,
   onApplyHeaderSort,
   onStartEditingPivot,
+  onRestoreGridFocus,
 }: PivotHeaderControlProps) {
   const canSort = marker.pivot.capabilities.canSortLabels;
 
@@ -149,38 +185,49 @@ function PivotHeaderControl({
         height: control.rect.height,
       }}
     >
-      <button
-        type="button"
-        className="pointer-events-auto absolute right-0.5 top-0.5 inline-flex h-5 w-5 items-center justify-center rounded border border-ss-border bg-ss-surface/95 text-ss-text-secondary shadow-sm hover:bg-ss-surface-hover disabled:opacity-50"
-        data-pivot-target="pivot-field-header-control"
-        data-pivot-area={control.area}
-        data-pivot-field-id={control.fieldId}
-        data-pivot-placement-id={control.placementId}
-        data-pivot-row={control.row}
-        data-pivot-col={control.col}
-        aria-haspopup="menu"
-        aria-expanded={isOpen ? 'true' : 'false'}
-        title={`${control.label} field menu`}
-        aria-label={`${control.label} field menu`}
-        disabled={!marker.pivot.capabilities.canEditFields}
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggleHeaderMenu(
-            isOpen ? null : { pivotId: marker.id, placementId: control.placementId },
-          );
+      <DropdownMenu
+        modal={false}
+        open={isOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            onOpenPivotOverlay({
+              kind: 'field-header-menu',
+              pivotId: marker.id,
+              placementId: control.placementId,
+            });
+          } else if (isOpen) {
+            onClosePivotOverlays('outside-pointer');
+          }
         }}
       >
-        <ChevronDownSvg className="h-3 w-3" aria-hidden="true" />
-      </button>
-      {isOpen && (
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="pointer-events-auto absolute right-0.5 top-0.5 inline-flex h-5 w-5 items-center justify-center rounded border border-ss-border bg-ss-surface/95 text-ss-text-secondary shadow-sm hover:bg-ss-surface-hover disabled:opacity-50"
+            data-no-grid-pointer="true"
+            data-pivot-target="pivot-field-header-control"
+            data-pivot-area={control.area}
+            data-pivot-field-id={control.fieldId}
+            data-pivot-placement-id={control.placementId}
+            data-pivot-row={control.row}
+            data-pivot-col={control.col}
+            title={`${control.label} field menu`}
+            aria-label={`${control.label} field menu`}
+            disabled={!marker.pivot.capabilities.canEditFields}
+          >
+            <ChevronDownSvg className="h-3 w-3" aria-hidden="true" />
+          </button>
+        </DropdownMenuTrigger>
         <PivotHeaderMenu
           marker={marker}
           control={control}
           canSort={canSort}
+          onClosePivotOverlays={onClosePivotOverlays}
           onApplyHeaderSort={onApplyHeaderSort}
           onStartEditingPivot={onStartEditingPivot}
+          onRestoreGridFocus={onRestoreGridFocus}
         />
-      )}
+      </DropdownMenu>
     </div>
   );
 }
@@ -189,81 +236,104 @@ interface PivotHeaderMenuProps {
   marker: PivotMarker;
   control: PivotFieldHeaderControlLayout;
   canSort: boolean;
+  onClosePivotOverlays: (reason: PivotOverlayDismissReason) => void;
   onApplyHeaderSort: (
     marker: PivotMarker,
     control: PivotFieldHeaderControlLayout,
     sortOrder: SortOrder | null,
   ) => void;
   onStartEditingPivot: (pivotId: string) => void;
+  onRestoreGridFocus: () => void;
 }
 
 function PivotHeaderMenu({
   marker,
   control,
   canSort,
+  onClosePivotOverlays,
   onApplyHeaderSort,
   onStartEditingPivot,
+  onRestoreGridFocus,
 }: PivotHeaderMenuProps) {
+  const restoreGridFocusOnCloseRef = useRef(false);
+
+  const restoreGridFocusOnClose = () => {
+    restoreGridFocusOnCloseRef.current = true;
+  };
+
   return (
-    <div
-      role="menu"
-      className="pointer-events-auto absolute right-0 top-6 z-10 flex min-w-36 flex-col rounded border border-ss-border bg-ss-surface p-1 text-caption text-ss-text-primary shadow-lg"
+    <DropdownMenuContent
+      align="end"
+      side="bottom"
+      sideOffset={4}
+      className="min-w-36 p-1 text-caption"
+      data-no-grid-pointer="true"
       data-pivot-target="pivot-field-header-menu"
       data-pivot-area={control.area}
       data-pivot-field-id={control.fieldId}
       data-pivot-placement-id={control.placementId}
+      onEscapeKeyDown={() => {
+        restoreGridFocusOnClose();
+        onClosePivotOverlays('escape');
+      }}
+      onCloseAutoFocus={(event) => {
+        if (!restoreGridFocusOnCloseRef.current) return;
+        restoreGridFocusOnCloseRef.current = false;
+        event.preventDefault();
+        onRestoreGridFocus();
+      }}
     >
-      <HeaderMenuButton
+      <DropdownMenuItem
         disabled={!canSort}
-        onClick={() => onApplyHeaderSort(marker, control, 'asc')}
+        onSelect={() => {
+          restoreGridFocusOnClose();
+          onApplyHeaderSort(marker, control, 'asc');
+        }}
       >
         Sort Ascending
-      </HeaderMenuButton>
-      <HeaderMenuButton
+      </DropdownMenuItem>
+      <DropdownMenuItem
         disabled={!canSort}
-        onClick={() => onApplyHeaderSort(marker, control, 'desc')}
+        onSelect={() => {
+          restoreGridFocusOnClose();
+          onApplyHeaderSort(marker, control, 'desc');
+        }}
       >
         Sort Descending
-      </HeaderMenuButton>
-      <HeaderMenuButton
+      </DropdownMenuItem>
+      <DropdownMenuItem
         disabled={!canSort}
-        onClick={() => onApplyHeaderSort(marker, control, null)}
+        onSelect={() => {
+          restoreGridFocusOnClose();
+          onApplyHeaderSort(marker, control, null);
+        }}
       >
         Clear Sort
-      </HeaderMenuButton>
-      <HeaderMenuButton onClick={() => onStartEditingPivot(marker.id)}>
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        onSelect={() => {
+          restoreGridFocusOnClose();
+          onStartEditingPivot(marker.id);
+        }}
+      >
         Field Settings
-      </HeaderMenuButton>
-    </div>
-  );
-}
-
-function HeaderMenuButton({
-  children,
-  disabled,
-  onClick,
-}: {
-  children: string;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      className="rounded px-2 py-1 text-left hover:bg-ss-surface-hover disabled:opacity-50"
-      disabled={disabled}
-      onClick={onClick}
-    >
-      {children}
-    </button>
+      </DropdownMenuItem>
+    </DropdownMenuContent>
   );
 }
 
 function ReportFilterControls({
   marker,
+  openTransientOverlay,
+  onOpenPivotOverlay,
+  onClosePivotOverlays,
+  onRestoreGridFocus,
 }: {
   marker: PivotMarker;
+  openTransientOverlay: PivotTransientOverlay;
+  onOpenPivotOverlay: (overlay: Exclude<PivotTransientOverlay, null>) => void;
+  onClosePivotOverlays: (reason: PivotOverlayDismissReason) => void;
+  onRestoreGridFocus: () => void;
 }) {
   return (
     <div className="absolute inset-0 pointer-events-none">
@@ -272,6 +342,14 @@ function ReportFilterControls({
           key={control.placementId}
           control={control}
           marker={marker}
+          isOpen={
+            openTransientOverlay?.kind === 'report-filter-menu' &&
+            openTransientOverlay.pivotId === marker.id &&
+            openTransientOverlay.placementId === control.placementId
+          }
+          onOpenPivotOverlay={onOpenPivotOverlay}
+          onClosePivotOverlays={onClosePivotOverlays}
+          onRestoreGridFocus={onRestoreGridFocus}
         />
       ))}
     </div>
@@ -281,17 +359,29 @@ function ReportFilterControls({
 function ReportFilterControl({
   control,
   marker,
+  isOpen,
+  onOpenPivotOverlay,
+  onClosePivotOverlays,
+  onRestoreGridFocus,
 }: {
   control: PivotReportFilterControlLayout;
   marker: PivotMarker;
+  isOpen: boolean;
+  onOpenPivotOverlay: (overlay: Exclude<PivotTransientOverlay, null>) => void;
+  onClosePivotOverlays: (reason: PivotOverlayDismissReason) => void;
+  onRestoreGridFocus: () => void;
 }) {
-  const [isOpen, setIsOpen] = useState(false);
   const [items, setItems] = useState<PivotItemInfo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const restoreGridFocusOnCloseRef = useRef(false);
   const activeFilter = marker.pivot.config.filters.find(
     (filter) => filter.fieldId === control.fieldId,
   );
   const filterSummary = summarizeReportFilter(activeFilter, items);
+
+  const restoreGridFocusOnClose = () => {
+    restoreGridFocusOnCloseRef.current = true;
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -323,12 +413,14 @@ function ReportFilterControl({
   }, [control, isOpen, marker.pivot.handle]);
 
   const clearFilter = () => {
-    setIsOpen(false);
+    restoreGridFocusOnClose();
+    onClosePivotOverlays('command-applied');
     void marker.pivot.handle?.removeFilter(control.fieldId);
   };
 
   const includeSingleValue = (value: CellValue) => {
-    setIsOpen(false);
+    restoreGridFocusOnClose();
+    onClosePivotOverlays('command-applied');
     void marker.pivot.handle?.setFilter(control.fieldId, { includeValues: [value] });
   };
 
@@ -341,80 +433,114 @@ function ReportFilterControl({
         height: control.rect.height,
       }}
     >
-      <button
-        type="button"
-        className="pointer-events-auto inline-flex max-w-full min-w-0 items-center gap-1 rounded border border-ss-border bg-ss-surface/95 px-2 py-1 text-caption text-ss-text-primary shadow-sm hover:bg-ss-surface-hover"
-        data-pivot-target="report-filter-control"
-        data-pivot-field-id={control.fieldId}
-        data-pivot-placement-id={control.placementId}
-        data-pivot-row={control.row}
-        title={`Filter ${control.label}: ${filterSummary}`}
-        aria-label={`Filter ${control.label}: ${filterSummary}`}
-        aria-haspopup="listbox"
-        aria-expanded={isOpen ? 'true' : 'false'}
-        onClick={(event) => {
-          event.stopPropagation();
-          setIsOpen((open) => !open);
+      <Popover
+        open={isOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            onOpenPivotOverlay({
+              kind: 'report-filter-menu',
+              pivotId: marker.id,
+              placementId: control.placementId,
+            });
+          } else if (isOpen) {
+            onClosePivotOverlays('outside-pointer');
+          }
         }}
       >
-        <span className="min-w-0 truncate">{control.label}</span>
-        <span className="shrink-0 text-ss-text-secondary">{filterSummary}</span>
-        <span className="shrink-0 text-ss-text-secondary" aria-hidden="true">
-          v
-        </span>
-      </button>
-      {isOpen && (
-        <div
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="pointer-events-auto inline-flex max-w-full min-w-0 items-center gap-1 rounded border border-ss-border bg-ss-surface/95 px-2 py-1 text-caption text-ss-text-primary shadow-sm hover:bg-ss-surface-hover"
+            data-no-grid-pointer="true"
+            data-pivot-target="report-filter-control"
+            data-pivot-field-id={control.fieldId}
+            data-pivot-placement-id={control.placementId}
+            data-pivot-row={control.row}
+            title={`Filter ${control.label}: ${filterSummary}`}
+            aria-label={`Filter ${control.label}: ${filterSummary}`}
+            aria-haspopup="listbox"
+            aria-expanded={isOpen ? 'true' : 'false'}
+          >
+            <span className="min-w-0 truncate">{control.label}</span>
+            <span className="shrink-0 text-ss-text-secondary">{filterSummary}</span>
+            <span className="shrink-0 text-ss-text-secondary" aria-hidden="true">
+              v
+            </span>
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
           role="listbox"
-          className="pointer-events-auto absolute left-0 top-full z-20 mt-1 flex max-h-72 min-w-44 flex-col overflow-auto rounded border border-ss-border bg-ss-surface p-1 text-caption text-ss-text-primary shadow-lg"
+          align="start"
+          side="bottom"
+          sideOffset={4}
+          className="pivot-report-filter-picker flex max-h-72 min-w-44 flex-col overflow-auto p-1 text-caption"
+          data-no-grid-pointer="true"
           data-pivot-target="report-filter-picker"
           data-pivot-field-id={control.fieldId}
           data-pivot-placement-id={control.placementId}
           aria-label={`${control.label} filter values`}
-          onClick={(event) => event.stopPropagation()}
+          onEscapeKeyDown={() => {
+            restoreGridFocusOnClose();
+            onClosePivotOverlays('escape');
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onCloseAutoFocus={(event) => {
+            if (!restoreGridFocusOnCloseRef.current) return;
+            restoreGridFocusOnCloseRef.current = false;
+            event.preventDefault();
+            onRestoreGridFocus();
+          }}
         >
-          <button
-            type="button"
-            role="option"
-            aria-selected={!activeFilter}
-            className="rounded px-2 py-1 text-left hover:bg-ss-surface-hover"
-            data-pivot-target="report-filter-option"
-            data-pivot-filter-option="all"
-            onClick={clearFilter}
+          <div
+            className="flex flex-col"
+            data-no-grid-pointer="true"
+            data-pivot-target="report-filter-picker"
+            data-pivot-field-id={control.fieldId}
+            data-pivot-placement-id={control.placementId}
           >
-            All
-          </button>
-          {isLoading && (
-            <div className="px-2 py-1 text-ss-text-secondary" data-pivot-target="filter-loading">
-              Loading
-            </div>
-          )}
-          {!isLoading &&
-            items.map((item) => {
-              const label = formatFilterValue(item.value);
-              const selected = isValueIncluded(activeFilter, item.value);
-              return (
-                <button
-                  key={String(item.key)}
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  className="rounded px-2 py-1 text-left hover:bg-ss-surface-hover"
-                  data-pivot-target="report-filter-option"
-                  data-pivot-filter-option={label}
-                  onClick={() => includeSingleValue(item.value)}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          {!isLoading && items.length === 0 && (
-            <div className="px-2 py-1 text-ss-text-secondary" data-pivot-target="filter-empty">
-              No values
-            </div>
-          )}
-        </div>
-      )}
+            <button
+              type="button"
+              role="option"
+              aria-selected={!activeFilter}
+              className="rounded px-2 py-1 text-left hover:bg-ss-surface-hover"
+              data-pivot-target="report-filter-option"
+              data-pivot-filter-option="all"
+              onClick={clearFilter}
+            >
+              All
+            </button>
+            {isLoading && (
+              <div className="px-2 py-1 text-ss-text-secondary" data-pivot-target="filter-loading">
+                Loading
+              </div>
+            )}
+            {!isLoading &&
+              items.map((item) => {
+                const label = formatFilterValue(item.value);
+                const selected = isValueIncluded(activeFilter, item.value);
+                return (
+                  <button
+                    key={String(item.key)}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    className="rounded px-2 py-1 text-left hover:bg-ss-surface-hover"
+                    data-pivot-target="report-filter-option"
+                    data-pivot-filter-option={label}
+                    onClick={() => includeSingleValue(item.value)}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            {!isLoading && items.length === 0 && (
+              <div className="px-2 py-1 text-ss-text-secondary" data-pivot-target="filter-empty">
+                No values
+              </div>
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }
@@ -472,7 +598,8 @@ function summarizeReportFilter(
     return `${filter.includeValues.length} selected`;
   }
   if (filter.excludeValues && filter.excludeValues.length > 0) {
-    const visibleCount = items.length > 0 ? Math.max(0, items.length - filter.excludeValues.length) : 0;
+    const visibleCount =
+      items.length > 0 ? Math.max(0, items.length - filter.excludeValues.length) : 0;
     return items.length > 0 ? `${visibleCount} selected` : 'Filtered';
   }
   return 'All';
@@ -489,6 +616,7 @@ function PivotEmptyState({
     <button
       type="button"
       className="mt-2 flex h-full min-h-[120px] w-full flex-col items-start justify-center rounded border border-dashed border-ss-border bg-ss-surface/95 px-4 py-3 text-left shadow-sm hover:bg-ss-surface-hover"
+      data-no-grid-pointer="true"
       data-pivot-target="empty-state"
       data-pivot-id={marker.id}
       title={`Configure ${marker.name}`}

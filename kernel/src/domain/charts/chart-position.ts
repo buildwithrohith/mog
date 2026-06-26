@@ -9,8 +9,15 @@ import { type SheetId, sheetId as toSheetId } from '@mog-sdk/contracts/core';
 
 import type { ChartFloatingObject } from '../../bridges/compute/compute-bridge';
 import type { DocumentContext } from '../../context/types';
+import {
+  createChartMutationOptions,
+  type ChartMutationOptionsInput,
+} from './chart-mutation-context';
 import { get, update } from './chart-store';
-import { resolveChartHeightCells, resolveChartWidthCells } from './chart-size-units';
+import {
+  resolveStoredChartHeightCellSpan,
+  resolveStoredChartWidthCellSpan,
+} from './chart-size-units';
 
 /**
  * Update chart position (for drag/resize).
@@ -25,6 +32,7 @@ export async function updatePosition(
   sheetId: SheetId,
   chartId: string,
   position: { anchorRow: number; anchorCol: number; width: number; height: number },
+  admissionOptions?: ChartMutationOptionsInput,
 ): Promise<void> {
   const chart = await get(ctx, sheetId, chartId);
   if (!chart) return;
@@ -39,7 +47,17 @@ export async function updatePosition(
     heightCells: position.height,
   };
 
-  await update(ctx, sheetId, chartId, updates);
+  await update(
+    ctx,
+    sheetId,
+    chartId,
+    updates,
+    admissionOptions ??
+      createChartMutationOptions(ctx, {
+        operationIdPrefix: 'charts.update',
+        sheetIds: [sheetId],
+      }),
+  );
 }
 
 /**
@@ -80,8 +98,8 @@ export async function getChartPosition(
   const rawSheetId = chart.sheetId;
   const anchorRow = chart.anchor.anchorRow;
   const anchorCol = chart.anchor.anchorCol;
-  const chartWidth = resolveChartWidthCells(chart.widthCells, chart.width) ?? 4;
-  const chartHeight = resolveChartHeightCells(chart.heightCells, chart.height) ?? 10;
+  const chartWidth = resolveStoredChartWidthCellSpan(chart) ?? 4;
+  const chartHeight = resolveStoredChartHeightCellSpan(chart) ?? 10;
 
   if (!rawSheetId) {
     return { anchorRow, anchorCol, width: chartWidth, height: chartHeight };

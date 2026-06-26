@@ -1,4 +1,4 @@
-use cell_types::{CellId, SheetId};
+use cell_types::SheetId;
 use value_types::{CellValue, ComputeError};
 use yrs::{Map, Origin, Out, Transact};
 
@@ -10,7 +10,9 @@ use compute_document::hex::id_to_hex;
 use compute_document::schema::KEY_CELLS;
 use compute_document::undo::ORIGIN_USER_EDIT;
 
-use super::{a1_range_string, ensure_cell_id_mirrored, write_cell_to_yrs};
+use super::{
+    a1_range_string, ensure_cell_id_mirrored, persist_cell_formula_identity, write_cell_to_yrs,
+};
 
 pub(in crate::storage::engine) fn set_array_formula(
     stores: &mut EngineStores,
@@ -42,10 +44,13 @@ pub(in crate::storage::engine) fn set_array_formula(
     };
 
     // Snapshot old anchor value for the change-set patch.
-    let old_val = mirror
-        .get_cell_value(&anchor_id)
+    let old_val = stores
+        .compute
+        .get_cell_value(mirror, &anchor_id)
         .cloned()
+        .or_else(|| mirror.get_cell_value(&anchor_id).cloned())
         .unwrap_or(CellValue::Null);
+    let old_formula = stores.compute.get_formula(&anchor_id).map(str::to_owned);
 
     // Write the formula text to Yrs (suppressed observer, so we own
     // the change-set construction). The body is normalized in the
@@ -80,6 +85,10 @@ pub(in crate::storage::engine) fn set_array_formula(
     let mut result = stores.compute.set_array_formula(
         mirror, sheet_id, anchor_id, top_row, left_col, bottom_row, right_col, formula,
     )?;
+    {
+        let _guard = mutation.suppress_guard();
+        persist_cell_formula_identity(stores, mirror, sheet_id, anchor_id)?;
+    }
 
     // Persist the CSE marker into Yrs so the array-formula brace
     // survives Yrs undo/redo. unified-reference left this runtime-only
@@ -107,11 +116,14 @@ pub(in crate::storage::engine) fn set_array_formula(
         }
     }
 
-    // Patch old_value onto the seed change.
+    // Patch before-side fields onto the seed change.
     let cell_id_str = anchor_id.to_uuid_string();
     for change in &mut result.changed_cells {
-        if change.old_value.is_none() && change.cell_id == cell_id_str {
+        if change.cell_id == cell_id_str {
             change.old_value = Some(old_val.clone());
+            if change.old_formula.is_none() {
+                change.old_formula = old_formula.clone();
+            }
         }
     }
 

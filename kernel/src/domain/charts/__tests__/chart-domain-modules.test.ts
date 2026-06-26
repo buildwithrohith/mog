@@ -1,8 +1,13 @@
 import { jest } from '@jest/globals';
 import { sheetId as toSheetId, type SheetId } from '@mog-sdk/contracts/core';
 
-import type { ChartFloatingObject, MutationResult } from '../../../bridges/compute/compute-bridge';
+import type {
+  ChartFloatingObject,
+  ComputeBridge,
+  MutationResult,
+} from '../../../bridges/compute/compute-bridge';
 import type { DocumentContext } from '../../../context/types';
+import { calculateChartPixelBounds, convertChartToFloatingObject } from '../chart-manager';
 import { getChartPosition, updatePosition } from '../chart-position';
 import { create, get, getAll, remove, update } from '../chart-store';
 import {
@@ -29,6 +34,12 @@ type ChartOverrides = Omit<Partial<ChartFloatingObject>, 'anchor'> & {
   anchor?: Partial<ChartFloatingObject['anchor']>;
 };
 
+type ChartMutationOptionsRecord = {
+  operationContext: {
+    groupId?: string;
+  };
+};
+
 function chart(overrides: ChartOverrides = {}): ChartFloatingObject {
   const { anchor: anchorOverrides, ...rest } = overrides;
   const base: ChartFloatingObject = {
@@ -43,8 +54,10 @@ function chart(overrides: ChartOverrides = {}): ChartFloatingObject {
       anchorColOffsetEmu: 0,
       anchorMode: 'oneCell',
     },
-    width: 4,
-    height: 10,
+    width: 0,
+    height: 0,
+    widthCells: 4,
+    heightCells: 10,
     zIndex: 0,
     rotation: 0,
     flipH: false,
@@ -98,6 +111,10 @@ function createBridgeMock() {
     ),
     getAllCharts: jest.fn(async () => [existingChart]),
     getCellPosition: jest.fn(async () => null),
+    getColPosition: jest.fn(async (_sheetId: SheetId, col: number) => col * 80),
+    getRowPosition: jest.fn(async (_sheetId: SheetId, row: number) => row * 20),
+    getColWidthFromIndex: jest.fn(async () => 80),
+    getRowHeightFromIndex: jest.fn(async () => 20),
     linkChartToTable: jest.fn(async () => mutationResult()),
     unlinkChartFromTable: jest.fn(async () => mutationResult()),
     isChartLinkedToTable: jest.fn(async () => true),
@@ -128,6 +145,23 @@ function createMockContext(overrides: Partial<ReturnType<typeof createBridgeMock
   };
 }
 
+function expectChartMutationOptions(operationIdPrefix: string) {
+  return expect.objectContaining({
+    operationContext: expect.objectContaining({
+      operationId: expect.stringMatching(new RegExp(`^${escapeRegExp(operationIdPrefix)}:`)),
+      kind: 'mutation',
+      sheetIds: [SHEET_ID],
+      domainIds: ['charts.source-range'],
+      capturePolicy: 'commitEligible',
+      writeAdmissionMode: 'capture',
+    }),
+  });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 describe('chart-store', () => {
   it('delegates CRUD reads and writes to computeBridge without manual events', async () => {
     const config = chart();
@@ -140,13 +174,84 @@ describe('chart-store', () => {
     await expect(get(ctx, SHEET_ID, config.id)).resolves.toEqual(chart());
     await expect(getAll(ctx, SHEET_ID)).resolves.toEqual([chart()]);
 
-    expect(bridge.createChart).toHaveBeenCalledWith(SHEET_ID, config);
-    expect(bridge.updateChart).toHaveBeenCalledWith(SHEET_ID, config.id, updates);
-    expect(bridge.deleteChart).toHaveBeenCalledWith(SHEET_ID, config.id);
+    expect(bridge.createChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      config,
+      expectChartMutationOptions('charts.create'),
+    );
+    expect(bridge.updateChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      config.id,
+      updates,
+      expectChartMutationOptions('charts.update'),
+    );
+    expect(bridge.deleteChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      config.id,
+      expectChartMutationOptions('charts.delete'),
+    );
     expect(bridge.getChart).toHaveBeenCalledWith(SHEET_ID, config.id);
     expect(bridge.getAllCharts).toHaveBeenCalledWith(SHEET_ID);
     expect(eventBus.emit).not.toHaveBeenCalled();
     expect(eventBus.emitBatch).not.toHaveBeenCalled();
+  });
+});
+
+describe('chart-manager geometry consumers', () => {
+  it('calculates pixel bounds from point-backed size ahead of stale cell spans', async () => {
+    const { bridge } = createMockContext({
+      getColWidthFromIndex: jest.fn(async () => 100),
+      getRowHeightFromIndex: jest.fn(async () => 30),
+    });
+    const importedChart = chart({
+      anchor: { anchorRow: 2, anchorCol: 3 },
+      width: 640,
+      height: 300,
+      widthPt: 480,
+      heightPt: 225,
+      widthCells: 4,
+      heightCells: 5,
+    });
+
+    await expect(
+      calculateChartPixelBounds(importedChart, SHEET_ID, bridge as unknown as ComputeBridge),
+    ).resolves.toEqual({
+      x: 240,
+      y: 40,
+      width: 640,
+      height: 300,
+    });
+    expect(bridge.getColWidthFromIndex).not.toHaveBeenCalled();
+    expect(bridge.getRowHeightFromIndex).not.toHaveBeenCalled();
+  });
+
+  it('converts chart floating objects from point-backed size ahead of stale cell spans', async () => {
+    const { bridge } = createMockContext({
+      getColWidthFromIndex: jest.fn(async () => 100),
+      getRowHeightFromIndex: jest.fn(async () => 30),
+    });
+    const importedChart = chart({
+      anchor: { anchorRow: 2, anchorCol: 3 },
+      width: 640,
+      height: 300,
+      widthPt: 480,
+      heightPt: 225,
+      widthCells: 4,
+      heightCells: 5,
+    });
+
+    const object = await convertChartToFloatingObject(importedChart, {
+      computeBridge: bridge as unknown as ComputeBridge,
+    });
+
+    expect(object?.position).toMatchObject({
+      x: 240,
+      y: 40,
+      width: 640,
+      height: 300,
+    });
+    expect(bridge.getColWidthFromIndex).not.toHaveBeenCalled();
+    expect(bridge.getRowHeightFromIndex).not.toHaveBeenCalled();
   });
 });
 
@@ -257,6 +362,27 @@ describe('chart-position', () => {
     expect(bridge.getCellPosition).not.toHaveBeenCalled();
   });
 
+  it('uses point-backed geometry ahead of stale cell spans for fixed size', async () => {
+    const { ctx, bridge } = createMockContext();
+
+    await expect(
+      getChartPosition(
+        ctx,
+        chart({
+          anchor: { anchorRow: 9, anchorCol: 10 },
+          width: 640,
+          height: 300,
+          widthPt: 480,
+          heightPt: 225,
+          widthCells: 4,
+          heightCells: 5,
+        }),
+      ),
+    ).resolves.toEqual({ anchorRow: 9, anchorCol: 10, width: 8, height: 15 });
+
+    expect(bridge.getCellPosition).not.toHaveBeenCalled();
+  });
+
   it('treats two-cell mode without an end anchor as one-cell anchored fixed size', async () => {
     const { ctx } = createMockContext({
       getCellPosition: jest.fn(async () => ({
@@ -315,15 +441,20 @@ describe('chart-position', () => {
     });
 
     expect(bridge.getChart).toHaveBeenCalledWith(SHEET_ID, 'chart-1');
-    expect(bridge.updateChart).toHaveBeenCalledWith(SHEET_ID, 'chart-1', {
-      anchor: {
-        ...chart().anchor,
-        anchorRow: 5,
-        anchorCol: 6,
+    expect(bridge.updateChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      'chart-1',
+      {
+        anchor: {
+          ...chart().anchor,
+          anchorRow: 5,
+          anchorCol: 6,
+        },
+        widthCells: 7,
+        heightCells: 8,
       },
-      widthCells: 7,
-      heightCells: 8,
-    });
+      expectChartMutationOptions('charts.update'),
+    );
     expect(eventBus.emit).not.toHaveBeenCalled();
     expect(eventBus.emitBatch).not.toHaveBeenCalled();
   });
@@ -355,7 +486,12 @@ describe('chart-z-order', () => {
 
     expect(bridge.getChart).toHaveBeenCalledWith(SHEET_ID, selected.id);
     expect(bridge.getAllCharts).toHaveBeenCalledWith(SHEET_ID);
-    expect(bridge.updateChart).toHaveBeenCalledWith(SHEET_ID, selected.id, { zIndex: 10 });
+    expect(bridge.updateChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      selected.id,
+      { zIndex: 10 },
+      expectChartMutationOptions('charts.bringToFront'),
+    );
   });
 
   it('computes z-order bounds and delegates relative layer changes', async () => {
@@ -375,11 +511,46 @@ describe('chart-z-order', () => {
     await bringForward(ctx, SHEET_ID, selected.id);
     await sendBackward(ctx, SHEET_ID, selected.id);
 
-    expect(bridge.updateChart).toHaveBeenCalledWith(SHEET_ID, selected.id, { zIndex: 0 });
-    expect(bridge.updateChart).toHaveBeenCalledWith(SHEET_ID, selected.id, { zIndex: 9 });
-    expect(bridge.updateChart).toHaveBeenCalledWith(SHEET_ID, front.id, { zIndex: 2 });
-    expect(bridge.updateChart).toHaveBeenCalledWith(SHEET_ID, selected.id, { zIndex: 1 });
-    expect(bridge.updateChart).toHaveBeenCalledWith(SHEET_ID, back.id, { zIndex: 2 });
+    expect(bridge.updateChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      selected.id,
+      { zIndex: 0 },
+      expectChartMutationOptions('charts.sendToBack'),
+    );
+    expect(bridge.updateChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      selected.id,
+      { zIndex: 9 },
+      expectChartMutationOptions('charts.bringForward'),
+    );
+    expect(bridge.updateChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      front.id,
+      { zIndex: 2 },
+      expectChartMutationOptions('charts.bringForward'),
+    );
+    expect(bridge.updateChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      selected.id,
+      { zIndex: 1 },
+      expectChartMutationOptions('charts.sendBackward'),
+    );
+    expect(bridge.updateChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      back.id,
+      { zIndex: 2 },
+      expectChartMutationOptions('charts.sendBackward'),
+    );
+    const bringForwardFirst = bridge.updateChart.mock.calls[1][3] as ChartMutationOptionsRecord;
+    const bringForwardSecond = bridge.updateChart.mock.calls[2][3] as ChartMutationOptionsRecord;
+    const sendBackwardFirst = bridge.updateChart.mock.calls[3][3] as ChartMutationOptionsRecord;
+    const sendBackwardSecond = bridge.updateChart.mock.calls[4][3] as ChartMutationOptionsRecord;
+    expect(bringForwardFirst.operationContext.groupId).toBe(
+      bringForwardSecond.operationContext.groupId,
+    );
+    expect(sendBackwardFirst.operationContext.groupId).toBe(
+      sendBackwardSecond.operationContext.groupId,
+    );
   });
 });
 
@@ -395,13 +566,30 @@ describe('chart-table-links', () => {
     await unlinkChartFromTable(ctx, SHEET_ID, 'chart-1');
     await expect(isChartLinkedToTable(ctx, SHEET_ID, 'chart-1')).resolves.toBe(true);
 
-    expect(bridge.linkChartToTable).toHaveBeenCalledWith(SHEET_ID, 'chart-1', 'table-1');
-    expect(bridge.updateChart).toHaveBeenCalledWith(SHEET_ID, 'chart-1', {
-      tableDataColumns: ['Revenue', 'Cost'],
-      tableCategoryColumn: 'Month',
-      useTableColumnNamesAsLabels: false,
-    });
-    expect(bridge.unlinkChartFromTable).toHaveBeenCalledWith(SHEET_ID, 'chart-1');
+    expect(bridge.linkChartToTable).toHaveBeenCalledWith(
+      SHEET_ID,
+      'chart-1',
+      'table-1',
+      expectChartMutationOptions('charts.linkToTable'),
+    );
+    expect(bridge.updateChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      'chart-1',
+      {
+        tableDataColumns: ['Revenue', 'Cost'],
+        tableCategoryColumn: 'Month',
+        useTableColumnNamesAsLabels: false,
+      },
+      expectChartMutationOptions('charts.linkToTable'),
+    );
+    expect(bridge.unlinkChartFromTable).toHaveBeenCalledWith(
+      SHEET_ID,
+      'chart-1',
+      expectChartMutationOptions('charts.unlinkFromTable'),
+    );
+    const linkOptions = bridge.linkChartToTable.mock.calls[0][3] as ChartMutationOptionsRecord;
+    const metadataOptions = bridge.updateChart.mock.calls[0][3] as ChartMutationOptionsRecord;
+    expect(linkOptions.operationContext.groupId).toBe(metadataOptions.operationContext.groupId);
     expect(bridge.isChartLinkedToTable).toHaveBeenCalledWith(SHEET_ID, 'chart-1');
   });
 
@@ -430,10 +618,15 @@ describe('chart-table-links', () => {
       ['AA Header', 'AB Header', 'AC Header'],
     );
 
-    expect(bridge.updateChart).toHaveBeenCalledWith(SHEET_ID, linkedChart.id, {
-      dataRange: 'AA2:AC10',
-      tableColumnNames: ['AA Header', 'AB Header', 'AC Header'],
-    });
+    expect(bridge.updateChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      linkedChart.id,
+      {
+        dataRange: 'AA2:AC10',
+        tableColumnNames: ['AA Header', 'AB Header', 'AC Header'],
+      },
+      expectChartMutationOptions('charts.update'),
+    );
   });
 
   it('reads chart source table IDs and filters charts linked to one table', async () => {

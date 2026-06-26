@@ -24,13 +24,14 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormulaReferenceDiagnostic } from '@mog-sdk/contracts/api';
 
-import { useUIStore, useUIStoreApi } from '../../infra/context';
+import { useFeatureGate, useUIStore, useUIStoreApi } from '../../infra/context';
 import { dispatch } from '../../actions';
 import { useActionDependencies } from '../../hooks/toolbar/use-action-dependencies';
 import { useSelectionActions } from '../../hooks/selection/use-selection-actions';
 import { useActiveCell, useActiveSheetId, useWorkbook } from '../../internal-api';
 import { extractFormulaRanges } from '../../domain/editor/formula-range-parser';
 import { toA1 } from '@mog/spreadsheet-utils/a1';
+import { VersionHistoryPanel } from '../version-control/VersionHistoryPanel';
 
 type FormulaReferenceSeverity = 'error' | 'warning' | 'info';
 
@@ -91,6 +92,7 @@ function SidePanelImpl() {
   const uiStore = useUIStoreApi();
   const deps = useActionDependencies();
   const sidePanelContent = useUIStore((s) => s.sidePanelContent);
+  const versionControlEnabled = useFeatureGate('capabilities', 'versionControl');
 
   const setCommentsPanelVisible = useUIStore((s) => s.setCommentsPanelVisible);
 
@@ -107,12 +109,29 @@ function SidePanelImpl() {
     setCommentsPanelVisible(true);
   }, [setCommentsPanelVisible]);
 
+  const handleOpenVersionHistory = useCallback(() => {
+    if (!versionControlEnabled) return;
+    uiStore.getState().setSidePanelContent('version-history');
+  }, [uiStore, versionControlEnabled]);
+
   const handleOpenExtensions = useCallback(() => {
     dispatch('TOGGLE_EXTENSION_PANEL', deps);
   }, [deps]);
 
-  if (sidePanelContent === 'formula-references') {
+  useEffect(() => {
+    if (!versionControlEnabled && sidePanelContent === 'version-history') {
+      uiStore.getState().setSidePanelContent('index');
+    }
+  }, [sidePanelContent, uiStore, versionControlEnabled]);
+
+  const effectiveSidePanelContent =
+    !versionControlEnabled && sidePanelContent === 'version-history' ? 'index' : sidePanelContent;
+
+  if (effectiveSidePanelContent === 'formula-references') {
     return <FormulaReferenceDiagnosticsPanel onClose={handleClose} />;
+  }
+  if (effectiveSidePanelContent === 'version-history') {
+    return <VersionHistoryPanel onClose={handleClose} />;
   }
 
   return (
@@ -151,6 +170,19 @@ function SidePanelImpl() {
         >
           Accessibility
         </button>
+        {versionControlEnabled ? (
+          <button
+            type="button"
+            onClick={handleOpenVersionHistory}
+            data-testid="panel-side-version-history"
+            data-action="open-version-history"
+            className="w-full text-left px-3 py-2 rounded text-body-sm text-ss-text hover:bg-ss-surface-hover"
+            aria-label="Open Version History"
+            title="Open Version History"
+          >
+            Version History
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={handleOpenExtensions}

@@ -19,7 +19,6 @@ import { useEffect } from 'react';
 import type { SheetCoordinator } from '../../../coordinator/sheet-coordinator';
 import { clampZoom } from '../../../infra/utils/zoom-utils';
 import { lifecycleDebug } from '../../../systems/renderer/debug/debug-lifecycle';
-import type { GridScrollbarSettings } from '../layout/viewport-size';
 
 /**
  * Options for the useRendererSync hook.
@@ -35,8 +34,10 @@ export interface UseRendererSyncOptions {
   activeSheetId: string;
   /** Current zoom level for the active sheet (already resolved from UIStore) */
   currentZoom: number;
-  /** Workbook settings for scrollbar visibility */
-  workbookSettings: GridScrollbarSettings;
+  /** Whether the host renders the horizontal custom scrollbar. */
+  showHorizontalScrollbar: boolean;
+  /** Whether the host renders the vertical custom scrollbar. */
+  showVerticalScrollbar: boolean;
   /** The sheet coordinator instance */
   coordinator: SheetCoordinator;
   /** Resize callback from renderer hook */
@@ -51,6 +52,8 @@ export interface UseRendererSyncOptions {
   setZoom: (zoom: number) => void;
   /** Persist zoom for a sheet in the UI store */
   setZoomLevel: (sheetId: string, level: number) => void;
+  /** Persist zoom for a sheet in the workbook model */
+  persistZoomLevel?: (sheetId: string, level: number) => void;
   /** Unmount callback from renderer hook */
   unmount: () => void;
 }
@@ -88,16 +91,18 @@ export interface PersistInputZoomOptions {
   zoom: number;
   currentZoom: number;
   setZoomLevel: (sheetId: string, level: number) => void;
+  persistZoomLevel?: (sheetId: string, level: number) => void;
 }
 
 export function persistInputZoomForSheet(options: PersistInputZoomOptions): void {
-  const { activeSheetId, zoom, currentZoom, setZoomLevel } = options;
+  const { activeSheetId, zoom, currentZoom, setZoomLevel, persistZoomLevel } = options;
   if (!Number.isFinite(zoom)) return;
 
   const clampedZoom = clampZoom(zoom);
   if (Math.abs(clampedZoom - currentZoom) < 0.0001) return;
 
   setZoomLevel(activeSheetId, clampedZoom);
+  persistZoomLevel?.(activeSheetId, clampedZoom);
 }
 
 /**
@@ -121,7 +126,8 @@ export function useRendererSync(options: UseRendererSyncOptions): void {
     currentSheetId,
     activeSheetId,
     currentZoom,
-    workbookSettings,
+    showHorizontalScrollbar,
+    showVerticalScrollbar,
     coordinator,
     resize,
     suspend,
@@ -129,6 +135,7 @@ export function useRendererSync(options: UseRendererSyncOptions): void {
     switchSheet,
     setZoom,
     setZoomLevel,
+    persistZoomLevel,
     unmount,
   } = options;
 
@@ -186,13 +193,7 @@ export function useRendererSync(options: UseRendererSyncOptions): void {
     if (rect.width > 0 && rect.height > 0) {
       resize(rect.width, rect.height);
     }
-  }, [
-    workbookSettings.showHorizontalScrollbar,
-    workbookSettings.showVerticalScrollbar,
-    isReady,
-    resize,
-    containerRef,
-  ]);
+  }, [showHorizontalScrollbar, showVerticalScrollbar, isReady, resize, containerRef]);
 
   // Visibility change effect
   // Note: Capture suspend/resume functions at mount to avoid re-attaching listener on every render
@@ -240,9 +241,15 @@ export function useRendererSync(options: UseRendererSyncOptions): void {
     if (!isReady) return;
 
     return coordinator.input.onZoomChange((zoom) => {
-      persistInputZoomForSheet({ activeSheetId, zoom, currentZoom, setZoomLevel });
+      persistInputZoomForSheet({
+        activeSheetId,
+        zoom,
+        currentZoom,
+        setZoomLevel,
+        persistZoomLevel,
+      });
     });
-  }, [isReady, coordinator, activeSheetId, currentZoom, setZoomLevel]);
+  }, [isReady, coordinator, activeSheetId, currentZoom, setZoomLevel, persistZoomLevel]);
 
   // Input dependencies effect
   // Sets up InputCoordinator dependencies when renderer is ready.

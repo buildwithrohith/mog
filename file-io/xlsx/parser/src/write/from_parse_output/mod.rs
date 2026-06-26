@@ -15,6 +15,7 @@ mod chart_auxiliary_registration;
 mod chart_extents;
 mod chart_frame_transform;
 mod chart_replay;
+mod chart_source_completion;
 mod differential_formats;
 mod doc_props;
 mod export_context;
@@ -82,6 +83,16 @@ pub use export_report::{
     ExportDiagnostic, ExportDiagnosticCode, ExportReport, ExportSemanticImpact,
 };
 pub use sheet_ext_merge::strip_modeled_x14_data_validations_from_ext_lst;
+
+/// Returns whether XLSX export must reconstruct the chart XML from modeled
+/// fields instead of replaying the current imported standard chart part.
+///
+/// Runtime export uses this before completing live source references, because
+/// cache materialization is a modeled edit and would invalidate replay-current
+/// imported chart authority.
+pub fn chart_space_requires_reconstruction(chart_spec: &domain_types::ChartSpec) -> bool {
+    chart_replay::should_reconstruct_chart_space(chart_spec)
+}
 
 fn worksheet_legacy_vml_path(
     sheet_idx: usize,
@@ -891,20 +902,15 @@ pub fn write_xlsx_from_parse_output(output: &ParseOutput) -> Result<Vec<u8>, Wri
                         .or(chart_spec.anchor_edit_as.as_deref())
                         .map(ooxml_types::drawings::EditAs::from_ooxml);
                     let chart_object = DrawingObject::ChartEx(cx_ref);
-                    let raw_alternate_content = if chart_replay::chart_ex_allows_raw_anchor_replay(
+                    let raw_alternate_content = chart_replay::chart_ex_raw_anchor_replay_xml(
                         chart_spec,
                         &cx_path,
                         match &chart_object {
                             DrawingObject::ChartEx(cx_ref) => cx_ref.r_id.as_str(),
                             _ => "",
                         },
-                    ) {
-                        chart_frame
-                            .and_then(|frame| frame.raw_alternate_content.clone())
-                            .map(|raw_xml| crate::domain::drawings::McAlternateContent { raw_xml })
-                    } else {
-                        None
-                    };
+                    )
+                    .map(|raw_xml| crate::domain::drawings::McAlternateContent { raw_xml });
                     let drawing_anchor = if let (Some(x), Some(y)) = (
                         chart_spec.position.absolute_x,
                         chart_spec.position.absolute_y,

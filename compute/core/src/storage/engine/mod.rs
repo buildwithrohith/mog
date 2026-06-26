@@ -16,6 +16,7 @@ mod pivot_materialization;
 mod recalc;
 mod settings;
 mod stores;
+mod sync_authored_cells;
 mod sync_pipeline;
 mod viewport;
 // Wire format types and serialization — now in compute-wire crate
@@ -32,6 +33,8 @@ mod cell_semantics;
 mod sync_bridge;
 mod table_result_merge;
 mod undo_bridge;
+#[doc(hidden)]
+pub mod versioning;
 mod workbook_theme;
 pub use cell_semantics::CellInfo;
 mod cf_cache;
@@ -65,7 +68,13 @@ pub(crate) mod update_buffer;
 mod validation;
 
 #[cfg(test)]
+mod integration_tests_direct_edit_results;
+#[cfg(test)]
+mod integration_tests_find_in_range;
+#[cfg(test)]
 mod integration_tests_old_value;
+#[cfg(test)]
+mod integration_tests_replace_all;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -92,6 +101,7 @@ use crate::mirror::CellMirror;
 pub(in crate::storage::engine) use grid_indexing::build_grid_from_yrs_for_sheet;
 use mutation_coordinator::MutationCoordinator;
 use settings::EngineSettings;
+use snapshot_types::SyncApplyOperationContextWire;
 pub(crate) use stores::CFCacheEntry;
 use stores::EngineStores;
 use viewport::service::ViewportService;
@@ -131,6 +141,13 @@ pub struct YrsComputeEngine {
     /// in Yrs, and not exported back to XLSX.
     pub(crate) runtime_diagnostics: runtime_diagnostics::RuntimeDiagnosticsStore,
 
+    /// Document-local version operation admission state.
+    ///
+    /// This is runtime-only state. Future bridge plumbing can attach a one-shot
+    /// [`crate::snapshot::VersionOperationContextWire`] before a mutation
+    /// crosses into Rust; guarded mutation boundaries consume it.
+    version_runtime_operation_context: versioning::VersionRuntimeOperationContext,
+
     /// Yrs `update_v1` buffer.
     ///
     /// One observer is installed at engine construction; every committed
@@ -145,6 +162,10 @@ pub struct YrsComputeEngine {
     /// `_update_subscription` to keep the observer alive for the engine's
     /// lifetime — dropping it would silently detach the observer.
     pub(crate) update_buffer: std::sync::Arc<update_buffer::UpdateBuffer>,
+
+    /// Sync apply context currently being applied to Yrs and rebuilt into
+    /// runtime state.
+    pub(crate) active_sync_context: Option<SyncApplyOperationContextWire>,
 
     /// Lifetime anchor for the `update_v1` subscription. Dropping this
     /// removes the observer from the yrs Doc; we keep it alive for the

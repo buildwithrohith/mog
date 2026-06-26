@@ -63,9 +63,12 @@ const CHART_TYPES: ChartTypeOption[] = [
   { type: 'combo', label: 'Combo' },
 ];
 
-const DEFAULT_CHART_TITLE = 'Chart Title';
-
 interface OptimisticTitleToggle {
+  chartId: string;
+  checked: boolean;
+}
+
+interface OptimisticLegendToggle {
   chartId: string;
   checked: boolean;
 }
@@ -79,11 +82,15 @@ export function ChartToolsRibbon(_props: ContextualTabProps) {
   const { uiStore } = useDocumentContext();
   const activeSheetId = useStore(uiStore, (s) => s.activeSheetId);
   const { selectedChartId, deleteSelectedChart } = useChartUI();
-  const { charts, updateChart } = useCharts({ sheetId: activeSheetId });
+  const { charts, setChartTitleVisible, setLegendVisible, switchSeriesOrientation } = useCharts({
+    sheetId: activeSheetId,
+  });
   const [typeDropdownOpen, setTypeDropdownOpen] = useState(false);
   const [optimisticTitleToggle, setOptimisticTitleToggle] = useState<OptimisticTitleToggle | null>(
     null,
   );
+  const [optimisticLegendToggle, setOptimisticLegendToggle] =
+    useState<OptimisticLegendToggle | null>(null);
 
   // Get the selected chart
   const selectedChart = charts.find((c) => c.id === selectedChartId);
@@ -91,12 +98,21 @@ export function ChartToolsRibbon(_props: ContextualTabProps) {
 
   // Check if chart has title/legend
   const observedHasTitle =
-    selectedChart?.config.autoTitleDeleted === true ? false : Boolean(selectedChart?.config.title);
+    selectedChart?.appModel?.title.visible ??
+    (selectedChart?.config.autoTitleDeleted === true
+      ? false
+      : Boolean(selectedChart?.config.title));
   const hasTitle =
     optimisticTitleToggle && optimisticTitleToggle.chartId === selectedChartId
       ? optimisticTitleToggle.checked
       : observedHasTitle;
-  const hasLegend = selectedChart?.config.legend?.show !== false;
+  const observedHasLegend = selectedChart
+    ? (selectedChart.appModel?.legend.visible ?? selectedChart.config.legend?.show !== false)
+    : false;
+  const hasLegend =
+    optimisticLegendToggle && optimisticLegendToggle.chartId === selectedChartId
+      ? optimisticLegendToggle.checked
+      : observedHasLegend;
 
   useEffect(() => {
     if (!optimisticTitleToggle) {
@@ -112,6 +128,38 @@ export function ChartToolsRibbon(_props: ContextualTabProps) {
       setOptimisticTitleToggle(null);
     }
   }, [optimisticTitleToggle, observedHasTitle, selectedChart, selectedChartId]);
+
+  useEffect(() => {
+    if (!optimisticLegendToggle) {
+      return;
+    }
+
+    if (!selectedChart || !selectedChartId || optimisticLegendToggle.chartId !== selectedChartId) {
+      setOptimisticLegendToggle(null);
+      return;
+    }
+
+    if (optimisticLegendToggle.checked === observedHasLegend) {
+      setOptimisticLegendToggle(null);
+    }
+  }, [optimisticLegendToggle, observedHasLegend, selectedChart, selectedChartId]);
+
+  const clearOptimisticTitleToggle = useCallback((chartId: string, checked: boolean) => {
+    setOptimisticTitleToggle((current) =>
+      current?.chartId === chartId && current.checked === checked ? null : current,
+    );
+  }, []);
+
+  const clearOptimisticLegendToggle = useCallback((chartId: string, checked: boolean) => {
+    setOptimisticLegendToggle((current) =>
+      current?.chartId === chartId && current.checked === checked ? null : current,
+    );
+  }, []);
+
+  const getSelectedChartIdForCommand = useCallback(
+    () => deps.accessors.object.getFirstSelectedId() ?? selectedChartId,
+    [deps, selectedChartId],
+  );
 
   // ==========================================================================
   // Handlers
@@ -130,69 +178,67 @@ export function ChartToolsRibbon(_props: ContextualTabProps) {
   const handleToggleTitle = useCallback(
     (checked: boolean) => {
       if (selectedChartId && selectedChart) {
-        setOptimisticTitleToggle({ chartId: selectedChartId, checked });
-
-        if (checked) {
-          updateChart(selectedChartId, {
-            title: selectedChart.config.title || DEFAULT_CHART_TITLE,
-            autoTitleDeleted: false,
-          });
-        } else {
-          // `null` explicitly clears title; `undefined` means no title update.
-          updateChart(selectedChartId, { title: null, autoTitleDeleted: true });
-        }
+        const chartId = selectedChartId;
+        setOptimisticTitleToggle({ chartId, checked });
+        void setChartTitleVisible(chartId, checked)
+          .then((receipt) => {
+            if (receipt.status !== 'applied') {
+              clearOptimisticTitleToggle(chartId, checked);
+            }
+          })
+          .catch(() => clearOptimisticTitleToggle(chartId, checked));
       }
     },
-    [selectedChartId, selectedChart, updateChart],
+    [clearOptimisticTitleToggle, selectedChartId, selectedChart, setChartTitleVisible],
   );
 
-  const handleToggleLegend = useCallback(() => {
-    if (selectedChartId && selectedChart) {
-      const currentLegend = selectedChart.config.legend ?? { show: true, position: 'bottom' };
-      updateChart(selectedChartId, {
-        legend: { ...currentLegend, show: !hasLegend },
-      });
-    }
-  }, [selectedChartId, selectedChart, hasLegend, updateChart]);
+  const handleToggleLegend = useCallback(
+    (checked: boolean) => {
+      if (selectedChartId) {
+        const chartId = selectedChartId;
+        setOptimisticLegendToggle({ chartId, checked });
+        void setLegendVisible(chartId, checked)
+          .then((receipt) => {
+            if (receipt.status !== 'applied') {
+              clearOptimisticLegendToggle(chartId, checked);
+            }
+          })
+          .catch(() => clearOptimisticLegendToggle(chartId, checked));
+      }
+    },
+    [clearOptimisticLegendToggle, selectedChartId, setLegendVisible],
+  );
 
   const handleSwitchRowColumn = useCallback(() => {
-    if (selectedChartId && selectedChart) {
-      const currentOrientation = selectedChart.config.seriesOrientation ?? 'columns';
-      const newOrientation = currentOrientation === 'columns' ? 'rows' : 'columns';
-      updateChart(selectedChartId, { seriesOrientation: newOrientation });
+    const chartId = getSelectedChartIdForCommand();
+    if (chartId) {
+      void switchSeriesOrientation(chartId);
     }
-  }, [selectedChartId, selectedChart, updateChart]);
+  }, [getSelectedChartIdForCommand, switchSeriesOrientation]);
 
   const handleSelectData = useCallback(() => {
-    if (selectedChartId) {
+    const chartId = getSelectedChartIdForCommand();
+    if (chartId) {
       // Open the chart editor which allows data range selection
-      dispatch('EDIT_CHART', deps, { chartId: selectedChartId });
+      dispatch('EDIT_CHART', deps, { chartId });
     }
-  }, [selectedChartId, deps]);
+  }, [getSelectedChartIdForCommand, deps]);
 
   const handleBringToFront = useCallback(() => {
-    if (selectedChartId) {
-      dispatch('BRING_CHART_TO_FRONT', deps, { chartId: selectedChartId });
-    }
-  }, [selectedChartId, deps]);
+    dispatch('BRING_CHART_TO_FRONT', deps);
+  }, [deps]);
 
   const handleSendToBack = useCallback(() => {
-    if (selectedChartId) {
-      dispatch('SEND_CHART_TO_BACK', deps, { chartId: selectedChartId });
-    }
-  }, [selectedChartId, deps]);
+    dispatch('SEND_CHART_TO_BACK', deps);
+  }, [deps]);
 
   const handleBringForward = useCallback(() => {
-    if (selectedChartId) {
-      dispatch('BRING_CHART_FORWARD', deps, { chartId: selectedChartId });
-    }
-  }, [selectedChartId, deps]);
+    dispatch('BRING_CHART_FORWARD', deps);
+  }, [deps]);
 
   const handleSendBackward = useCallback(() => {
-    if (selectedChartId) {
-      dispatch('SEND_CHART_BACKWARD', deps, { chartId: selectedChartId });
-    }
-  }, [selectedChartId, deps]);
+    dispatch('SEND_CHART_BACKWARD', deps);
+  }, [deps]);
 
   const handleDelete = useCallback(() => {
     deleteSelectedChart();

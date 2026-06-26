@@ -26,13 +26,73 @@ export type SemanticWorkbookId = string;
 export type MogSpreadsheetColorScheme = 'light' | 'dark' | 'system';
 export type MogSpreadsheetResolvedColorScheme = 'light' | 'dark';
 
+export type SpreadsheetVersionControlFeatureGateCapability =
+  | 'versionControl'
+  | 'versionControlMerge'
+  | 'versionControl.merge';
+export type SpreadsheetBuiltInFeatureGateCapability =
+  | 'undo'
+  | 'redo'
+  | 'save'
+  | 'fileMenu'
+  | 'print'
+  | 'export'
+  | 'formulaBar'
+  | 'sheetTabs'
+  | 'contextMenu'
+  | 'freezePanes'
+  | 'dataValidation'
+  | 'datePicker'
+  | 'conditionalFormatting'
+  | SpreadsheetVersionControlFeatureGateCapability;
+export type SpreadsheetFeatureGateCapability =
+  | SpreadsheetBuiltInFeatureGateCapability
+  | (string & {});
+
+export interface SpreadsheetFeatureGateCapabilities {
+  readonly undo?: boolean;
+  readonly redo?: boolean;
+  readonly save?: boolean;
+  readonly fileMenu?: boolean;
+  readonly print?: boolean;
+  readonly export?: boolean;
+  readonly formulaBar?: boolean;
+  readonly sheetTabs?: boolean;
+  readonly contextMenu?: boolean;
+  readonly freezePanes?: boolean;
+  readonly dataValidation?: boolean;
+  readonly datePicker?: boolean;
+  readonly conditionalFormatting?: boolean;
+  readonly versionControl?: boolean;
+  readonly versionControlMerge?: boolean;
+  readonly 'versionControl.merge'?: boolean;
+  readonly [capability: string]: boolean | undefined;
+}
+
 export type SpreadsheetReadCapability = 'workbook:read' | 'workbook:export' | 'workbook:screenshot';
 export type SpreadsheetWriteCapability =
   | 'workbook:write'
   | 'workbook:undo-group'
   | 'workbook:policy-admin'
   | 'decorations:write';
-export type SpreadsheetCapability = SpreadsheetReadCapability | SpreadsheetWriteCapability;
+export type SpreadsheetVersionCapability =
+  | 'version:read'
+  | 'version:diff'
+  | 'version:commit'
+  | 'version:branch'
+  | 'version:checkout'
+  | 'version:reviewRead'
+  | 'version:reviewWrite'
+  | 'version:proposal'
+  | 'version:mergePreview'
+  | 'version:mergeApply'
+  | 'version:revert'
+  | 'version:provenance'
+  | 'version:remotePromote';
+export type SpreadsheetCapability =
+  | SpreadsheetReadCapability
+  | SpreadsheetWriteCapability
+  | SpreadsheetVersionCapability;
 
 export type SpreadsheetDocumentSource =
   | { readonly kind: 'blank' }
@@ -481,7 +541,7 @@ export interface MogSpreadsheetFeaturePolicy {
   readonly ribbonVisibility?: RibbonVisibilityConfig;
   readonly tabs?: Partial<Record<CommandBarTabId, boolean>>;
   readonly groups?: Record<string, boolean>;
-  readonly capabilities?: Record<string, boolean>;
+  readonly capabilities?: SpreadsheetFeatureGateCapabilities;
 }
 
 export interface SpreadsheetWorkbookFacade extends Workbook {

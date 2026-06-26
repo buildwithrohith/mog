@@ -410,9 +410,9 @@ export interface Note {
 export interface CellWriteOptions {
   /** If true, value is treated as a formula (prefixed with =) */
   asFormula?: boolean;
-  /** If true, string values starting with "=" are stored as literal text, not formulas. */
+  /** If true, string values are stored as literal text without numeric/date/formula coercion. */
   literal?: boolean;
-  /** Alias for `literal`; use when formula-shaped text should be stored as text. */
+  /** Alias for `literal`; use when text must be preserved exactly. */
   asText?: boolean;
 }
 
@@ -863,6 +863,8 @@ export interface PivotValueField {
   aggregation: 'sum' | 'count' | 'average' | 'max' | 'min';
   /** Custom label for the value field */
   label?: string;
+  /** Optional "Show Values As" calculation for this value field. */
+  showValuesAs?: ShowValuesAsConfig;
 }
 
 /** Placement-first field insertion spec for a pivot table handle. */
@@ -957,7 +959,7 @@ export interface PivotTableHandle {
   /** Side-effect-free handle-local introspection bound to this pivot ID. */
   getInfo(options?: PivotHandleInfoOptions): Promise<PivotHandleInfo>;
   /** Get the current configuration including all fields */
-  getConfig(): PivotTableConfig;
+  getConfig(): DataPivotTableConfig;
   /** Update the pivot table data configuration. */
   update(
     updates: Partial<Omit<DataPivotTableConfig, 'id' | 'createdAt'>>,
@@ -1092,6 +1094,8 @@ export interface PivotTableInfo {
   valueFields?: PivotValueField[];
   /** Filter field names */
   filterFields?: string[];
+  /** Layout settings when present */
+  layout?: PivotTableLayout;
 }
 
 /** A single flat record from a pivot query result. */
@@ -1800,6 +1804,8 @@ export interface ViewOptions {
   showRowHeaders: boolean;
   /** Whether column headers are shown */
   showColumnHeaders: boolean;
+  /** Sheet zoom scale as a percentage, e.g. 125 for 125% */
+  zoomScale?: number;
 }
 
 /** Scroll position (cell-level, not pixel-level). */
@@ -2454,6 +2460,8 @@ export interface SheetSettingsInfo {
   isProtected: boolean;
   /** Whether the sheet uses right-to-left layout */
   rightToLeft: boolean;
+  /** Sheet zoom scale as a percentage, e.g. 125 for 125% */
+  zoomScale?: number;
 }
 
 // Outline Settings (1i: Outline Settings for domain module elimination)

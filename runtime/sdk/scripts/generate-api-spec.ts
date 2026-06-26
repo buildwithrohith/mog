@@ -40,6 +40,7 @@ import {
   serializeInterfaceDefinition,
   type InterfaceTypeElement,
 } from './api-spec-interface-serialization';
+import { pickApiSpecOverload } from './api-spec-overload-selection';
 import { REQUIRED_OPERATION_RECEIPT_TYPE_NAMES } from './api-spec-receipt-types';
 import type {
   ApiCompatibilityIndex,
@@ -243,25 +244,6 @@ function collectTypeRefs(signature: string): string[] {
     }
   }
   return [...seen];
-}
-
-/** For overloaded members, prefer the most agent-friendly overload. */
-function pickOverload(overloads: InterfaceTypeElement[]): InterfaceTypeElement {
-  if (overloads.length === 1) return overloads[0];
-
-  const nonGenericOverload = overloads.find(
-    ({ member }) => ts.isMethodSignature(member) && !member.typeParameters?.length,
-  );
-  if (nonGenericOverload) return nonGenericOverload;
-
-  for (const overload of overloads) {
-    if (ts.isMethodSignature(overload.member) && overload.member.parameters.length > 0) {
-      const firstParam = overload.member.parameters[0];
-      const typeText = firstParam.type?.getText(overload.sourceFile) ?? '';
-      if (typeText === 'string') return overload;
-    }
-  }
-  return overloads[0];
 }
 
 // ---------------------------------------------------------------------------
@@ -631,11 +613,22 @@ function parseDeprecation(docstring: string): DeprecationMetadata {
   };
 }
 
+function collectOverloadReturnTypeRefs(overloads: InterfaceTypeElement[] | undefined): string[] {
+  const seen = new Set<string>();
+  for (const overload of overloads ?? []) {
+    const returnTypeText =
+      getMemberReturnTypeNode(overload.member)?.getText(overload.sourceFile) ?? '';
+    for (const typeName of collectTypeRefs(returnTypeText)) seen.add(typeName);
+  }
+  return [...seen];
+}
+
 function createMemberEntry(options: {
   interfaceName: string;
   memberName: string;
   member: ts.TypeElement;
   sourceFile: ts.SourceFile;
+  overloads?: InterfaceTypeElement[];
   canonicalPath: string;
   root: ApiRoot;
   parentRoot?: 'workbook' | 'worksheet';
@@ -647,6 +640,7 @@ function createMemberEntry(options: {
     memberName,
     member,
     sourceFile,
+    overloads,
     canonicalPath,
     root,
     parentRoot,
@@ -664,7 +658,9 @@ function createMemberEntry(options: {
   return {
     signature,
     docstring,
-    usedTypes: collectTypeRefs(signature),
+    usedTypes: Array.from(
+      new Set([...collectTypeRefs(signature), ...collectOverloadReturnTypeRefs(overloads)]),
+    ),
     stableId: `${interfaceName}.${memberName}`,
     canonicalPath,
     root,
@@ -800,12 +796,13 @@ function extractInterface(
   }
 
   for (const [name, overloads] of byName) {
-    const chosen = pickOverload(overloads);
+    const chosen = pickApiSpecOverload(node.name.text, name, overloads);
     const entry = createMemberEntry({
       interfaceName: node.name.text,
       memberName: name,
       member: chosen.member,
       sourceFile: chosen.sourceFile,
+      overloads,
       canonicalPath: `${options.pathPrefix}.${name}`,
       root: options.root,
       ...(options.parentRoot ? { parentRoot: options.parentRoot } : {}),
@@ -1326,7 +1323,15 @@ function generate(): ApiSpec {
   // Skip `dist/` and `node_modules/` so we don't match compiled .d.ts copies
   // or dependency source.
   const skipSegments = [`${path.sep}dist${path.sep}`, `${path.sep}node_modules${path.sep}`];
+  const versionApiTypeFiles = [
+    path.join(TYPES_API_DIR, 'workbook/version-shared.ts'),
+    path.join(TYPES_API_DIR, 'workbook/version.ts'),
+  ].filter((p) => fs.existsSync(p));
   const typeSearchFiles = [
+    // The public workbook version facade intentionally migrated a subset of
+    // names away from legacy contracts versioning shapes. Prefer those public
+    // API files when duplicate names exist (for example WorkbookCommitSummary).
+    ...versionApiTypeFiles,
     ...collectTsFiles(CONTRACTS_SRC_DIR),
     ...collectTsFiles(TYPES_SRC_DIR).filter((p) => !skipSegments.some((s) => p.includes(s))),
   ];

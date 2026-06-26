@@ -79,6 +79,8 @@ function createContext() {
       convertTableToRange: jest.fn().mockResolvedValue({ data: 3 }),
       setTableStyle: jest.fn().mockResolvedValue(undefined),
       setTableBoolOption: jest.fn().mockResolvedValue(undefined),
+      setTableAutoExpand: jest.fn().mockResolvedValue(undefined),
+      setTableAutoCalculatedColumns: jest.fn().mockResolvedValue(undefined),
       resizeTable: jest.fn().mockResolvedValue(undefined),
       beginUndoGroup: jest.fn().mockResolvedValue(undefined),
       endUndoGroup: jest.fn().mockResolvedValue(undefined),
@@ -103,6 +105,21 @@ function getOnlyEvent(ctx: any, type: string): any {
   const events = ctx.eventBus.getEmittedEvents().filter((event: any) => event.type === type);
   expect(events).toHaveLength(1);
   return events[0];
+}
+
+function expectTableMutationOptions(operationIdPrefix: string) {
+  return expect.objectContaining({
+    operationContext: expect.objectContaining({
+      operationId: expect.stringMatching(
+        new RegExp(`^${operationIdPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:`),
+      ),
+      kind: 'mutation',
+      sheetIds: [SHEET_ID],
+      domainIds: ['tables'],
+      capturePolicy: 'commitEligible',
+      writeAdmissionMode: 'capture',
+    }),
+  });
 }
 
 describe('WorksheetTablesImpl table event identity', () => {
@@ -135,6 +152,7 @@ describe('WorksheetTablesImpl table event identity', () => {
       [],
       true,
       null,
+      expectTableMutationOptions('tables.add'),
     );
     expect(receipt).toEqual(
       expect.objectContaining({
@@ -155,6 +173,42 @@ describe('WorksheetTablesImpl table event identity', () => {
     );
   });
 
+  it('decorates listed tables with containsCell based on the current range', async () => {
+    ctx.computeBridge.getAllTablesInSheet.mockResolvedValueOnce([
+      createRawTable({ range: { startRow: 0, startCol: 0, endRow: 4, endCol: 1 } }),
+    ]);
+
+    const [table] = (await tables.list()) as Array<{
+      range: string;
+      containsCell?: (row: number, col: number) => boolean;
+    }>;
+
+    expect(table.range).toBe('A1:B5');
+    expect(table.containsCell?.(4, 1)).toBe(true);
+    expect(table.containsCell?.(4, 2)).toBe(false);
+  });
+
+  it('lists tables without waiting for app clipboard paste globals', async () => {
+    const global = globalThis as typeof globalThis & {
+      __MOG_ACTIVE_CLIPBOARD_PASTE__?: Promise<unknown>;
+      __MOG_PENDING_CLIPBOARD_PASTE__?: Promise<unknown>;
+    };
+    const never = new Promise<never>(() => undefined);
+    global.__MOG_PENDING_CLIPBOARD_PASTE__ = never;
+    global.__MOG_ACTIVE_CLIPBOARD_PASTE__ = never;
+
+    try {
+      const listPromise = tables.list();
+      await flushPromises();
+
+      expect(ctx.computeBridge.getAllTablesInSheet).toHaveBeenCalledWith(SHEET_ID);
+      await expect(listPromise).resolves.toHaveLength(1);
+    } finally {
+      delete global.__MOG_PENDING_CLIPBOARD_PASTE__;
+      delete global.__MOG_ACTIVE_CLIPBOARD_PASTE__;
+    }
+  });
+
   it('emits table:updated with the stable table id while preserving name-based update input', async () => {
     const receipt = await tables.update('Sales', { style: 'TableStyleMedium4' });
 
@@ -163,7 +217,11 @@ describe('WorksheetTablesImpl table event identity', () => {
     expect(event.changes).toEqual({
       style: expect.objectContaining({ preset: 'medium4' }),
     });
-    expect(ctx.computeBridge.setTableStyle).toHaveBeenCalledWith('Sales', 'TableStyleMedium4');
+    expect(ctx.computeBridge.setTableStyle).toHaveBeenCalledWith(
+      'Sales',
+      'TableStyleMedium4',
+      expectTableMutationOptions('tables.update'),
+    );
     expect(receipt).toEqual(
       expect.objectContaining({
         kind: 'tableUpdate',
@@ -187,7 +245,11 @@ describe('WorksheetTablesImpl table event identity', () => {
     const event = getOnlyEvent(ctx, 'table:updated');
     expect(event.tableId).toBe('tbl_stable_1');
     expect(event.changes).toEqual({ name: 'Revenue' });
-    expect(ctx.computeBridge.renameTable).toHaveBeenCalledWith('Sales', 'Revenue');
+    expect(ctx.computeBridge.renameTable).toHaveBeenCalledWith(
+      'Sales',
+      'Revenue',
+      expectTableMutationOptions('tables.rename'),
+    );
     expect(ctx.computeBridge.tableValidateTableName).toHaveBeenCalledWith('Revenue', []);
     expect(receipt).toEqual(
       expect.objectContaining({
@@ -212,7 +274,10 @@ describe('WorksheetTablesImpl table event identity', () => {
 
     const event = getOnlyEvent(ctx, 'table:deleted');
     expect(event.tableId).toBe('tbl_stable_1');
-    expect(ctx.computeBridge.deleteTable).toHaveBeenCalledWith('Sales');
+    expect(ctx.computeBridge.deleteTable).toHaveBeenCalledWith(
+      'Sales',
+      expectTableMutationOptions('tables.remove'),
+    );
     expect(receipt).toEqual(
       expect.objectContaining({
         kind: 'tableRemove',
@@ -231,7 +296,10 @@ describe('WorksheetTablesImpl table event identity', () => {
     const receipt = await tables.convertToRange('Sales');
 
     expect(receipt.affectedFormulaCount).toBe(3);
-    expect(ctx.computeBridge.convertTableToRange).toHaveBeenCalledWith('Sales');
+    expect(ctx.computeBridge.convertTableToRange).toHaveBeenCalledWith(
+      'Sales',
+      expectTableMutationOptions('tables.convertToRange'),
+    );
 
     const converted = getOnlyEvent(ctx, 'table:converted-to-range');
     expect(converted).toEqual(
@@ -258,6 +326,31 @@ describe('WorksheetTablesImpl table event identity', () => {
         expect.objectContaining({ type: 'removedObject', objectId: 'tbl_stable_1' }),
         expect.objectContaining({ type: 'changedRange', count: 3 }),
       ]),
+    );
+  });
+
+  it('passes commit-eligible table mutation contexts with one group for multi-step update', async () => {
+    await tables.update('Sales', {
+      style: 'TableStyleMedium4',
+      bandedRows: false,
+      autoExpand: false,
+    });
+
+    const styleOptions = ctx.computeBridge.setTableStyle.mock.calls[0][2];
+    const boolOptions = ctx.computeBridge.setTableBoolOption.mock.calls[0][3];
+    const autoExpandOptions = ctx.computeBridge.setTableAutoExpand.mock.calls[0][2];
+
+    expect(styleOptions).toEqual(expectTableMutationOptions('tables.update'));
+    expect(boolOptions).toEqual(expectTableMutationOptions('tables.update'));
+    expect(autoExpandOptions).toEqual(expectTableMutationOptions('tables.update'));
+    expect(styleOptions.operationContext.groupId).toBe(styleOptions.operationContext.operationId);
+    expect(boolOptions.operationContext.groupId).toBe(styleOptions.operationContext.groupId);
+    expect(autoExpandOptions.operationContext.groupId).toBe(styleOptions.operationContext.groupId);
+    expect(boolOptions.operationContext.operationId).not.toBe(
+      styleOptions.operationContext.operationId,
+    );
+    expect(autoExpandOptions.operationContext.operationId).not.toBe(
+      styleOptions.operationContext.operationId,
     );
   });
 

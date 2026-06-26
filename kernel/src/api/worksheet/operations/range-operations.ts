@@ -25,6 +25,11 @@ import { prepareExternalFormulaWrite } from '../../../services/external-formulas
 import type { CellData, CellRange, CellValue, CellValuePrimitive, DocumentContext } from './shared';
 import { invalidRange, isValidAddress, isValidRange } from './shared';
 import { toCellInput } from './cell-input';
+import { calendarPartsInTz } from './calendar-tz';
+import {
+  withDirectEditRange,
+  type MutationAdmissionOptions,
+} from '../../../bridges/compute/mutation-admission';
 
 // Re-export validation utilities from types for convenience
 export { isValidAddress, isValidRange } from './shared';
@@ -291,7 +296,8 @@ export async function setRange(
   sheetId: SheetId,
   startRow: number,
   startCol: number,
-  values: CellValuePrimitive[][],
+  values: Array<Array<CellValuePrimitive | Date>>,
+  options?: MutationAdmissionOptions,
 ): Promise<void> {
   if (!isValidAddress(startRow, startCol)) {
     throw KernelError.from(
@@ -306,12 +312,19 @@ export async function setRange(
   }
 
   const edits: Parameters<typeof ctx.computeBridge.setCellsByPosition>[1] = [];
+  const dateWrites: Array<{ row: number; col: number; date: Date }> = [];
 
   for (let r = 0; r < values.length; r++) {
     for (let c = 0; c < values[r].length; c++) {
       const row = startRow + r;
       const col = startCol + c;
       const value = values[r][c];
+      if (value instanceof Date) {
+        await prepareExternalFormulaWrite(ctx, sheetId, row, col, value);
+        dateWrites.push({ row, col, date: value });
+        continue;
+      }
+
       const preparedValue = await prepareExternalFormulaWrite(ctx, sheetId, row, col, value);
       // Route every SDK value through the shared helper so the
       // Literal/Parse/Clear distinction is preserved structurally — no
@@ -321,7 +334,34 @@ export async function setRange(
   }
 
   await ctx.awaitMaterialized?.('allSheets');
-  await ctx.computeBridge.setCellsByPosition(sheetId, edits);
+  if (edits.length > 0 && options) {
+    await ctx.computeBridge.setCellsByPosition(sheetId, edits, options);
+  } else if (edits.length > 0) {
+    await ctx.computeBridge.setCellsByPosition(sheetId, edits);
+  }
+  for (const dateWrite of dateWrites) {
+    const parts = calendarPartsInTz(dateWrite.date, ctx.userTimezone);
+    if (options) {
+      await ctx.computeBridge.setDateValue(
+        sheetId,
+        dateWrite.row,
+        dateWrite.col,
+        parts.year,
+        parts.month,
+        parts.day,
+        options,
+      );
+    } else {
+      await ctx.computeBridge.setDateValue(
+        sheetId,
+        dateWrite.row,
+        dateWrite.col,
+        parts.year,
+        parts.month,
+        parts.day,
+      );
+    }
+  }
 }
 
 /**
@@ -337,21 +377,43 @@ export async function clearRange(
   ctx: DocumentContext,
   sheetId: SheetId,
   range: CellRange,
+  options?: MutationAdmissionOptions,
 ): Promise<ClearResult> {
   if (!isValidRange(range)) {
     throw invalidRange(range.startRow, range.startCol, range.endRow, range.endCol);
   }
 
   const normalized = normalizeRange(range);
+  const captureOptions = options
+    ? withDirectEditRange(
+        options,
+        sheetId,
+        normalized.startRow,
+        normalized.startCol,
+        normalized.endRow,
+        normalized.endCol,
+      )
+    : undefined;
 
   await ctx.awaitMaterialized?.('allSheets');
-  await ctx.computeBridge.clearRangeByPosition(
-    sheetId,
-    normalized.startRow,
-    normalized.startCol,
-    normalized.endRow,
-    normalized.endCol,
-  );
+  if (captureOptions) {
+    await ctx.computeBridge.clearRangeByPosition(
+      sheetId,
+      normalized.startRow,
+      normalized.startCol,
+      normalized.endRow,
+      normalized.endCol,
+      captureOptions,
+    );
+  } else {
+    await ctx.computeBridge.clearRangeByPosition(
+      sheetId,
+      normalized.startRow,
+      normalized.startCol,
+      normalized.endRow,
+      normalized.endCol,
+    );
+  }
 
   const cellCount =
     (normalized.endRow - normalized.startRow + 1) * (normalized.endCol - normalized.startCol + 1);

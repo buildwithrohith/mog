@@ -116,6 +116,11 @@
       "types": "./dist/api/index.d.ts",
       "import": "./dist/api/index.js"
     },
+    "./api/workbook": {
+      "development": "./src/api/workbook.ts",
+      "types": "./dist/api/workbook.d.ts",
+      "import": "./dist/api/workbook.js"
+    },
     "./api/mutation-receipt": {
       "development": "./src/api/mutation-receipt.ts",
       "types": "./dist/api/mutation-receipt.d.ts",
@@ -180,6 +185,16 @@
       "development": "./src/conditional-format/index.ts",
       "types": "./dist/conditional-format/index.d.ts",
       "import": "./dist/conditional-format/index.js"
+    },
+    "./control-plane": {
+      "development": "./src/control-plane/index.ts",
+      "types": "./dist/control-plane/index.d.ts",
+      "import": "./dist/control-plane/index.js"
+    },
+    "./versioning": {
+      "development": "./src/versioning/index.ts",
+      "types": "./dist/versioning/index.d.ts",
+      "import": "./dist/versioning/index.js"
     },
     "./connections": {
       "development": "./src/connections/index.ts",
@@ -591,6 +606,11 @@
       "types": "./dist/data/charts.d.ts",
       "import": "./dist/data/charts.js"
     },
+    "./data/chart-app-model": {
+      "development": "./src/data/chart-app-model.ts",
+      "types": "./dist/data/chart-app-model.d.ts",
+      "import": "./dist/data/chart-app-model.js"
+    },
     "./data/diagnostics": {
       "development": "./src/data/diagnostics.ts",
       "types": "./dist/data/diagnostics.d.ts",
@@ -813,6 +833,10 @@
         "types": "./dist/api/index.d.ts",
         "import": "./dist/api/index.js"
       },
+      "./api/workbook": {
+        "types": "./dist/api/workbook.d.ts",
+        "import": "./dist/api/workbook.js"
+      },
       "./api/mutation-receipt": {
         "types": "./dist/api/mutation-receipt.d.ts",
         "import": "./dist/api/mutation-receipt.js"
@@ -864,6 +888,14 @@
       "./conditional-format": {
         "types": "./dist/conditional-format/index.d.ts",
         "import": "./dist/conditional-format/index.js"
+      },
+      "./control-plane": {
+        "types": "./dist/control-plane/index.d.ts",
+        "import": "./dist/control-plane/index.js"
+      },
+      "./versioning": {
+        "types": "./dist/versioning/index.d.ts",
+        "import": "./dist/versioning/index.js"
       },
       "./connections": {
         "types": "./dist/connections/index.d.ts",
@@ -1192,6 +1224,10 @@
       "./data/charts": {
         "types": "./dist/data/charts.d.ts",
         "import": "./dist/data/charts.js"
+      },
+      "./data/chart-app-model": {
+        "types": "./dist/data/chart-app-model.d.ts",
+        "import": "./dist/data/chart-app-model.js"
       },
       "./data/diagnostics": {
         "types": "./dist/data/diagnostics.d.ts",

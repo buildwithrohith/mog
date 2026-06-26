@@ -3,7 +3,10 @@ import { setupPivotSelectionCoordination } from '../pivot-selection-coordination
 
 type SelectionState = {
   matches: (value: string) => boolean;
-  context: { activeCell: { row: number; col: number } };
+  context: {
+    activeCell: { row: number; col: number };
+    pendingRange?: { startRow: number; startCol: number; endRow: number; endCol: number };
+  };
 };
 
 function idleState(row: number, col: number): SelectionState {
@@ -17,6 +20,17 @@ function selectingState(row: number, col: number): SelectionState {
   return {
     matches: (value: string) => value === 'selecting',
     context: { activeCell: { row, col } },
+  };
+}
+
+function idleRangeState(
+  row: number,
+  col: number,
+  pendingRange: { startRow: number; startCol: number; endRow: number; endCol: number },
+): SelectionState {
+  return {
+    matches: (value: string) => value === 'idle',
+    context: { activeCell: { row, col }, pendingRange },
   };
 }
 
@@ -48,23 +62,44 @@ function createMockUIStore(initialSheetId = 'sheet1') {
     pivot: {
       selectedPivotId: null as string | null,
       editingPivotId: null as string | null,
+      openTransientOverlay: null as unknown,
     },
     selectPivot: jest.fn((pivotId: string | null) => {
       state = {
         ...state,
-        pivot: { ...state.pivot, selectedPivotId: pivotId },
+        pivot: {
+          ...state.pivot,
+          selectedPivotId: pivotId,
+          editingPivotId:
+            pivotId == null ||
+            (state.pivot.editingPivotId != null && state.pivot.editingPivotId !== pivotId)
+              ? null
+              : state.pivot.editingPivotId,
+          openTransientOverlay: null,
+        },
       };
     }),
     startEditingPivot: jest.fn((pivotId: string) => {
       state = {
         ...state,
-        pivot: { selectedPivotId: pivotId, editingPivotId: pivotId },
+        pivot: {
+          selectedPivotId: pivotId,
+          editingPivotId: pivotId,
+          ...(state.pivot.fieldPanelSuppressedPivotId !== undefined
+            ? { fieldPanelSuppressedPivotId: null }
+            : {}),
+          openTransientOverlay: null,
+        },
       };
     }),
     stopEditingPivot: jest.fn(() => {
       state = {
         ...state,
-        pivot: { ...state.pivot, editingPivotId: null },
+        pivot: {
+          ...state.pivot,
+          editingPivotId: null,
+          fieldPanelSuppressedPivotId: state.pivot.editingPivotId ?? state.pivot.selectedPivotId,
+        },
       };
     }),
   };
@@ -197,10 +232,11 @@ describe('Pivot Selection Coordination', () => {
     expect(uiStore.getState().pivot).toEqual({
       selectedPivotId: 'imported:Pivot:xl/pivotTables/pivotTable1.xml',
       editingPivotId: 'imported:Pivot:xl/pivotTables/pivotTable1.xml',
+      openTransientOverlay: null,
     });
   });
 
-  it('prefers editable pivots over imported metadata when both contain the active cell', async () => {
+  it('opens editable pivot fields over imported metadata when both contain the active cell', async () => {
     const selection = createMockSelectionActor(idleState(0, 0));
     const uiStore = createMockUIStore('sheet1');
     const workbook = createMockWorkbook({
@@ -232,7 +268,13 @@ describe('Pivot Selection Coordination', () => {
     await flushAsyncRefreshes();
 
     expect(uiStore.getState().startEditingPivot).toHaveBeenCalledWith('pivot-1');
+    expect(uiStore.getState().selectPivot).not.toHaveBeenCalled();
     expect(workbook.getImportedViewRecords).not.toHaveBeenCalled();
+    expect(uiStore.getState().pivot).toEqual({
+      selectedPivotId: 'pivot-1',
+      editingPivotId: 'pivot-1',
+      openTransientOverlay: null,
+    });
   });
 
   it('clears selected and editing pivot state when the active cell leaves all pivots', async () => {
@@ -255,10 +297,11 @@ describe('Pivot Selection Coordination', () => {
     await flushAsyncRefreshes();
 
     expect(uiStore.getState().selectPivot).toHaveBeenCalledWith(null);
-    expect(uiStore.getState().stopEditingPivot).toHaveBeenCalled();
+    expect(uiStore.getState().stopEditingPivot).not.toHaveBeenCalled();
     expect(uiStore.getState().pivot).toEqual({
       selectedPivotId: null,
       editingPivotId: null,
+      openTransientOverlay: null,
     });
   });
 
@@ -301,6 +344,7 @@ describe('Pivot Selection Coordination', () => {
     expect(uiStore.getState().pivot).toEqual({
       selectedPivotId: null,
       editingPivotId: null,
+      openTransientOverlay: null,
     });
   });
 
@@ -344,9 +388,167 @@ describe('Pivot Selection Coordination', () => {
 
     expect(importDurability.awaitImportDurability).toHaveBeenCalledTimes(1);
     expect(uiStore.getState().startEditingPivot).toHaveBeenCalledWith('pivot-imported-native');
+    expect(uiStore.getState().selectPivot).not.toHaveBeenCalled();
     expect(uiStore.getState().pivot).toEqual({
       selectedPivotId: 'pivot-imported-native',
       editingPivotId: 'pivot-imported-native',
+      openTransientOverlay: null,
+    });
+  });
+
+  it('reopens the field panel when selection remains inside a selected pivot', async () => {
+    const selection = createMockSelectionActor(idleState(1, 1));
+    const uiStore = createMockUIStore('sheet1');
+    uiStore.getState().selectPivot('pivot-1');
+    const workbook = createMockWorkbook({
+      editablePivots: [{ id: 'pivot-1', name: 'PivotTable1', refRange: 'A1:D4' }],
+    });
+
+    setupPivotSelectionCoordination(
+      {
+        actors: { selection } as any,
+        uiStoreApi: uiStore as any,
+        getActiveSheetId: () => uiStore.getState().activeSheetId,
+        workbook: workbook as any,
+      },
+      createCleanupManager() as any,
+    );
+
+    selection.emit(idleState(2, 2));
+    await flushAsyncRefreshes();
+
+    expect(uiStore.getState().selectPivot).toHaveBeenCalledWith('pivot-1');
+    expect(uiStore.getState().selectPivot).toHaveBeenCalledTimes(1);
+    expect(uiStore.getState().startEditingPivot).toHaveBeenCalledWith('pivot-1');
+    expect(uiStore.getState().pivot).toEqual({
+      selectedPivotId: 'pivot-1',
+      editingPivotId: 'pivot-1',
+      openTransientOverlay: null,
+    });
+  });
+
+  it('preserves editing when passive selection remains inside the edited pivot', async () => {
+    const selection = createMockSelectionActor(idleState(1, 1));
+    const uiStore = createMockUIStore('sheet1');
+    uiStore.getState().startEditingPivot('pivot-1');
+    const workbook = createMockWorkbook({
+      editablePivots: [{ id: 'pivot-1', name: 'PivotTable1', refRange: 'A1:D4' }],
+    });
+
+    setupPivotSelectionCoordination(
+      {
+        actors: { selection } as any,
+        uiStoreApi: uiStore as any,
+        getActiveSheetId: () => uiStore.getState().activeSheetId,
+        workbook: workbook as any,
+      },
+      createCleanupManager() as any,
+    );
+
+    selection.emit(idleState(2, 2));
+    await flushAsyncRefreshes();
+
+    expect(uiStore.getState().startEditingPivot).toHaveBeenCalledTimes(1);
+    expect(uiStore.getState().pivot).toEqual({
+      selectedPivotId: 'pivot-1',
+      editingPivotId: 'pivot-1',
+      openTransientOverlay: null,
+    });
+  });
+
+  it('opens the field panel when selection moves from edited pivot A to pivot B', async () => {
+    const selection = createMockSelectionActor(idleState(1, 1));
+    const uiStore = createMockUIStore('sheet1');
+    uiStore.getState().startEditingPivot('pivot-a');
+    const workbook = createMockWorkbook({
+      editablePivots: [
+        { id: 'pivot-a', name: 'PivotTableA', refRange: 'A1:D4' },
+        { id: 'pivot-b', name: 'PivotTableB', refRange: 'F1:H4' },
+      ],
+    });
+
+    setupPivotSelectionCoordination(
+      {
+        actors: { selection } as any,
+        uiStoreApi: uiStore as any,
+        getActiveSheetId: () => uiStore.getState().activeSheetId,
+        workbook: workbook as any,
+      },
+      createCleanupManager() as any,
+    );
+
+    selection.emit(idleState(1, 6));
+    await flushAsyncRefreshes();
+
+    expect(uiStore.getState().startEditingPivot).toHaveBeenCalledWith('pivot-b');
+    expect(uiStore.getState().pivot).toEqual({
+      selectedPivotId: 'pivot-b',
+      editingPivotId: 'pivot-b',
+      openTransientOverlay: null,
+    });
+  });
+
+  it('keeps the field panel closed after explicit close and passive same-pivot click', async () => {
+    const selection = createMockSelectionActor(idleState(1, 1));
+    const uiStore = createMockUIStore('sheet1');
+    uiStore.getState().startEditingPivot('pivot-1');
+    uiStore.getState().stopEditingPivot();
+    uiStore.getState().startEditingPivot.mockClear();
+    const workbook = createMockWorkbook({
+      editablePivots: [{ id: 'pivot-1', name: 'PivotTable1', refRange: 'A1:D4' }],
+    });
+
+    setupPivotSelectionCoordination(
+      {
+        actors: { selection } as any,
+        uiStoreApi: uiStore as any,
+        getActiveSheetId: () => uiStore.getState().activeSheetId,
+        workbook: workbook as any,
+      },
+      createCleanupManager() as any,
+    );
+
+    selection.emit(idleState(2, 2));
+    await flushAsyncRefreshes();
+
+    expect(uiStore.getState().startEditingPivot).not.toHaveBeenCalled();
+    expect(uiStore.getState().pivot).toEqual({
+      selectedPivotId: 'pivot-1',
+      editingPivotId: null,
+      fieldPanelSuppressedPivotId: 'pivot-1',
+      openTransientOverlay: null,
+    });
+  });
+
+  it('reopens a suppressed field panel for range selection inside the same pivot', async () => {
+    const selection = createMockSelectionActor(idleState(1, 1));
+    const uiStore = createMockUIStore('sheet1');
+    uiStore.getState().startEditingPivot('pivot-1');
+    uiStore.getState().stopEditingPivot();
+    uiStore.getState().startEditingPivot.mockClear();
+    const workbook = createMockWorkbook({
+      editablePivots: [{ id: 'pivot-1', name: 'PivotTable1', refRange: 'A1:D4' }],
+    });
+
+    setupPivotSelectionCoordination(
+      {
+        actors: { selection } as any,
+        uiStoreApi: uiStore as any,
+        getActiveSheetId: () => uiStore.getState().activeSheetId,
+        workbook: workbook as any,
+      },
+      createCleanupManager() as any,
+    );
+
+    selection.emit(idleRangeState(1, 1, { startRow: 1, startCol: 1, endRow: 3, endCol: 1 }));
+    await flushAsyncRefreshes();
+
+    expect(uiStore.getState().startEditingPivot).toHaveBeenCalledWith('pivot-1');
+    expect(uiStore.getState().pivot).toEqual({
+      selectedPivotId: 'pivot-1',
+      editingPivotId: 'pivot-1',
+      fieldPanelSuppressedPivotId: null,
+      openTransientOverlay: null,
     });
   });
 });

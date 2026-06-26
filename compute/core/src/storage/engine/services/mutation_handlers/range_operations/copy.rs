@@ -28,12 +28,8 @@ fn source_format_at(
         .get(source_sheet_id)
         .and_then(|grid| grid.cell_id_at(row, col))
         .or_else(|| mirror.resolve_cell_id(source_sheet_id, pos));
-    let table_fmt = super::super::super::tables::resolve_table_format_at_cell(
-        mirror,
-        source_sheet_id,
-        row,
-        col,
-    );
+    let table_fmt =
+        super::super::super::resolve_structured_format_at_cell(mirror, source_sheet_id, row, col);
 
     if let Some(cell_id) = cell_id {
         let cell_hex = id_to_hex(cell_id.as_u128());
@@ -368,6 +364,10 @@ pub(in crate::storage::engine) fn mutation_copy_range(
             }),
             value,
             display_text: None,
+            old_display_text: None,
+            old_formula: None,
+            new_formula: None,
+            number_format: None,
             format_idx: None,
             extra_flags: 0,
             old_value: None,

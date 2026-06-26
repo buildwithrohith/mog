@@ -108,6 +108,11 @@
           "docstring": "Undo/redo/history traversal",
           "usedTypes": []
         },
+        "version": {
+          "signature": "readonly version: WorkbookVersion;",
+          "docstring": "Version-control status and read-only diagnostics.",
+          "usedTypes": []
+        },
         "tableStyles": {
           "signature": "readonly tableStyles: WorkbookTableStyles;",
           "docstring": "Table style management (add, get, update, remove, default, duplicate)",
@@ -309,8 +314,8 @@
           "usedTypes": []
         },
         "toXlsx": {
-          "signature": "toXlsx(options?: { contextStripped?: boolean | undefined; } | undefined): Promise<Uint8Array>",
-          "docstring": "Export the workbook as XLSX binary data.\n\n`contextStripped` is an internal import/export verification mode that\ndisables imported RoundTripContext preservation so corpus gates can prove\nmodeled facts do not depend on stale source package bytes.",
+          "signature": "toXlsx(options?: WorkbookXlsxExportOptions | undefined): Promise<Uint8Array>",
+          "docstring": "Export the workbook as XLSX binary data.\n\nDefault export omits Mog-owned version metadata. Pass\n`versionMetadata: \"include\"` to write a redacted Mog sidecar with the\ncurrent version head.",
           "usedTypes": []
         },
         "insertWorksheets": {
@@ -923,6 +928,116 @@
           "docstring": "Set chrome theme with partial merge semantics.\nMerges the partial input with the **current** theme (not defaults).\nTriggers canvas layer re-render and CSS variable update.\n\nTo reset to defaults, pass `DEFAULT_CHROME_THEME` explicitly.",
           "usedTypes": []
         },
+        "version.getStatus": {
+          "signature": "version.getStatus(): Promise<WorkbookVersionStatus>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.getSurfaceStatus": {
+          "signature": "version.getSurfaceStatus(): Promise<VersionSurfaceStatus>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.getHead": {
+          "signature": "version.getHead(): Promise<VersionResult<WorkbookCommitRef>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.listCommits": {
+          "signature": "version.listCommits(options?: VersionListCommitsOptions | undefined): Promise<VersionResult<Paged<WorkbookCommitSummary>>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.commit": {
+          "signature": "version.commit(options?: VersionCommitOptions | undefined): Promise<VersionResult<WorkbookCommitSummary>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.promotePendingRemote": {
+          "signature": "version.promotePendingRemote(options?: VersionPromotePendingRemoteOptions | undefined): Promise<VersionResult<VersionPromotePendingRemoteResult>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.checkout": {
+          "signature": "version.checkout(target: VersionCheckoutTarget, options?: VersionCheckoutOptions | undefined): Promise<VersionResult<CheckoutVersionResult>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.merge": {
+          "signature": "version.merge(input: VersionMergeInput, options?: VersionMergeOptions | undefined): Promise<VersionResult<VersionMergeResult>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.applyMerge": {
+          "signature": "version.applyMerge(input: VersionApplyMergeInput, options?: VersionApplyMergeOptions | undefined): Promise<VersionResult<VersionApplyMergeResult>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.revert": {
+          "signature": "version.revert(input: VersionRevertInput, options?: VersionRevertOptions | undefined): Promise<VersionResult<VersionRevertResult>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.saveMergeResolutions": {
+          "signature": "version.saveMergeResolutions(input: VersionSaveMergeResolutionsRequest): Promise<VersionResult<VersionSaveMergeResolutionsResult>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.getMergeConflictDetail": {
+          "signature": "version.getMergeConflictDetail(input: VersionGetMergeConflictDetailRequest): Promise<VersionResult<VersionMergeConflictDetailResult>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.putMergeResolutionPayload": {
+          "signature": "version.putMergeResolutionPayload(input: VersionPutMergeResolutionPayloadRequest): Promise<VersionResult<VersionSealedResolutionPayloadRef>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.diff": {
+          "signature": "version.diff(base: VersionCommitish, target: VersionCommitish, options?: VersionDiffOptions | undefined): Promise<VersionResult<VersionSemanticDiffPage>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.readRef": {
+          "signature": "version.readRef(name: VersionRefSelector | VersionBranchName): Promise<VersionResult<VersionRefReadResult>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.getRef": {
+          "signature": "version.getRef(name: VersionRefSelector | VersionBranchName): Promise<VersionResult<VersionRefReadResult>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.listRefs": {
+          "signature": "version.listRefs(options?: VersionListRefsOptions | undefined): Promise<VersionResult<Paged<VersionRef>>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.createBranch": {
+          "signature": "version.createBranch(options: VersionCreateBranchOptions): Promise<VersionResult<VersionRef>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.fastForwardBranch": {
+          "signature": "version.fastForwardBranch(options: VersionFastForwardBranchOptions): Promise<VersionResult<VersionRef>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.updateBranch": {
+          "signature": "version.updateBranch(options: VersionFastForwardBranchOptions): Promise<VersionResult<VersionRef>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.deleteBranch": {
+          "signature": "version.deleteBranch(options: VersionDeleteRefOptions): Promise<VersionResult<VersionRef>>",
+          "docstring": null,
+          "usedTypes": []
+        },
+        "version.deleteRef": {
+          "signature": "version.deleteRef(options: VersionDeleteRefOptions): Promise<VersionResult<VersionRef>>",
+          "docstring": null,
+          "usedTypes": []
+        },
         "viewport.createRegion": {
           "signature": "viewport.createRegion(sheetId: string, bounds: ViewportBounds, viewportId?: string | undefined): ViewportRegion",
           "docstring": "Create a tracked viewport region. Returns a handle — dispose when done.",
@@ -1399,12 +1514,12 @@
           "usedTypes": ["PivotTableHandle"]
         },
         "getUsedRange": {
-          "signature": "getUsedRange(): Promise<CellRange | null>",
+          "signature": "getUsedRange(): Promise<WorksheetRange | null>",
           "docstring": "Get the used range, or null if the sheet is empty.",
           "usedTypes": []
         },
         "getCurrentRegion": {
-          "signature": "getCurrentRegion(row: number, col: number): Promise<CellRange>",
+          "signature": "getCurrentRegion(row: number, col: number): Promise<WorksheetRange>",
           "docstring": "Get the contiguous data region around a cell (Excel's Ctrl+Shift+* / CurrentRegion).",
           "usedTypes": []
         },
@@ -1459,8 +1574,8 @@
           "usedTypes": []
         },
         "getExtendedRange": {
-          "signature": "getExtendedRange(range: string, direction: \"up\" | \"down\" | \"left\" | \"right\", activeCell?: { row: number; col: number; } | undefined): Promise<CellRange>",
-          "docstring": "Get the extended range in a direction (spreadsheet special-cell typeRange.getExtendedRange / Ctrl+Shift+Arrow).\n\nFrom the active cell (default: top-left of range), finds the data edge in the given\ndirection and returns a range extending from the original range to that edge.\n@param - A1 range string (current selection)\n@param - Direction to extend\n@param - Optional active cell override (default: top-left of range)\n@returns Extended range as CellRange",
+          "signature": "getExtendedRange(range: string, direction: \"up\" | \"down\" | \"left\" | \"right\", activeCell?: { row: number; col: number; } | undefined): Promise<WorksheetRange>",
+          "docstring": "Get the extended range in a direction (spreadsheet special-cell typeRange.getExtendedRange / Ctrl+Shift+Arrow).\n\nFrom the active cell (default: top-left of range), finds the data edge in the given\ndirection and returns a range extending from the original range to that edge.\n@param - A1 range string (current selection)\n@param - Direction to extend\n@param - Optional active cell override (default: top-left of range)\n@returns Extended range as a worksheet-scoped public range",
           "usedTypes": []
         },
         "isEntireColumn": {
@@ -1659,7 +1774,7 @@
           "usedTypes": []
         },
         "bindings.getProjectionRange": {
-          "signature": "bindings.getProjectionRange(row: number, col: number): Promise<CellRange | null>",
+          "signature": "bindings.getProjectionRange(row: number, col: number): Promise<WorksheetRange | null>",
           "docstring": "Get the spill range for a projected (dynamic array) cell.\n@param - Row index (0-based)\n@param - Column index (0-based)\n@returns The spill range, or null if the cell is not a projection source",
           "usedTypes": []
         },
@@ -1687,6 +1802,11 @@
           "signature": "charts.get(chartId: string): Promise<Chart | null>",
           "docstring": "Get a chart by ID, or null if not found.",
           "usedTypes": ["Chart"]
+        },
+        "charts.getAppModel": {
+          "signature": "charts.getAppModel(chartId: string, options?: ChartReadOptions | undefined): Promise<ChartAppModel | null>",
+          "docstring": "Get the normalized app-facing chart model used by first-party UI controls.",
+          "usedTypes": []
         },
         "charts.update": {
           "signature": "charts.update(chartId: string, updates: Partial<ChartConfig>): Promise<ChartUpdateReceipt>",
@@ -1929,8 +2049,28 @@
           "usedTypes": []
         },
         "charts.setAxisTitle": {
-          "signature": "charts.setAxisTitle(chartId: string, axisType: \"category\" | \"value\", formula: string): Promise<ChartMutationReceipt>",
-          "docstring": "Set axis title from a formula string.",
+          "signature": "charts.setAxisTitle(chartId: string, axisType: ChartAxisRole, title: string): Promise<ChartMutationReceipt>",
+          "docstring": "Set axis title by semantic axis role. Title text is stored literally.",
+          "usedTypes": []
+        },
+        "charts.setAxisVisible": {
+          "signature": "charts.setAxisVisible(chartId: string, axisRole: ChartAxisRole, visible: boolean): Promise<ChartMutationReceipt>",
+          "docstring": "Set axis visibility by semantic axis role.",
+          "usedTypes": []
+        },
+        "charts.setLegendVisible": {
+          "signature": "charts.setLegendVisible(chartId: string, visible: boolean): Promise<ChartMutationReceipt>",
+          "docstring": "Set legend visibility with chart-app-model semantics.",
+          "usedTypes": []
+        },
+        "charts.setChartTitleVisible": {
+          "signature": "charts.setChartTitleVisible(chartId: string, visible: boolean): Promise<ChartMutationReceipt>",
+          "docstring": "Set chart title visibility without requiring callers to patch raw title fields.",
+          "usedTypes": []
+        },
+        "charts.switchSeriesOrientation": {
+          "signature": "charts.switchSeriesOrientation(chartId: string): Promise<ChartMutationReceipt>",
+          "docstring": "Switch source orientation when supported, otherwise return an explicit no-op/unsupported receipt.",
           "usedTypes": []
         },
         "charts.setCategoryNames": {
@@ -2124,8 +2264,8 @@
           "usedTypes": []
         },
         "comments.removeForCell": {
-          "signature": "comments.removeForCell(address: string): Promise<CommentRemoveReceipt>",
-          "docstring": "Remove all comments on a cell.\n@param - A1-style cell address\n@returns Receipt containing the number of comments removed",
+          "signature": "comments.removeForCell(address: string): Promise<number>",
+          "docstring": "Remove all comments on a cell.\n@param - A1-style cell address\n@returns Number of comments removed",
           "usedTypes": []
         },
         "comments.clear": {
@@ -2134,8 +2274,8 @@
           "usedTypes": []
         },
         "comments.clean": {
-          "signature": "comments.clean(): Promise<CommentRemoveReceipt>",
-          "docstring": "Remove orphaned comments (comments referencing non-existent cells).\n@returns Receipt containing the number of orphaned comments removed",
+          "signature": "comments.clean(): Promise<number>",
+          "docstring": "Remove orphaned comments (comments referencing non-existent cells).\n@returns Number of orphaned comments removed",
           "usedTypes": []
         },
         "conditionalFormats.addFormula": {
@@ -2793,6 +2933,11 @@
           "docstring": "Get the set of all hidden row indices.\n@returns Set of hidden row indices",
           "usedTypes": []
         },
+        "layout.getFilterHiddenRowsBitmap": {
+          "signature": "layout.getFilterHiddenRowsBitmap(): Promise<Set<number>>",
+          "docstring": "Get the set of row indices hidden by active filters.\n\nThis excludes rows hidden only by manual row visibility or structural\ngrouping, and is used by visible-cell copy/export paths.\n@returns Set of filter-hidden row indices",
+          "usedTypes": []
+        },
         "layout.getHiddenColumnsBitmap": {
           "signature": "layout.getHiddenColumnsBitmap(): Promise<Set<number>>",
           "docstring": "Get the set of all hidden column indices.\n@returns Set of hidden column indices",
@@ -2944,7 +3089,7 @@
           "usedTypes": ["PivotTableConfig"]
         },
         "pivots.addWithSheet": {
-          "signature": "pivots.addWithSheet(sheetName: string, config: PivotCreateConfig, options?: PivotCreateOptions | undefined): Promise<PivotAddWithSheetReceipt>",
+          "signature": "pivots.addWithSheet(sheetName: string, config: PivotCreateConfig, options?: PivotCreateWithSheetOptions | undefined): Promise<PivotAddWithSheetReceipt>",
           "docstring": "Atomically create a new sheet AND a pivot table on it.\nBoth operations happen in a single transaction for undo atomicity.\n\nAccepts the same simple or full config formats as `add()`.\n@param - Name for the new sheet\n@param - Pivot table configuration\n@param - Creation lifecycle; defaults to defineOnly.\n@returns A receipt containing the new sheet ID and created pivot config.",
           "usedTypes": ["PivotTableConfig"]
         },
@@ -3099,28 +3244,28 @@
           "usedTypes": []
         },
         "pivots.getRange": {
-          "signature": "pivots.getRange(name: string): Promise<CellRange | null>",
-          "docstring": "Get the full range occupied by the rendered pivot table, resolved by pivot name.\n@param - Pivot table name\n@returns CellRange covering the entire pivot table, or null if not computed",
+          "signature": "pivots.getRange(name: string): Promise<WorksheetRange | null>",
+          "docstring": "Get the full range occupied by the rendered pivot table, resolved by pivot name.\n@param - Pivot table name\n@returns Public worksheet range covering the entire pivot table, or null if not computed",
           "usedTypes": []
         },
         "pivots.getDataBodyRange": {
-          "signature": "pivots.getDataBodyRange(name: string): Promise<CellRange | null>",
-          "docstring": "Get the range of the data body, resolved by pivot name.\n@param - Pivot table name\n@returns CellRange covering the data body, or null if not computed",
+          "signature": "pivots.getDataBodyRange(name: string): Promise<WorksheetRange | null>",
+          "docstring": "Get the range of the data body, resolved by pivot name.\n@param - Pivot table name\n@returns Public worksheet range covering the data body, or null if not computed",
           "usedTypes": []
         },
         "pivots.getColumnLabelRange": {
-          "signature": "pivots.getColumnLabelRange(name: string): Promise<CellRange | null>",
-          "docstring": "Get the range of column label headers, resolved by pivot name.\n@param - Pivot table name\n@returns CellRange covering the column headers, or null if not computed",
+          "signature": "pivots.getColumnLabelRange(name: string): Promise<WorksheetRange | null>",
+          "docstring": "Get the range of column label headers, resolved by pivot name.\n@param - Pivot table name\n@returns Public worksheet range covering the column headers, or null if not computed",
           "usedTypes": []
         },
         "pivots.getRowLabelRange": {
-          "signature": "pivots.getRowLabelRange(name: string): Promise<CellRange | null>",
-          "docstring": "Get the range of row label headers, resolved by pivot name.\n@param - Pivot table name\n@returns CellRange covering the row headers, or null if not computed",
+          "signature": "pivots.getRowLabelRange(name: string): Promise<WorksheetRange | null>",
+          "docstring": "Get the range of row label headers, resolved by pivot name.\n@param - Pivot table name\n@returns Public worksheet range covering the row headers, or null if not computed",
           "usedTypes": []
         },
         "pivots.getFilterAxisRange": {
-          "signature": "pivots.getFilterAxisRange(name: string): Promise<CellRange | null>",
-          "docstring": "Get the range of the filter area, resolved by pivot name.\n@param - Pivot table name\n@returns CellRange covering filter dropdowns, or null if no filter fields",
+          "signature": "pivots.getFilterAxisRange(name: string): Promise<WorksheetRange | null>",
+          "docstring": "Get the range of the filter area, resolved by pivot name.\n@param - Pivot table name\n@returns Public worksheet range covering filter dropdowns, or null if no filter fields",
           "usedTypes": []
         },
         "pivots.getAllPivotItems": {
@@ -3664,7 +3809,7 @@
           "usedTypes": ["MergedRegion"]
         },
         "structure.getMergeAtCell": {
-          "signature": "structure.getMergeAtCell(address: string): Promise<CellRange | null>",
+          "signature": "structure.getMergeAtCell(address: string): Promise<WorksheetRange | null>",
           "docstring": "Get the merge containing a cell by A1 address, or null if not merged.",
           "usedTypes": []
         },
@@ -4018,6 +4163,11 @@
           "docstring": "Freeze rows and columns simultaneously.\n\nThis is the atomic form of Freeze Panes. The first unfrozen cell is at\n(rows, cols): for example, freezePanes(1, 1) freezes row 0 and column 0.\n@param - Number of top rows to freeze (0 to freeze no rows)\n@param - Number of left columns to freeze (0 to freeze no columns)",
           "usedTypes": []
         },
+        "view.setFrozenPanes": {
+          "signature": "view.setFrozenPanes(rows: number, cols: number): Promise<void>",
+          "docstring": "Compatibility alias for freezePanes(rows, cols).\n\nAgent-discovered API workflows may refer to this operation by the storage\nroute name. Prefer freezePanes for new code.\n@param - Number of top rows to freeze (0 to freeze no rows)\n@param - Number of left columns to freeze (0 to freeze no columns)",
+          "usedTypes": []
+        },
         "view.unfreeze": {
           "signature": "view.unfreeze(): Promise<void>",
           "docstring": "Remove all frozen panes (both rows and columns).",
@@ -4119,7 +4269,7 @@
     },
     "PivotTableHandle": {
       "name": "PivotTableHandle",
-      "definition": "{\n  /** Get the pivot table name */\n  getName(): string;\n  /** Side-effect-free handle-local introspection bound to this pivot ID. */\n  getInfo(options?: PivotHandleInfoOptions | undefined): Promise<PivotHandleInfo>;\n  /** Get the current configuration including all fields */\n  getConfig(): PivotTableConfig;\n  /** Update the pivot table data configuration. */\n  update(updates: Partial<Omit<PivotTableConfig, \"id\" | \"createdAt\">>): Promise<PivotHandleMutationReceipt>;\n  /** Delete the pivot table. */\n  delete(): Promise<PivotHandleDeleteReceipt>;\n  /** Subscribe to computed result updates for this pivot. */\n  subscribeResult(callback: (result: PivotTableResult | null, error?: string | undefined) => void): () => void;\n  /** Compute this pivot table result. */\n  compute(forceRefresh?: boolean | undefined): Promise<PivotTableResult | null>;\n  /** Get the full range occupied by the rendered pivot table. */\n  getRange(): Promise<CellRange | null>;\n  /** Add a field to the row, column, or filter area */\n  addField(field: string, area: \"column\" | \"row\" | \"filter\", position?: number | undefined): Promise<PivotHandleMutationReceipt>;\n  /** Add a value field with aggregation */\n  addValueField(field: string, aggregation: \"min\" | \"max\" | \"sum\" | \"count\" | \"average\", label?: string | undefined): Promise<PivotHandleMutationReceipt>;\n  /** Add a placement to a row, column, value, or filter area. */\n  addPlacement(spec: PivotHandlePlacementSpec): Promise<PivotHandleMutationReceipt>;\n  /** Remove a field by name */\n  removeField(fieldName: string, area?: PivotFieldArea | undefined): Promise<PivotHandleMutationReceipt>;\n  /** Remove a specific placement by stable placement ID. */\n  removePlacement(placementId: PlacementId): Promise<PivotHandleMutationReceipt>;\n  /** Move a field to a different area or position. */\n  moveField(fieldName: string, fromArea: PivotFieldArea, toArea: PivotFieldArea, toPosition: number): Promise<PivotHandleMutationReceipt>;\n  /** Move a specific placement to a different area or ordered position. */\n  movePlacement(placementId: PlacementId, toArea: PivotFieldArea, toPosition: number): Promise<PivotHandleMutationReceipt>;\n  /** Change the aggregation function of a value field */\n  changeAggregation(valueFieldLabel: string, newAggregation: \"min\" | \"max\" | \"sum\" | \"count\" | \"average\"): Promise<PivotHandleMutationReceipt>;\n  /** Change the aggregation function of a specific value placement. */\n  setPlacementAggregateFunction(placementId: PlacementId, aggregateFunction: AggregateFunction): Promise<PivotHandleMutationReceipt>;\n  /** Rename a value field's display label */\n  renameValueField(currentLabel: string, newLabel: string): Promise<PivotHandleMutationReceipt>;\n  /** Rename a value placement by stable placement ID. */\n  renameValuePlacement(placementId: PlacementId, displayName: string | null): Promise<PivotHandleMutationReceipt>;\n  /** Refresh/materialize the pivot table from its data source. */\n  refresh(): Promise<PivotRefreshReceipt>;\n  /** Get all items for all non-value fields */\n  getAllItems(): Promise<PivotFieldItems[]>;\n  /** Set the \"Show Values As\" calculation for a value field. Pass null to clear. */\n  setShowValuesAs(valueFieldLabel: string, showValuesAs: ShowValuesAsConfig | null): Promise<PivotHandleMutationReceipt>;\n  /** Set the sort order for a row or column field. */\n  setSortOrder(fieldOrPlacement: string, sortOrder: SortOrder): Promise<PivotHandleMutationReceipt>;\n  /** Set the sort order for a row or column placement. */\n  setPlacementSortOrder(placementId: PlacementId, sortOrder: SortOrder | null): Promise<PivotHandleMutationReceipt>;\n  /** Set or clear value sorting on a row or column axis placement. */\n  setSortByValue(axisPlacementId: PlacementId, valuePlacementId: PlacementId, config: PivotValueSortConfig | null): Promise<PivotHandleMutationReceipt>;\n  /** Set a filter on a field. */\n  setFilter(fieldId: string, filter: Omit<PivotFilter, \"fieldId\">): Promise<PivotHandleMutationReceipt>;\n  /** Remove a filter from a field. */\n  removeFilter(fieldId: string): Promise<PivotHandleMutationReceipt>;\n  /** Set layout options. */\n  setLayout(layout: Partial<PivotTableLayout>): Promise<PivotHandleMutationReceipt>;\n  /** Set style options. */\n  setStyle(style: Partial<PivotTableStyle>): Promise<PivotHandleMutationReceipt>;\n  /** Toggle expansion state for a header. */\n  toggleExpanded(headerKey: string, isRow: boolean): Promise<PivotHandleExpansionReceipt>;\n  /** Set expansion state for all headers. */\n  setAllExpanded(expanded: boolean): Promise<PivotHandleExpansionReceipt>;\n  /** Read expansion state. */\n  getExpansionState(): Promise<PivotExpansionState>;\n  /** Get drill-down data for a pivot cell. */\n  getDrillDownData(rowKey: string, columnKey: string): Promise<CellValue[][]>;\n  /** Add a calculated field to this pivot. */\n  addCalculatedField(field: CalculatedField): Promise<PivotHandleCalculatedFieldReceipt>;\n  /** Set item visibility by value string -> boolean map */\n  setItemVisibility(fieldId: string, visibleItems: Record<string, boolean>): Promise<PivotHandleMutationReceipt>;\n  /** Get the data source type (range, table, or external). */\n  getDataSourceType(): DataSourceType;\n  /** Change the source data range without refreshing/materializing. */\n  setDataSource(dataSource: string): Promise<PivotHandleMutationReceipt>;\n}",
+      "definition": "{\n  /** Get the pivot table name */\n  getName(): string;\n  /** Side-effect-free handle-local introspection bound to this pivot ID. */\n  getInfo(options?: PivotHandleInfoOptions | undefined): Promise<PivotHandleInfo>;\n  /** Get the current stored configuration plus public field summaries. */\n  getConfig(): PivotHandleConfig;\n  /** Update the pivot table data configuration. */\n  update(updates: Partial<Omit<PivotTableConfig, \"id\" | \"createdAt\">>): Promise<PivotHandleMutationReceipt>;\n  /** Delete the pivot table. */\n  delete(): Promise<PivotHandleDeleteReceipt>;\n  /** Subscribe to computed result updates for this pivot. */\n  subscribeResult(callback: (result: PivotTableResult | null, error?: string | undefined) => void): () => void;\n  /** Compute this pivot table result. */\n  compute(forceRefresh?: boolean | undefined): Promise<PivotTableResult | null>;\n  /** Get the full range occupied by the rendered pivot table. */\n  getRange(): Promise<WorksheetRange | null>;\n  /** Add a field to the row, column, or filter area */\n  addField(field: string, area: \"column\" | \"row\" | \"filter\", position?: number | undefined): Promise<PivotHandleMutationReceipt>;\n  /** Add a value field with aggregation */\n  addValueField(field: string, aggregation: \"min\" | \"max\" | \"sum\" | \"count\" | \"average\", label?: string | undefined): Promise<PivotHandleMutationReceipt>;\n  /** Add a placement to a row, column, value, or filter area. */\n  addPlacement(spec: PivotHandlePlacementSpec): Promise<PivotHandleMutationReceipt>;\n  /** Remove a field by name */\n  removeField(fieldName: string, area?: PivotFieldArea | undefined): Promise<PivotHandleMutationReceipt>;\n  /** Remove a specific placement by stable placement ID. */\n  removePlacement(placementId: PlacementId): Promise<PivotHandleMutationReceipt>;\n  /** Move a field to a different area or position. */\n  moveField(fieldName: string, fromArea: PivotFieldArea, toArea: PivotFieldArea, toPosition: number): Promise<PivotHandleMutationReceipt>;\n  /** Move a specific placement to a different area or ordered position. */\n  movePlacement(placementId: PlacementId, toArea: PivotFieldArea, toPosition: number): Promise<PivotHandleMutationReceipt>;\n  /** Change the aggregation function of a value field */\n  changeAggregation(valueFieldLabel: string, newAggregation: \"min\" | \"max\" | \"sum\" | \"count\" | \"average\"): Promise<PivotHandleMutationReceipt>;\n  /** Change the aggregation function of a specific value placement. */\n  setPlacementAggregateFunction(placementId: PlacementId, aggregateFunction: AggregateFunction): Promise<PivotHandleMutationReceipt>;\n  /** Rename a value field's display label */\n  renameValueField(currentLabel: string, newLabel: string): Promise<PivotHandleMutationReceipt>;\n  /** Rename a value placement by stable placement ID. */\n  renameValuePlacement(placementId: PlacementId, displayName: string | null): Promise<PivotHandleMutationReceipt>;\n  /** Refresh/materialize the pivot table from its data source. */\n  refresh(): Promise<PivotRefreshReceipt>;\n  /** Get all items for all non-value fields */\n  getAllItems(): Promise<PivotFieldItems[]>;\n  /** Set the \"Show Values As\" calculation for a value field. Pass null to clear. */\n  setShowValuesAs(valueFieldLabel: string, showValuesAs: ShowValuesAsConfig | null): Promise<PivotHandleMutationReceipt>;\n  /** Set the sort order for a row or column field. */\n  setSortOrder(fieldOrPlacement: string, sortOrder: SortOrder): Promise<PivotHandleMutationReceipt>;\n  /** Set the sort order for a row or column placement. */\n  setPlacementSortOrder(placementId: PlacementId, sortOrder: SortOrder | null): Promise<PivotHandleMutationReceipt>;\n  /** Set or clear value sorting on a row or column axis placement. */\n  setSortByValue(axisPlacementId: PlacementId, valuePlacementId: PlacementId, config: PivotValueSortConfig | null): Promise<PivotHandleMutationReceipt>;\n  /** Set a filter on a field. */\n  setFilter(fieldId: string, filter: Omit<PivotFilter, \"fieldId\">): Promise<PivotHandleMutationReceipt>;\n  /** Remove a filter from a field. */\n  removeFilter(fieldId: string): Promise<PivotHandleMutationReceipt>;\n  /** Set layout options. */\n  setLayout(layout: Partial<PivotTableLayout>): Promise<PivotHandleMutationReceipt>;\n  /** Set style options. */\n  setStyle(style: Partial<PivotTableStyle>): Promise<PivotHandleMutationReceipt>;\n  /** Toggle expansion state for a header. */\n  toggleExpanded(headerKey: string, isRow: boolean): Promise<PivotHandleExpansionReceipt>;\n  /** Set expansion state for all headers. */\n  setAllExpanded(expanded: boolean): Promise<PivotHandleExpansionReceipt>;\n  /** Read expansion state. */\n  getExpansionState(): Promise<PivotExpansionState>;\n  /** Get drill-down data for a pivot cell. */\n  getDrillDownData(rowKey: string, columnKey: string): Promise<CellValue[][]>;\n  /** Add a calculated field to this pivot. */\n  addCalculatedField(field: CalculatedField): Promise<PivotHandleCalculatedFieldReceipt>;\n  /** Set item visibility by value string -> boolean map */\n  setItemVisibility(fieldId: string, visibleItems: Record<string, boolean>): Promise<PivotHandleMutationReceipt>;\n  /** Get the data source type (range, table, or external). */\n  getDataSourceType(): DataSourceType;\n  /** Change the source data range without refreshing/materializing. */\n  setDataSource(dataSource: string): Promise<PivotHandleMutationReceipt>;\n}",
       "docstring": "Handle for interacting with an existing pivot table.\n\nReturned by `worksheet.pivots.get()`. Provides methods to query\nand modify the pivot table's field configuration."
     },
     "CellData": {
@@ -4194,7 +4344,7 @@
     },
     "ViewOptions": {
       "name": "ViewOptions",
-      "definition": "{\n  /** Whether gridlines are shown */\n  showGridlines: boolean;\n  /** Whether row headers are shown */\n  showRowHeaders: boolean;\n  /** Whether column headers are shown */\n  showColumnHeaders: boolean;\n}",
+      "definition": "{\n  /** Whether gridlines are shown */\n  showGridlines: boolean;\n  /** Whether row headers are shown */\n  showRowHeaders: boolean;\n  /** Whether column headers are shown */\n  showColumnHeaders: boolean;\n  /** Sheet zoom scale as a percentage, e.g. 125 for 125% */\n  zoomScale?: number | undefined;\n}",
       "docstring": "Sheet view options (gridlines, headings)."
     },
     "ProtectionConfig": {
@@ -4291,7 +4441,7 @@
       "docstring": "A single item in a slicer's value list."
     }
   },
-  "generated": "2026-06-16T22:19:56.503Z",
+  "generated": "2026-06-24T10:06:26.161Z",
   "formatPresets": {
     "general": {
       "default": {

@@ -5,8 +5,8 @@
  * operations.
  */
 
-import type { CellRange } from '@mog-sdk/contracts/core';
-import type { SheetId, RangePixelPosition, WorksheetLayout } from '@mog-sdk/contracts/api';
+import type { CellRange, SheetId } from '@mog-sdk/contracts/core';
+import type { RangePixelPosition, WorksheetLayout } from '@mog-sdk/contracts/api';
 import { KernelError } from '../../errors';
 import { invalidCellAddress, operationFailed } from '../../errors/api';
 
@@ -325,6 +325,15 @@ export class WorksheetLayoutImpl implements WorksheetLayout {
   async getHiddenRowsBitmap(): Promise<Set<number>> {
     try {
       const rows = await this.ctx.computeBridge.getHiddenRows(this.sheetId);
+      return new Set(rows);
+    } catch {
+      return new Set();
+    }
+  }
+
+  async getFilterHiddenRowsBitmap(): Promise<Set<number>> {
+    try {
+      const rows = await this.ctx.computeBridge.getFilterHiddenRows(this.sheetId);
       return new Set(rows);
     } catch {
       return new Set();

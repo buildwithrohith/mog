@@ -10,9 +10,15 @@
  */
 
 import type { IEventBus } from '@mog-sdk/contracts/events';
+import type { FeatureGates } from '@mog-sdk/contracts/feature-gates';
 import type { IKernelContext } from '@mog-sdk/contracts/kernel';
 import type { WorkbookStateProvider } from '@mog-sdk/contracts/api';
 import type { CodeExecutionOptions, CodeExecutionResult, SheetId } from '@mog-sdk/contracts/core';
+import type { DomainSupportManifest } from '@mog-sdk/contracts/versioning';
+import type {
+  VersionShadowObservationOptions,
+  VersionShadowObservationSink,
+} from '@mog-sdk/contracts/versioning';
 import type {
   DocumentImportOptions,
   DocumentImportWarning,
@@ -21,7 +27,35 @@ import type {
 import type { DocumentSecurityConfig } from '@mog-sdk/contracts/security';
 import type { HostPrincipalLock } from '../../context/host-principal-lock';
 import type { DocumentContext } from '../../context';
+import type {
+  VersionNormalCommitCapture,
+  VersionMergeCommitCapture,
+  WorkbookVersionCommitService,
+} from '../../document/version-store/commit-service';
+import type { WorkbookVersionMergeService } from '../../document/version-store/merge-service';
+import type { PendingRemotePromotionService } from '../../document/version-store/pending-remote-promotion-service';
+import type { ProposalWorkspaceLifecycleService } from '../../document/version-store/proposals/proposal-workspace-lifecycle-service';
+import type { WorkbookVersionRevertService } from '../../document/version-store/revert-service';
+import type { WorkbookVersionReviewService } from '../../document/version-store/review-service';
+import type { VersionProviderWriteActivityTracker } from '../../document/version-store/provider-write-activity';
+import type {
+  CheckoutSnapshotApplyInput,
+  CheckoutSnapshotMaterializer,
+} from '../../document/version-store/checkout-apply';
+import type { SnapshotRootByteSyncPort } from '../../document/version-store/snapshot-root-capture';
+import type { SemanticMutationCaptureServices } from '../../document/version-store/semantic-mutation-capture';
+import type { VersionSemanticStateReaderPort } from '../../document/version-store/semantic-state-reader';
+import type {
+  VersionStoreDiagnostic,
+  VersionStoreProvider,
+} from '../../document/version-store/provider';
+import type { DocumentWorkbookVersioningLifecycleConfig } from '../../document/version-store/lifecycle';
+import type { WorkbookVersionProvenanceTruthService } from './version/provenance/version-provenance-truth-service';
+import type { VersionLiveCollaborationStatusReader } from './version/live-collaboration/version-live-collaboration-status';
+import type { DomainSupportManifestValidationOptions } from '../../document/version-store/domain-support-manifest-validator';
 import type { HandleLiveness } from '../lifecycle/handle-liveness';
+import type { VersionCheckoutTransactionGuard } from './version-checkout';
+import type { SnapshotRootFreshLifecycleMaterialization } from '../document/snapshot-root-lifecycle-hydrator';
 
 // =============================================================================
 // Lazy CodeExecutor Types
@@ -38,6 +72,42 @@ export type CodeExecutorFactory = (config: {
   eventBus: IEventBus;
   getActiveSheetId: () => SheetId;
 }) => CodeExecutorType;
+
+type MaybePromise<T> = T | Promise<T>;
+
+export interface WorkbookVersioningConfig {
+  readonly provider?: VersionStoreProvider;
+  readonly writeService?: Pick<
+    WorkbookVersionCommitService,
+    'readHead' | 'readRef' | 'listCommits' | 'commit' | 'mergeCommit'
+  >;
+  readonly mergeService?: Pick<WorkbookVersionMergeService, 'merge'>;
+  readonly revertService?: Pick<WorkbookVersionRevertService, 'revert'>;
+  readonly reviewService?: WorkbookVersionReviewService;
+  readonly proposalService?: unknown;
+  readonly proposalWorkspaceService?: ProposalWorkspaceLifecycleService;
+  readonly pendingRemotePromotionService?: Pick<
+    PendingRemotePromotionService,
+    'promotePendingRemoteSegments'
+  >;
+  readonly provenanceTruthService?: WorkbookVersionProvenanceTruthService;
+  readonly providerWriteActivityTracker?: VersionProviderWriteActivityTracker;
+  readonly captureNormalCommit?: VersionNormalCommitCapture;
+  readonly captureMergeCommit?: VersionMergeCommitCapture;
+  readonly semanticMutationCapture?: SemanticMutationCaptureServices;
+  readonly semanticStateReader?: VersionSemanticStateReaderPort;
+  readonly snapshotRootByteSyncPort?: SnapshotRootByteSyncPort;
+  readonly ensureProviderInitialized?: () => MaybePromise<readonly VersionStoreDiagnostic[]>;
+  readonly checkoutSnapshotMaterializer?: CheckoutSnapshotMaterializer;
+  readonly checkoutTransactionGuard?: VersionCheckoutTransactionGuard;
+  readonly readLiveCollaborationStatus?: VersionLiveCollaborationStatusReader;
+  readonly domainSupportManifest?: DomainSupportManifest | null;
+  readonly readDomainSupportManifest?: () => MaybePromise<DomainSupportManifest | null | undefined>;
+  readonly domainSupportManifestOptions?: DomainSupportManifestValidationOptions;
+  readonly requireDomainSupportManifest?: boolean;
+  readonly shadowObservationSink?: VersionShadowObservationSink;
+  readonly shadowObservationOptions?: VersionShadowObservationOptions;
+}
 
 // =============================================================================
 // WorkbookConfig
@@ -58,6 +128,10 @@ export interface WorkbookConfig {
    * that tracks activeSheetId internally and returns null for all UI queries.
    */
   stateProvider?: WorkbookStateProvider;
+  /** Document-scoped host feature gates visible to version surface admission. */
+  featureGates?: FeatureGates;
+  /** Dynamic document-scoped host feature gates visible to version surface admission. */
+  readFeatureGates?: () => FeatureGates;
   /** Event bus for subscribing to and emitting events */
   eventBus: IEventBus;
   /** Optional factory for creating a code executor (injected by engine layer) */
@@ -80,6 +154,13 @@ export interface WorkbookConfig {
   importWarnings?: readonly DocumentImportWarning[];
   /** Shared liveness token for document-owned workbook facades. */
   liveness?: HandleLiveness;
+  /** Optional document-scoped version graph services for the public wb.version facade. */
+  versioning?: WorkbookVersioningConfig;
+  /** Internal owner hook for making published checkout materializations durable. */
+  persistCheckoutMaterialization?: (
+    materialization: SnapshotRootFreshLifecycleMaterialization,
+    input: CheckoutSnapshotApplyInput,
+  ) => MaybePromise<void>;
   /**
    * Host principal lock — when present, prevents `setActivePrincipal` and
    * `makePrincipal` from mutating the active principal. Installed by the
@@ -152,4 +233,15 @@ export interface CreateWorkbookOptions {
    * Forwarded to `WorkbookConfig.writeFile`.
    */
   writeFile?: (path: string, data: Uint8Array) => Promise<void>;
+  /**
+   * Explicit version-store lifecycle selection for the document-owned workbook
+   * path. This exists because durable providers such as IndexedDB must be
+   * selected and initialized asynchronously before the WorkbookImpl constructor
+   * receives its concrete versioning services.
+   */
+  versioning?: DocumentWorkbookVersioningLifecycleConfig;
+  /** Document-scoped host feature gates visible to version surface admission. */
+  featureGates?: FeatureGates;
+  /** Dynamic document-scoped host feature gates visible to version surface admission. */
+  readFeatureGates?: () => FeatureGates;
 }

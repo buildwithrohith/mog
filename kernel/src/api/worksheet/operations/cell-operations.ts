@@ -38,6 +38,7 @@ import { calendarPartsInTz } from './calendar-tz';
 import { type CellInput, toCellInput } from './cell-input';
 import { prepareExternalFormulaWrite } from '../../../services/external-formulas';
 import { assertUnprotectedTableDefinition } from '../protected-table-operations';
+import type { MutationAdmissionOptions } from '../../../bridges/compute';
 
 // =============================================================================
 // Cell Read Operations
@@ -363,13 +364,19 @@ async function applyTableHeaderWrite(
   sheetId: SheetId,
   write: TableHeaderWrite,
   alreadyMaterialized = false,
+  options?: MutationAdmissionOptions,
 ): Promise<boolean> {
   if (write.currentName === write.newName) return false;
   if (!alreadyMaterialized) {
     await awaitAllSheetsBeforeCellWrite(ctx);
   }
   await assertUnprotectedTableDefinition(ctx, sheetId, 'tables.renameColumn', write.tableName);
-  await ctx.computeBridge.renameTableColumn(write.tableName, write.columnIndex, write.newName);
+  await ctx.computeBridge.renameTableColumn(
+    write.tableName,
+    write.columnIndex,
+    write.newName,
+    options,
+  );
   return true;
 }
 
@@ -400,6 +407,7 @@ export async function setCell(
   row: number,
   col: number,
   value: CellValuePrimitive,
+  options?: MutationAdmissionOptions,
 ): Promise<void> {
   if (!isValidAddress(row, col)) {
     throw KernelError.from(null, 'COMPUTE_ERROR', `Invalid cell address: row=${row}, col=${col}`);
@@ -407,7 +415,7 @@ export async function setCell(
 
   const tableHeaderWrite = await resolveTableHeaderWrite(ctx, sheetId, row, col, value);
   if (tableHeaderWrite) {
-    if (await applyTableHeaderWrite(ctx, sheetId, tableHeaderWrite)) {
+    if (await applyTableHeaderWrite(ctx, sheetId, tableHeaderWrite, false, options)) {
       await reapplyActiveFiltersAfterWrite(ctx, sheetId);
     }
     return;
@@ -424,7 +432,7 @@ export async function setCell(
   // Single-element batch — Rust handles CellId resolution, recalc, AND
   // locale-aware date format inference (e.g. "3/15/2024" → number value +
   // M/d/yyyy format applied atomically inside the mutation pipeline).
-  await ctx.computeBridge.setCellsByPosition(sheetId, [{ row, col, input }]);
+  await ctx.computeBridge.setCellsByPosition(sheetId, [{ row, col, input }], options);
   await reapplyActiveFiltersAfterWrite(ctx, sheetId);
 }
 
@@ -539,6 +547,7 @@ export async function setCells(
     col?: number;
     value: CellValuePrimitive | Date;
   }>,
+  options?: MutationAdmissionOptions,
 ): Promise<SetCellsResult> {
   if (cells.length === 0) return { cellsWritten: 0, errors: null };
 
@@ -634,12 +643,17 @@ export async function setCells(
 
     let wroteHeader = false;
     for (const headerWrite of headerWrites) {
-      wroteHeader = (await applyTableHeaderWrite(ctx, sheetId, headerWrite, true)) || wroteHeader;
+      wroteHeader =
+        (await applyTableHeaderWrite(ctx, sheetId, headerWrite, true, options)) || wroteHeader;
     }
 
     // --- Use the mutation pipeline path for primitives ---
     if (edits.length > 0) {
-      await ctx.computeBridge.setCellsByPosition(sheetId, edits);
+      if (options) {
+        await ctx.computeBridge.setCellsByPosition(sheetId, edits, options);
+      } else {
+        await ctx.computeBridge.setCellsByPosition(sheetId, edits);
+      }
     }
     // --- Date writes go through setDateValue so Rust produces a
     // date serial + applies a default date format when the cell is unformatted.
@@ -649,14 +663,26 @@ export async function setCells(
     // headless test.
     for (const d of dates) {
       const parts = calendarPartsInTz(d.date, ctx.userTimezone);
-      await ctx.computeBridge.setDateValue(
-        sheetId,
-        d.row,
-        d.col,
-        parts.year,
-        parts.month,
-        parts.day,
-      );
+      if (options) {
+        await ctx.computeBridge.setDateValue(
+          sheetId,
+          d.row,
+          d.col,
+          parts.year,
+          parts.month,
+          parts.day,
+          options,
+        );
+      } else {
+        await ctx.computeBridge.setDateValue(
+          sheetId,
+          d.row,
+          d.col,
+          parts.year,
+          parts.month,
+          parts.day,
+        );
+      }
     }
     if (edits.length > 0 || dates.length > 0 || wroteHeader) {
       await reapplyActiveFiltersAfterWrite(ctx, sheetId);
@@ -699,9 +725,10 @@ export async function setDateValue(
   row: number,
   col: number,
   date: { year: number; month: number; day: number },
+  options?: MutationAdmissionOptions,
 ): Promise<void> {
   await awaitAllSheetsBeforeCellWrite(ctx);
-  await ctx.computeBridge.setDateValue(sheetId, row, col, date.year, date.month, date.day);
+  await ctx.computeBridge.setDateValue(sheetId, row, col, date.year, date.month, date.day, options);
   await reapplyActiveFiltersAfterWrite(ctx, sheetId);
 }
 
@@ -722,9 +749,18 @@ export async function setTimeValue(
   row: number,
   col: number,
   time: { hours: number; minutes: number; seconds: number },
+  options?: MutationAdmissionOptions,
 ): Promise<void> {
   await awaitAllSheetsBeforeCellWrite(ctx);
-  await ctx.computeBridge.setTimeValue(sheetId, row, col, time.hours, time.minutes, time.seconds);
+  await ctx.computeBridge.setTimeValue(
+    sheetId,
+    row,
+    col,
+    time.hours,
+    time.minutes,
+    time.seconds,
+    options,
+  );
   await reapplyActiveFiltersAfterWrite(ctx, sheetId);
 }
 

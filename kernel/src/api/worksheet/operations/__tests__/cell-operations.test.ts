@@ -45,6 +45,9 @@ function createMockCtx() {
       setCellsByPosition: jest.fn().mockImplementation(async () => {
         order.push('setCellsByPosition');
       }),
+      setDateValue: jest.fn().mockImplementation(async () => {
+        order.push('setDateValue');
+      }),
       getActiveFilters: jest.fn().mockImplementation(async () => {
         order.push('getActiveFilters');
         return [{ id: 'filter-1' }];
@@ -76,10 +79,22 @@ describe('CellOps filter reapply materialization', () => {
   it('renames a table column when setCell targets a visible table header', async () => {
     const ctx = createMockCtx();
     ctx.computeBridge.getTableAtCell.mockResolvedValue(createBridgeTable());
+    const options = {
+      operationContext: {
+        operationId: 'worksheet.setCell:1',
+        kind: 'mutation',
+        author: { authorId: 'user-1', actorKind: 'user' },
+        createdAt: '2026-06-20T00:00:00.000Z',
+        sheetIds: [SHEET_ID],
+        domainIds: ['cells', 'tables'],
+        capturePolicy: 'commitEligible',
+        writeAdmissionMode: 'capture',
+      },
+    };
 
-    await CellOps.setCell(ctx, SHEET_ID, 0, 1, 'Area');
+    await CellOps.setCell(ctx, SHEET_ID, 0, 1, 'Area', options as any);
 
-    expect(ctx.computeBridge.renameTableColumn).toHaveBeenCalledWith('Sales', 1, 'Area');
+    expect(ctx.computeBridge.renameTableColumn).toHaveBeenCalledWith('Sales', 1, 'Area', options);
     expect(ctx.computeBridge.setCellsByPosition).not.toHaveBeenCalled();
     expect(ctx.computeBridge.getMutationHandler).not.toHaveBeenCalled();
     expect(ctx.order).toEqual([
@@ -105,24 +120,93 @@ describe('CellOps filter reapply materialization', () => {
   it('splits table header renames from normal cells in batch writes', async () => {
     const ctx = createMockCtx();
     ctx.computeBridge.getAllTablesInSheet.mockResolvedValue([createBridgeTable()]);
+    const options = {
+      operationContext: {
+        operationId: 'worksheet.setCells:1',
+        kind: 'mutation',
+        author: { authorId: 'user-1', actorKind: 'user' },
+        createdAt: '2026-06-20T00:00:00.000Z',
+        sheetIds: [SHEET_ID],
+        domainIds: ['cells', 'tables'],
+        capturePolicy: 'commitEligible',
+        writeAdmissionMode: 'capture',
+      },
+    };
 
-    const result = await CellOps.setCells(ctx, SHEET_ID, [
-      { row: 0, col: 1, value: 'Area' },
-      { row: 1, col: 0, value: 'West' },
-    ]);
+    const result = await CellOps.setCells(
+      ctx,
+      SHEET_ID,
+      [
+        { row: 0, col: 1, value: 'Area' },
+        { row: 1, col: 0, value: 'West' },
+      ],
+      options as any,
+    );
 
     expect(result).toEqual({ cellsWritten: 2, errors: null });
     expect(ctx.computeBridge.getAllTablesInSheet).toHaveBeenCalledTimes(1);
     expect(ctx.computeBridge.getTableAtCell).not.toHaveBeenCalled();
-    expect(ctx.computeBridge.renameTableColumn).toHaveBeenCalledWith('Sales', 1, 'Area');
-    expect(ctx.computeBridge.setCellsByPosition).toHaveBeenCalledWith(SHEET_ID, [
-      { row: 1, col: 0, input: { kind: 'parse', text: 'West' } },
-    ]);
+    expect(ctx.computeBridge.renameTableColumn).toHaveBeenCalledWith('Sales', 1, 'Area', options);
+    expect(ctx.computeBridge.setCellsByPosition).toHaveBeenCalledWith(
+      SHEET_ID,
+      [{ row: 1, col: 0, input: { kind: 'parse', text: 'West' } }],
+      options,
+    );
     expect(ctx.computeBridge.getMutationHandler).toHaveBeenCalledTimes(1);
     expect(ctx.order).toEqual([
       'await:allSheets',
       'renameTableColumn',
       'setCellsByPosition',
+      'getActiveFilters',
+      'applyFilter',
+    ]);
+  });
+
+  it('passes mutation admission options to bulk primitive and date writes', async () => {
+    const ctx = createMockCtx();
+    const date = new Date(Date.UTC(2024, 0, 15));
+    const options = {
+      operationContext: {
+        operationId: 'worksheet.setCells:1',
+        kind: 'mutation',
+        author: { authorId: 'user-1', actorKind: 'user' },
+        createdAt: '2026-06-20T00:00:00.000Z',
+        sheetIds: [SHEET_ID],
+        domainIds: ['cells'],
+        capturePolicy: 'commitEligible',
+        writeAdmissionMode: 'capture',
+      },
+    };
+
+    const result = await CellOps.setCells(
+      ctx,
+      SHEET_ID,
+      [
+        { row: 1, col: 0, value: 'West' },
+        { row: 2, col: 0, value: date },
+      ],
+      options as any,
+    );
+
+    expect(result).toEqual({ cellsWritten: 2, errors: null });
+    expect(ctx.computeBridge.setCellsByPosition).toHaveBeenCalledWith(
+      SHEET_ID,
+      [{ row: 1, col: 0, input: { kind: 'parse', text: 'West' } }],
+      options,
+    );
+    expect(ctx.computeBridge.setDateValue).toHaveBeenCalledWith(
+      SHEET_ID,
+      2,
+      0,
+      2024,
+      1,
+      15,
+      options,
+    );
+    expect(ctx.order).toEqual([
+      'await:allSheets',
+      'setCellsByPosition',
+      'setDateValue',
       'getActiveFilters',
       'applyFilter',
     ]);

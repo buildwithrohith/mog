@@ -1,13 +1,15 @@
 use super::super::KEY_STYLE_PALETTE;
-use super::cell::get_cell_format;
+use super::cell::get_properties;
 use super::defaults::default_format;
 use super::merge::merge_formats;
 use super::row_col::{get_col_format, get_row_format};
 use crate::identity::GridIndex;
 use crate::mirror::SheetMirror;
 use crate::storage::YrsStorage;
+use crate::storage::properties::CellProperties;
 use cell_types::SheetId;
-use domain_types::CellFormat;
+use domain_types::{CellFormat, CellVerticalAlign};
+use ooxml_types::styles::HorizontalAlign;
 use yrs::{Any, Map, Out, Transact};
 
 /// Get the effective (computed) format for a cell.
@@ -33,7 +35,7 @@ pub fn get_effective_format(
 ) -> CellFormat {
     let base = workbook_base_format(storage);
 
-    let after_col_range = apply_col_format_range_layer(&base, col, sheet_mirror);
+    let after_col_range = apply_col_format_range_layer(&base, col, sheet_mirror, false);
 
     let col_fmt = get_col_format(storage, sheet_id, col, grid_index).unwrap_or_default();
     let after_col = merge_formats(&after_col_range, &col_fmt);
@@ -49,19 +51,19 @@ pub fn get_effective_format(
         None => after_range,
     };
 
-    let cell_fmt = get_cell_format(
+    let cell_props = get_properties(
         storage.doc(),
         storage.workbook_map(),
         storage.sheets(),
         sheet_id,
         cell_id,
-    )
-    .unwrap_or_default();
+    );
+    let cell_fmt = materialize_cell_layer_format(cell_props.as_ref());
     merge_formats(&after_table, &cell_fmt)
 }
 
-/// Same cascade as `get_effective_format`, but accepts a pre-fetched cell format
-/// to avoid a redundant CRDT read when the caller already has it (e.g. for the
+/// Same cascade as `get_effective_format`, but accepts pre-fetched cell properties
+/// to avoid a redundant CRDT read when the caller already has them (e.g. for the
 /// skip-empty-cell check in `query_range`).
 pub fn get_effective_format_preloaded(
     storage: &YrsStorage,
@@ -69,13 +71,13 @@ pub fn get_effective_format_preloaded(
     row: u32,
     col: u32,
     table_format: Option<&CellFormat>,
-    cell_format: &CellFormat,
+    cell_properties: Option<&CellProperties>,
     grid_index: Option<&GridIndex>,
     sheet_mirror: Option<&SheetMirror>,
 ) -> CellFormat {
     let base = workbook_base_format(storage);
 
-    let after_col_range = apply_col_format_range_layer(&base, col, sheet_mirror);
+    let after_col_range = apply_col_format_range_layer(&base, col, sheet_mirror, false);
 
     let col_fmt = get_col_format(storage, sheet_id, col, grid_index).unwrap_or_default();
     let after_col = merge_formats(&after_col_range, &col_fmt);
@@ -91,7 +93,8 @@ pub fn get_effective_format_preloaded(
         None => after_range,
     };
 
-    merge_formats(&after_table, cell_format)
+    let cell_fmt = materialize_cell_layer_format(cell_properties);
+    merge_formats(&after_table, &cell_fmt)
 }
 
 /// Positional format for cells with no cell_id:
@@ -110,7 +113,7 @@ pub fn get_positional_format(
 ) -> CellFormat {
     let base = workbook_base_format(storage);
 
-    let after_col_range = apply_col_format_range_layer(&base, col, sheet_mirror);
+    let after_col_range = apply_col_format_range_layer(&base, col, sheet_mirror, true);
 
     let col_fmt = get_col_format(storage, sheet_id, col, grid_index).unwrap_or_default();
     let after_col = merge_formats(&after_col_range, &col_fmt);
@@ -147,6 +150,38 @@ fn workbook_normal_format(storage: &YrsStorage) -> Option<CellFormat> {
     }
 }
 
+fn materialize_cell_layer_format(cell_properties: Option<&CellProperties>) -> CellFormat {
+    let Some(props) = cell_properties else {
+        return CellFormat::default();
+    };
+
+    let mut format = props.format.clone().unwrap_or_default();
+    if props.style_id.is_some() {
+        materialize_imported_cell_xf_defaults(&mut format);
+    }
+    format
+}
+
+fn materialize_imported_cell_xf_defaults(format: &mut CellFormat) {
+    format
+        .number_format
+        .get_or_insert_with(|| "General".to_string());
+    format
+        .horizontal_align
+        .get_or_insert(HorizontalAlign::General);
+    format
+        .vertical_align
+        .get_or_insert(CellVerticalAlign::Bottom);
+    format.wrap_text.get_or_insert(false);
+    format.indent.get_or_insert(0);
+    format.text_rotation.get_or_insert(0);
+    format.shrink_to_fit.get_or_insert(false);
+    format
+        .reading_order
+        .get_or_insert_with(|| "context".to_string());
+    format.auto_indent.get_or_insert(false);
+}
+
 // -------------------------------------------------------------------
 // Column Format Range Layer Helper
 // -------------------------------------------------------------------
@@ -155,6 +190,7 @@ fn apply_col_format_range_layer(
     base: &CellFormat,
     col: u32,
     sheet_mirror: Option<&SheetMirror>,
+    include_imported_xlsx_ranges: bool,
 ) -> CellFormat {
     let mirror = match sheet_mirror {
         Some(m) => m,
@@ -167,7 +203,14 @@ fn apply_col_format_range_layer(
     }
 
     let mut range_fmt = CellFormat::default();
-    for (_id, fmt) in &matching {
+    for (id, fmt) in &matching {
+        // Excel treats imported `<col style>` defaults as positional defaults
+        // for empty cells; populated cells keep workbook Normal unless another
+        // cell/row/user-authored column layer applies.
+        if !include_imported_xlsx_ranges && mirror.col_range_xlsx_style_id_cache().contains_key(id)
+        {
+            continue;
+        }
         range_fmt = merge_formats(&range_fmt, fmt);
     }
     merge_formats(base, &range_fmt)

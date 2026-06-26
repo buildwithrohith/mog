@@ -215,10 +215,21 @@ describe('WorksheetChartsImpl mutation receipts', () => {
         kind: 'chart.axis.setTitle',
         status: 'applied',
         axisType: 'value',
+        title: '=A1',
       }),
     );
-    expect(axisReceipt.effects).toEqual(
-      expect.arrayContaining([expect.objectContaining({ type: 'changedRange', range: 'A1' })]),
+    expect(axisReceipt.effects).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: 'changedRange' })]),
+    );
+    expect(updateChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      'chart-1',
+      expect.objectContaining({
+        axis: expect.objectContaining({
+          valueAxis: expect.objectContaining({ title: '=A1' }),
+        }),
+      }),
+      expect.any(Object),
     );
 
     const labelReceipt = await charts.setDataLabelHeight('chart-1', 0, 0, 18);
@@ -242,6 +253,258 @@ describe('WorksheetChartsImpl mutation receipts', () => {
       }),
     );
     expect(updateChart).not.toHaveBeenCalled();
+  });
+
+  it('returns app-model receipts for semantic chart element mutations', async () => {
+    const { charts, updateChart } = createMutableChartsApi(
+      makeChart({
+        chartType: 'line',
+        dataRange: 'A1:B4',
+        title: 'Revenue',
+        legend: { show: true, visible: true, position: 'bottom' },
+        axis: {
+          categoryAxis: { visible: true, title: 'Quarter' },
+          secondaryValueAxis: { visible: true, title: 'Margin' },
+        },
+      }),
+    );
+
+    const appModel = await charts.getAppModel('chart-1');
+    expect(appModel).toEqual(
+      expect.objectContaining({
+        title: expect.objectContaining({ text: 'Revenue', visible: true }),
+        legend: expect.objectContaining({ visible: true, position: 'bottom' }),
+        axes: expect.objectContaining({
+          category: expect.objectContaining({
+            applicable: true,
+            visible: true,
+            title: 'Quarter',
+          }),
+          secondaryValue: expect.objectContaining({
+            applicable: true,
+            visible: true,
+            title: 'Margin',
+          }),
+        }),
+        source: expect.objectContaining({ kind: 'range', supportsOrientationSwitch: true }),
+      }),
+    );
+
+    const legendReceipt = await charts.setLegendVisible('chart-1', false);
+    expect(legendReceipt).toEqual(
+      expect.objectContaining({
+        kind: 'chart.legend.setVisible',
+        status: 'applied',
+        visible: false,
+        appModelBefore: expect.objectContaining({
+          legend: expect.objectContaining({ visible: true }),
+        }),
+        appModelAfter: expect.objectContaining({
+          legend: expect.objectContaining({ visible: false }),
+        }),
+      }),
+    );
+    expect(legendReceipt.effects[0]?.details).not.toHaveProperty('appModelBefore');
+    expect(legendReceipt.effects[0]?.details).not.toHaveProperty('appModelAfter');
+
+    const axisReceipt = await charts.setAxisTitle('chart-1', 'category', 'Month');
+    expect(axisReceipt).toEqual(
+      expect.objectContaining({
+        kind: 'chart.axis.setTitle',
+        status: 'applied',
+        axisRole: 'category',
+        axisType: 'category',
+        title: 'Month',
+      }),
+    );
+    expect(axisReceipt.effects).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: 'changedRange' })]),
+    );
+    expect(updateChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      'chart-1',
+      expect.objectContaining({
+        axis: expect.objectContaining({
+          categoryAxis: expect.objectContaining({ title: 'Month', titleVisible: true }),
+        }),
+      }),
+      expect.any(Object),
+    );
+
+    const axisVisibleReceipt = await charts.setAxisVisible('chart-1', 'secondaryValue', false);
+    expect(axisVisibleReceipt).toEqual(
+      expect.objectContaining({
+        kind: 'chart.axis.setVisible',
+        status: 'applied',
+        axisRole: 'secondaryValue',
+        axisType: 'value',
+        visible: false,
+      }),
+    );
+    expect(updateChart).toHaveBeenLastCalledWith(
+      SHEET_ID,
+      'chart-1',
+      expect.objectContaining({
+        axis: expect.objectContaining({
+          secondaryValueAxis: expect.objectContaining({ visible: false }),
+        }),
+      }),
+      expect.any(Object),
+    );
+
+    const hiddenTitleReceipt = await charts.setChartTitleVisible('chart-1', false);
+    expect(hiddenTitleReceipt).toEqual(
+      expect.objectContaining({
+        kind: 'chart.title.setVisible',
+        status: 'applied',
+        visible: false,
+        appModelAfter: expect.objectContaining({
+          title: expect.objectContaining({ visible: false }),
+        }),
+      }),
+    );
+
+    const pieCase = createMutableChartsApi(
+      makeChart({
+        chartType: 'pie',
+        dataRange: 'A1:B4',
+      }),
+    );
+    const pieAppModel = await pieCase.charts.getAppModel('chart-1');
+    expect(pieAppModel?.axes.category).toEqual(
+      expect.objectContaining({
+        applicable: false,
+        visible: false,
+        source: 'absent',
+      }),
+    );
+    expect(pieAppModel?.axes.value).toEqual(
+      expect.objectContaining({
+        applicable: false,
+        visible: false,
+        source: 'absent',
+      }),
+    );
+  });
+
+  it('switches range source orientation and reports unsupported explicit-series sources', async () => {
+    const rangeCase = createMutableChartsApi(
+      makeChart({
+        chartType: 'column',
+        dataRange: 'A1:B4',
+        seriesOrientation: 'columns',
+      }),
+    );
+
+    const switched = await rangeCase.charts.switchSeriesOrientation('chart-1');
+    expect(switched).toEqual(
+      expect.objectContaining({
+        kind: 'chart.source.switchSeriesOrientation',
+        status: 'applied',
+        sourceBindingChange: expect.objectContaining({
+          renderedGroupingChanged: true,
+          explicitSeriesAction: 'notApplicable',
+        }),
+      }),
+    );
+    expect(rangeCase.updateChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      'chart-1',
+      expect.objectContaining({ seriesOrientation: 'rows' }),
+      expect.any(Object),
+    );
+
+    const explicitCase = createMutableChartsApi(
+      makeChart({
+        chartType: 'column',
+        dataRange: 'A1:B4',
+        seriesOrientation: 'columns',
+        series: [{ name: 'Revenue', values: 'B1:B4' }],
+      }),
+    );
+
+    const switchedExplicitRange = await explicitCase.charts.switchSeriesOrientation('chart-1');
+    expect(switchedExplicitRange).toEqual(
+      expect.objectContaining({
+        kind: 'chart.source.switchSeriesOrientation',
+        status: 'applied',
+        sourceBindingChange: expect.objectContaining({
+          renderedGroupingChanged: true,
+          explicitSeriesAction: 'cleared',
+        }),
+      }),
+    );
+    expect(explicitCase.updateChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      'chart-1',
+      expect.objectContaining({ seriesOrientation: 'rows', series: [] }),
+      expect.any(Object),
+    );
+
+    const standaloneExplicitCase = createMutableChartsApi(
+      makeChart({
+        chartType: 'column',
+        seriesOrientation: 'columns',
+        series: [{ name: 'Revenue', values: 'B1:B4' }],
+      }),
+    );
+
+    const unsupported = await standaloneExplicitCase.charts.switchSeriesOrientation('chart-1');
+    expect(unsupported).toEqual(
+      expect.objectContaining({
+        kind: 'chart.source.switchSeriesOrientation',
+        status: 'unsupported',
+        sourceBindingChange: expect.objectContaining({
+          renderedGroupingChanged: false,
+          explicitSeriesAction: 'preserved',
+        }),
+      }),
+    );
+    expect(standaloneExplicitCase.updateChart).not.toHaveBeenCalled();
+
+    const invalidRangeCase = createMutableChartsApi(
+      makeChart({
+        chartType: 'column',
+        dataRange: 'not a range',
+      }),
+    );
+    const invalidRange = await invalidRangeCase.charts.switchSeriesOrientation('chart-1');
+    expect(invalidRange).toEqual(
+      expect.objectContaining({
+        kind: 'chart.source.switchSeriesOrientation',
+        status: 'unsupported',
+        sourceBindingBefore: expect.objectContaining({
+          kind: 'unsupported',
+          diagnostics: ['chart-data-range-is-not-parseable'],
+        }),
+      }),
+    );
+    expect(invalidRangeCase.updateChart).not.toHaveBeenCalled();
+
+    const metadataCase = createMutableChartsApi(
+      makeChart({
+        chartType: 'column',
+        dataRange: 'A1:B4',
+        seriesOrientation: 'columns',
+        series: [{ name: 'Metadata only' }],
+      }),
+    );
+    const metadataSwitch = await metadataCase.charts.switchSeriesOrientation('chart-1');
+    expect(metadataSwitch).toEqual(
+      expect.objectContaining({
+        status: 'applied',
+        sourceBindingChange: expect.objectContaining({
+          renderedGroupingChanged: true,
+          explicitSeriesAction: 'preserved',
+        }),
+      }),
+    );
+    expect(metadataCase.updateChart).toHaveBeenCalledWith(
+      SHEET_ID,
+      'chart-1',
+      expect.objectContaining({ seriesOrientation: 'rows' }),
+      expect.any(Object),
+    );
   });
 
   it('returns failed receipts for inferred dataRange series hidden by explicit series', async () => {

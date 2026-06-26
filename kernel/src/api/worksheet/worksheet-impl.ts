@@ -106,13 +106,16 @@ import { KernelError, toMogSdkError } from '../../errors';
 import type { RangeCellData } from '../../bridges/compute/compute-types.gen';
 import { CellMetadataCache, createCellMetadataCache } from '../../bridges/wire/cell-metadata-cache';
 import type { DocumentContext } from '../../context';
-import { getCurrentRegion as getCurrentRegionDomain } from '../../domain/cells/cell-iteration';
 import * as CellReads from '../../domain/cells/cell-reads';
 import type { SpreadsheetObjectManager } from '../../floating-objects';
 import { ERROR_DISPLAY_MAP, isCellError } from '@mog/spreadsheet-utils/errors';
 import { resolveCell, resolveRange, resolveRangeToA1 } from '../internal/address-resolver';
 import { parseCellAddress, parseCellRange, toA1 } from '../internal/utils';
 import { classifyRangeValueType, normalizeCellValue } from '../internal/value-conversions';
+import {
+  createVersionMutationAdmissionOptions,
+  createVersionOperationContext,
+} from '../workbook/version-operation-context';
 import { renameSheet } from '../workbook/operations/sheet-crud-operations';
 import { calendarPartsInTz, parseIsoDate } from './operations/calendar-tz';
 import * as CellOps from './operations/cell-operations';
@@ -199,7 +202,6 @@ import {
   normalizeFormulaA1,
   normalizeFormulaExpression,
   normalizeFormulaGrid,
-  shouldEscapeAsLiteralText,
   type ExplicitTextWriteOptions,
   type FormulaCellWriteOptions,
   type NormalizedSetCellsEntry,
@@ -453,7 +455,13 @@ export class WorksheetImpl implements Worksheet {
     this._assertLive('worksheet.setName');
     this._ensureWritable('worksheet.setName');
     this._invalidateActiveCellEditSourceForSheet(this.sheetId);
-    await renameSheet(this.ctx, this.sheetId, name);
+    await renameSheet(this.ctx, this.sheetId, name, {
+      operationContext: createVersionOperationContext(this.ctx, {
+        operationIdPrefix: 'worksheet.setName',
+        sheetIds: [this.sheetId],
+        domainIds: ['sheets'],
+      }),
+    });
     this._cachedName = name;
     // Sync workbook-level cached sheet metadata so wb.sheetNames reflects the rename
     await (this.workbook as WorkbookInternal | null)?.refreshSheetMetadata();
@@ -764,12 +772,9 @@ export class WorksheetImpl implements Worksheet {
       return;
     }
 
-    // Prefix formula-shaped text with apostrophe to force literal storage.
-    if (
-      isExplicitTextWrite(options) &&
-      typeof value === 'string' &&
-      shouldEscapeAsLiteralText(value)
-    ) {
+    // Prefix explicit text writes with Excel's literal marker so parsing never
+    // coerces numeric-looking IDs, dates, or formula-shaped strings.
+    if (isExplicitTextWrite(options) && typeof value === 'string') {
       value = "'" + value;
     }
 
@@ -779,7 +784,18 @@ export class WorksheetImpl implements Worksheet {
     }
 
     this._invalidateActiveCellEditSourceForCell(row, col);
-    await CellOps.setCell(this.ctx, this.sheetId, row, col, value as CellValuePrimitive);
+    await CellOps.setCell(
+      this.ctx,
+      this.sheetId,
+      row,
+      col,
+      value as CellValuePrimitive,
+      createVersionMutationAdmissionOptions(this.ctx, {
+        operationIdPrefix: 'worksheet.setCell',
+        sheetIds: [this.sheetId],
+        domainIds: ['cells'],
+      }),
+    );
   }
 
   async setValue(
@@ -806,16 +822,18 @@ export class WorksheetImpl implements Worksheet {
       return;
     }
 
-    if (
-      isExplicitTextWrite(options) &&
-      typeof value === 'string' &&
-      shouldEscapeAsLiteralText(value)
-    ) {
+    if (isExplicitTextWrite(options) && typeof value === 'string') {
       value = "'" + value;
     }
 
     this._invalidateActiveCellEditSourceForCell(row, col);
-    await CellOps.setCell(this.ctx, this.sheetId, row, col, value as CellValuePrimitive);
+    await CellOps.setCell(this.ctx, this.sheetId, row, col, value as CellValuePrimitive, {
+      operationContext: createVersionOperationContext(this.ctx, {
+        operationIdPrefix: 'worksheet.setValue',
+        sheetIds: [this.sheetId],
+        domainIds: ['cells'],
+      }),
+    });
   }
 
   async setFormula(address: string, formula: string): Promise<void>;
@@ -828,7 +846,13 @@ export class WorksheetImpl implements Worksheet {
 
     await this.ensureCellEditable(row, col);
     this._invalidateActiveCellEditSourceForCell(row, col);
-    await CellOps.setCell(this.ctx, this.sheetId, row, col, formula);
+    await CellOps.setCell(this.ctx, this.sheetId, row, col, formula, {
+      operationContext: createVersionOperationContext(this.ctx, {
+        operationIdPrefix: 'worksheet.setFormula',
+        sheetIds: [this.sheetId],
+        domainIds: ['cells'],
+      }),
+    });
   }
 
   async setFormulas(range: string, formulas: string[][]): Promise<void>;
@@ -879,7 +903,13 @@ export class WorksheetImpl implements Worksheet {
       endRow: startRow + values.length - 1,
       endCol: startCol + (values[0]?.length ?? 1) - 1,
     });
-    await RangeOps.setRange(this.ctx, this.sheetId, startRow, startCol, values);
+    await RangeOps.setRange(this.ctx, this.sheetId, startRow, startCol, values, {
+      operationContext: createVersionOperationContext(this.ctx, {
+        operationIdPrefix: 'worksheet.setFormulas',
+        sheetIds: [this.sheetId],
+        domainIds: ['cells'],
+      }),
+    });
   }
 
   /**
@@ -920,7 +950,20 @@ export class WorksheetImpl implements Worksheet {
     const { row, col, year, month, day } = this.resolveDateArgs(a, b, c, d, e);
     await this.ensureCellEditable(row, col);
     this._invalidateActiveCellEditSourceForCell(row, col);
-    await CellOps.setDateValue(this.ctx, this.sheetId, row, col, { year, month, day });
+    await CellOps.setDateValue(
+      this.ctx,
+      this.sheetId,
+      row,
+      col,
+      { year, month, day },
+      {
+        operationContext: createVersionOperationContext(this.ctx, {
+          operationIdPrefix: 'worksheet.setDateValue',
+          sheetIds: [this.sheetId],
+          domainIds: ['cells'],
+        }),
+      },
+    );
   }
 
   /**
@@ -955,7 +998,20 @@ export class WorksheetImpl implements Worksheet {
     const { row, col, hours, minutes, seconds } = this.resolveTimeArgs(a, b, c, d, e);
     await this.ensureCellEditable(row, col);
     this._invalidateActiveCellEditSourceForCell(row, col);
-    await CellOps.setTimeValue(this.ctx, this.sheetId, row, col, { hours, minutes, seconds });
+    await CellOps.setTimeValue(
+      this.ctx,
+      this.sheetId,
+      row,
+      col,
+      { hours, minutes, seconds },
+      {
+        operationContext: createVersionOperationContext(this.ctx, {
+          operationIdPrefix: 'worksheet.setTimeValue',
+          sheetIds: [this.sheetId],
+          domainIds: ['cells'],
+        }),
+      },
+    );
   }
 
   /**
@@ -1296,7 +1352,18 @@ export class WorksheetImpl implements Worksheet {
       endRow: startRow + values.length - 1,
       endCol: startCol + (values[0]?.length ?? 1) - 1,
     });
-    await RangeOps.setRange(this.ctx, this.sheetId, startRow, startCol, values);
+    await RangeOps.setRange(
+      this.ctx,
+      this.sheetId,
+      startRow,
+      startCol,
+      values,
+      createVersionMutationAdmissionOptions(this.ctx, {
+        operationIdPrefix: 'worksheet.setRange',
+        sheetIds: [this.sheetId],
+        domainIds: ['cells'],
+      }),
+    );
   }
 
   /**
@@ -1403,13 +1470,24 @@ export class WorksheetImpl implements Worksheet {
     const bounds = resolveRange(a, b, c, d);
     await this.ensureRangeEditable(bounds.startRow, bounds.startCol, bounds.endRow, bounds.endCol);
     this._invalidateActiveCellEditSourceForRange(bounds);
-    return RangeOps.clearRange(this.ctx, this.sheetId, {
-      sheetId: this.sheetId,
-      startRow: bounds.startRow,
-      startCol: bounds.startCol,
-      endRow: bounds.endRow,
-      endCol: bounds.endCol,
-    });
+    return RangeOps.clearRange(
+      this.ctx,
+      this.sheetId,
+      {
+        sheetId: this.sheetId,
+        startRow: bounds.startRow,
+        startCol: bounds.startCol,
+        endRow: bounds.endRow,
+        endCol: bounds.endCol,
+      },
+      {
+        operationContext: createVersionOperationContext(this.ctx, {
+          operationIdPrefix: 'worksheet.clearData',
+          sheetIds: [this.sheetId],
+          domainIds: ['cells'],
+        }),
+      },
+    );
   }
 
   async clear(range: string | CellRange, applyTo?: ClearApplyTo): Promise<ClearResult> {
@@ -1431,6 +1509,13 @@ export class WorksheetImpl implements Worksheet {
       this.sheetId,
       { sheetId: this.sheetId, ...bounds },
       clearMode,
+      {
+        operationContext: createVersionOperationContext(this.ctx, {
+          operationIdPrefix: 'worksheet.clear',
+          sheetIds: [this.sheetId],
+          domainIds: ['cells'],
+        }),
+      },
     );
   }
 
@@ -1902,7 +1987,8 @@ export class WorksheetImpl implements Worksheet {
   }
 
   async getCurrentRegion(row: number, col: number): Promise<WorksheetRange> {
-    return toWorksheetRange(await getCurrentRegionDomain(this.ctx, this.sheetId, row, col));
+    const region = await this.ctx.computeBridge.getCurrentRegion(toSheetId(this.sheetId), row, col);
+    return toWorksheetRange(region);
   }
 
   async findDataEdge(
@@ -2039,6 +2125,13 @@ export class WorksheetImpl implements Worksheet {
         caseSensitive: options?.matchCase,
         wholeCell: options?.entireCell,
         includeFormulas: options?.searchFormulas,
+      },
+      {
+        operationContext: createVersionOperationContext(this.ctx, {
+          operationIdPrefix: 'worksheet.replaceAll',
+          sheetIds: [this.sheetId],
+          domainIds: ['cells'],
+        }),
       },
     );
   }
@@ -2479,7 +2572,16 @@ export class WorksheetImpl implements Worksheet {
         addrStr !== undefined ? resolveCell(addrStr) : (cell as { row: number; col: number });
       this._invalidateActiveCellEditSourceForCell(row, col);
     }
-    return CellOps.setCells(this.ctx, this.sheetId, normalizedCells);
+    return CellOps.setCells(
+      this.ctx,
+      this.sheetId,
+      normalizedCells,
+      createVersionMutationAdmissionOptions(this.ctx, {
+        operationIdPrefix: 'worksheet.setCells',
+        sheetIds: [this.sheetId],
+        domainIds: ['cells'],
+      }),
+    );
   }
 
   private normalizeSetCellsEntries(cells: SetCellsEntry[]): NormalizedSetCellsEntry[] {
@@ -3112,7 +3214,12 @@ export class WorksheetImpl implements Worksheet {
   private _validation?: WorksheetValidationImpl;
 
   get validations(): WorksheetValidation {
-    return (this._validation ??= new WorksheetValidationImpl(this.ctx, this.sheetId));
+    this._assertLive('worksheet.validations');
+    return (this._validation ??= new WorksheetValidationImpl(
+      this.ctx,
+      this.sheetId,
+      this._liveness,
+    ));
   }
 
   private _tables?: WorksheetTablesImpl;

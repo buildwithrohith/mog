@@ -1,0 +1,15 @@
+export type VersionGraphStoreOperation =
+  | 'initializeGraph'
+  | 'commit'
+  | 'mergeCommit'
+  | 'fastForwardRef'
+  | 'putObjects'
+  | 'createBranch'
+  | 'readBranch'
+  | 'listBranches'
+  | 'fastForwardBranch'
+  | 'getHead'
+  | 'readCommitClosure'
+  | 'readHead'
+  | 'readRef'
+  | 'listCommits';

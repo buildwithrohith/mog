@@ -19,48 +19,30 @@
 import type { ReactNode } from 'react';
 import React from 'react';
 
-import { Tooltip } from '@mog/shell';
 import type { GroupCollapseConfig, GroupRenderMode } from '@mog-sdk/contracts/ribbon';
 import { GroupRenderModeProvider, useRibbonCollapseLevel } from '../collapse';
 import {
   RibbonVisibilityGroup,
-  RibbonVisibilityItem,
   useRibbonGroupVisibility,
 } from '../visibility/RibbonVisibilityContext';
 import { CollapsedGroupDropdown } from './CollapsedGroupDropdown';
 
 // =============================================================================
-// Dialog Launcher Icon
-// =============================================================================
-
-/**
- * Small diagonal arrow icon for dialog launcher.
- * Matches Excel's visual style - subtle, small (10x10).
- * Points to bottom-right to indicate "more options".
- */
-function DialogLauncherIcon() {
-  return (
-    <svg
-      width="10"
-      height="10"
-      viewBox="0 0 10 10"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.25"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {/* Diagonal arrow pointing to bottom-right corner */}
-      <path d="M3 3L7 7" />
-      <path d="M7 4V7H4" />
-    </svg>
-  );
-}
-
-// =============================================================================
 // Types
 // =============================================================================
+
+export interface ToolbarGroupDialogLauncher {
+  /** Accessible label for the launcher button; use the dialog command name. */
+  ariaLabel: string;
+  /** Click handler that opens the associated dialog. */
+  onClick: () => void;
+  /** Optional DOM id for stable command resolution. */
+  id?: string;
+  /** Optional test id for stable command resolution. */
+  testId?: string;
+  /** Optional tooltip/title text. Defaults to ariaLabel. */
+  title?: string;
+}
 
 export interface ToolbarGroupProps {
   /** Label displayed below the group content */
@@ -69,17 +51,6 @@ export interface ToolbarGroupProps {
   isLast?: boolean;
   /** Group content - rendered when not collapsed to dropdown */
   children: ReactNode;
-  /**
-   * Optional callback when dialog launcher is clicked.
-   * When provided, renders a small diagonal arrow icon in the bottom-right
-   * corner that opens a related dialog (Excel-style dialog launcher).
-   */
-  onDialogLaunch?: () => void;
-  /**
-   * Tooltip text for the dialog launcher icon.
-   * Defaults to "{label} Settings" if not provided.
-   */
-  dialogLaunchTitle?: string;
 
   // === Collapse configuration (NEW) ===
 
@@ -104,18 +75,19 @@ export interface ToolbarGroupProps {
   dropdownContent?: ReactNode;
   /** Optional typed ribbon visibility key. Defaults to a normalized label. */
   visibilityKey?: string;
+  /** Optional Excel-style group launcher that opens the group's detailed dialog. */
+  dialogLauncher?: ToolbarGroupDialogLauncher;
 }
 
 export const ToolbarGroup = React.memo(function ToolbarGroup({
   label,
   isLast = false,
   children,
-  onDialogLaunch,
-  dialogLaunchTitle,
   collapseConfig,
   dropdownIcon,
   dropdownContent,
   visibilityKey,
+  dialogLauncher,
 }: ToolbarGroupProps) {
   const groupVisibility = useRibbonGroupVisibility(label, visibilityKey);
   // Get current collapse level from context (provided by TabbedToolbar)
@@ -139,62 +111,30 @@ export const ToolbarGroup = React.memo(function ToolbarGroup({
     return (
       <RibbonVisibilityGroup group={groupVisibility.groupKey}>
         <CollapsedGroupDropdown label={label} icon={dropdownIcon} isLast={isLast}>
+          {dialogLauncher && (
+            <div className="mb-2 flex justify-end border-b border-ss-border pb-2">
+              <DialogLauncherButton launcher={dialogLauncher} placement="dropdown" />
+            </div>
+          )}
           {dropdownContent ?? children}
         </CollapsedGroupDropdown>
       </RibbonVisibilityGroup>
     );
   }
 
-  // Full/Compact/Icons mode - render normal group with mode context
-  // Default tooltip title if not provided
-  const launchTitle = dialogLaunchTitle ?? `${label} Settings`;
-
   return (
     <RibbonVisibilityGroup group={groupVisibility.groupKey}>
       <GroupRenderModeProvider value={renderMode}>
-        <div className="relative flex flex-col px-[var(--ribbon-group-padding-x)] group/toolbar-group">
+        <div
+          className="relative flex px-[var(--ribbon-group-padding-x)] group/toolbar-group"
+          role="group"
+          aria-label={label}
+        >
           {/* Content area - fixed height from design token */}
           <div className="flex items-center justify-center gap-[var(--ribbon-group-items-gap)] h-[var(--ribbon-content-height)]">
             {children}
           </div>
-          {/* Label area - fixed height from design token */}
-          {/* Excel uses UPPERCASE group labels */}
-          {/* Position relative to allow dialog launcher positioning */}
-          <div
-            className="relative flex items-center justify-center h-[var(--ribbon-label-height)] text-ribbon-group leading-none text-ss-text-tertiary whitespace-nowrap uppercase"
-            style={{ letterSpacing: 'var(--ribbon-group-label-letter-spacing)' }}
-          >
-            <span className="sr-only"> </span>
-            {label}
-            {/* Dialog Launcher - Excel-style small arrow in bottom-right corner */}
-            {/* Only rendered when onDialogLaunch is provided */}
-            {onDialogLaunch && (
-              <RibbonVisibilityItem item="dialogLauncher">
-                <Tooltip title={launchTitle}>
-                  <button
-                    type="button"
-                    onClick={onDialogLaunch}
-                    className="
- absolute right-0 bottom-0
- w-3 h-3
- flex items-center justify-center
- text-ss-text-tertiary
- opacity-50 group-hover/toolbar-group:opacity-100
- hover:!opacity-100 hover:text-ss-primary
- transition-opacity duration-ss-fast
- cursor-pointer
- bg-transparent border-none outline-none
- rounded-ss-sm
- focus-visible:ring-1 focus-visible:ring-ss-primary focus-visible:opacity-100
- "
-                    aria-label={launchTitle}
-                  >
-                    <DialogLauncherIcon />
-                  </button>
-                </Tooltip>
-              </RibbonVisibilityItem>
-            )}
-          </div>
+          {dialogLauncher && <DialogLauncherButton launcher={dialogLauncher} placement="group" />}
           {/* E2: Gradient fade separator - softer than solid border */}
           {/* Extended fade region (10%-90%) for more visible separator while keeping soft edges */}
           {!isLast && (
@@ -211,3 +151,51 @@ export const ToolbarGroup = React.memo(function ToolbarGroup({
     </RibbonVisibilityGroup>
   );
 });
+
+function DialogLauncherButton({
+  launcher,
+  placement,
+}: {
+  launcher: ToolbarGroupDialogLauncher;
+  placement: 'group' | 'dropdown';
+}) {
+  const placementClass =
+    placement === 'group' ? 'absolute bottom-0.5 right-1 h-3.5 w-3.5' : 'h-5 w-5';
+  const className = [
+    'flex items-center justify-center rounded-sm text-ss-text-tertiary',
+    'transition-colors duration-ss-fast',
+    'hover:bg-ss-surface-hover hover:text-ss-text-primary',
+    'focus-visible:ring-1 focus-visible:ring-ss-primary focus-visible:ring-offset-1',
+    placementClass,
+  ].join(' ');
+
+  return (
+    <button
+      type="button"
+      id={launcher.id}
+      data-testid={launcher.testId}
+      className={className}
+      aria-label={launcher.ariaLabel}
+      title={launcher.title ?? launcher.ariaLabel}
+      onClick={(event) => {
+        event.stopPropagation();
+        launcher.onClick();
+      }}
+    >
+      <svg
+        width="8"
+        height="8"
+        viewBox="0 0 8 8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M2 1.5h4.5V6" />
+        <path d="M6.5 1.5 1.5 6.5" />
+      </svg>
+    </button>
+  );
+}

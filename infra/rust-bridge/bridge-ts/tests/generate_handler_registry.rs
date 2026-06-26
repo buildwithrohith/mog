@@ -30,6 +30,7 @@ fn service_module_map() -> Vec<(String, String)> {
         ("ChartBridge".into(), "commands::compute".into()),
         ("CfBridge".into(), "commands::compute".into()),
         ("ClockBridge".into(), "commands::compute".into()),
+        ("VersioningBridge".into(), "commands::compute".into()),
         // Stateless pivot bridge — in pivot.rs
         ("PivotBridge".into(), "commands::pivot".into()),
         // Stateless XLSX parser — in xlsx.rs

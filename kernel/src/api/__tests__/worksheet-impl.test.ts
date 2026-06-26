@@ -103,6 +103,7 @@ jest.unstable_mockModule('../worksheet/operations/range-query-operations', () =>
     }
     return { cellCount: (endRow - startRow + 1) * (endCol - startCol + 1) };
   }),
+  replaceAll: jest.fn(),
 }));
 jest.unstable_mockModule('../worksheet/operations/format-operations', () => ({
   setFormat: jest.fn(),
@@ -247,6 +248,22 @@ const Merges = await import('../../domain/formatting/merges');
 
 const SHEET_ID = sheetId('sheet-1');
 
+function expectVersionOperationOptions(operationIdPrefix: string, domainIds: readonly string[]) {
+  return expect.objectContaining({
+    operationContext: expect.objectContaining({
+      operationId: expect.stringMatching(
+        new RegExp(`^${operationIdPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:`),
+      ),
+      kind: 'mutation',
+      author: expect.objectContaining({ actorKind: 'user' }),
+      sheetIds: [SHEET_ID],
+      domainIds,
+      capturePolicy: 'commitEligible',
+      writeAdmissionMode: 'capture',
+    }),
+  });
+}
+
 function createMockCtx(): any {
   return {
     __apiTestNamedRanges: [],
@@ -326,6 +343,12 @@ function createMockCtx(): any {
       getProjectionSource: jest.fn().mockResolvedValue(null),
       isProjectedPosition: jest.fn().mockResolvedValue(false),
       queryRange: jest.fn().mockResolvedValue({ cells: [], merges: [] }),
+      getCurrentRegion: jest.fn().mockResolvedValue({
+        startRow: 0,
+        startCol: 0,
+        endRow: 0,
+        endCol: 0,
+      }),
       getResolvedFormat: jest.fn().mockResolvedValue({}),
       addComment: jest.fn().mockResolvedValue(undefined),
       addCommentByPosition: jest.fn().mockResolvedValue(undefined),
@@ -468,7 +491,14 @@ describe('WorksheetImpl', () => {
 
       await ws.setCell('A1', 'hello');
 
-      expect(CellOps.setCell).toHaveBeenCalledWith(ctx, SHEET_ID, 0, 0, 'hello');
+      expect(CellOps.setCell).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        0,
+        0,
+        'hello',
+        expectVersionOperationOptions('worksheet.setCell', ['cells']),
+      );
     });
 
     it('setCell("B3", 42) resolves to (2, 1) and delegates to CellOps.setCell', async () => {
@@ -476,7 +506,14 @@ describe('WorksheetImpl', () => {
 
       await ws.setCell('B3', 42);
 
-      expect(CellOps.setCell).toHaveBeenCalledWith(ctx, SHEET_ID, 2, 1, 42);
+      expect(CellOps.setCell).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        2,
+        1,
+        42,
+        expectVersionOperationOptions('worksheet.setCell', ['cells']),
+      );
     });
 
     it('setCell("A1", value, { asFormula: true }) prepends = to non-formula string', async () => {
@@ -484,7 +521,14 @@ describe('WorksheetImpl', () => {
 
       await ws.setCell('A1', 'SUM(A1:A10)', { asFormula: true });
 
-      expect(CellOps.setCell).toHaveBeenCalledWith(ctx, SHEET_ID, 0, 0, '=SUM(A1:A10)');
+      expect(CellOps.setCell).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        0,
+        0,
+        '=SUM(A1:A10)',
+        expectVersionOperationOptions('worksheet.setCell', ['cells']),
+      );
     });
 
     it('setCell("A1", "=SUM(A1:A10)", { asFormula: true }) does not double-prepend =', async () => {
@@ -492,7 +536,14 @@ describe('WorksheetImpl', () => {
 
       await ws.setCell('A1', '=SUM(A1:A10)', { asFormula: true });
 
-      expect(CellOps.setCell).toHaveBeenCalledWith(ctx, SHEET_ID, 0, 0, '=SUM(A1:A10)');
+      expect(CellOps.setCell).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        0,
+        0,
+        '=SUM(A1:A10)',
+        expectVersionOperationOptions('worksheet.setCell', ['cells']),
+      );
     });
 
     it('setCell throws KernelError when operation fails', async () => {
@@ -549,7 +600,14 @@ describe('WorksheetImpl', () => {
 
       await ws.setCell(0, 0, 'hello');
 
-      expect(CellOps.setCell).toHaveBeenCalledWith(ctx, SHEET_ID, 0, 0, 'hello');
+      expect(CellOps.setCell).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        0,
+        0,
+        'hello',
+        expectVersionOperationOptions('worksheet.setCell', ['cells']),
+      );
     });
 
     it('setCell(5, 3, 100) passes correct row/col', async () => {
@@ -557,7 +615,14 @@ describe('WorksheetImpl', () => {
 
       await ws.setCell(5, 3, 100);
 
-      expect(CellOps.setCell).toHaveBeenCalledWith(ctx, SHEET_ID, 5, 3, 100);
+      expect(CellOps.setCell).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        5,
+        3,
+        100,
+        expectVersionOperationOptions('worksheet.setCell', ['cells']),
+      );
     });
 
     it('setCell(0, 0, value, { asFormula: true }) prepends =', async () => {
@@ -565,7 +630,14 @@ describe('WorksheetImpl', () => {
 
       await ws.setCell(0, 0, 'A1+B1', { asFormula: true });
 
-      expect(CellOps.setCell).toHaveBeenCalledWith(ctx, SHEET_ID, 0, 0, '=A1+B1');
+      expect(CellOps.setCell).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        0,
+        0,
+        '=A1+B1',
+        expectVersionOperationOptions('worksheet.setCell', ['cells']),
+      );
     });
 
     it('getCell(0, 0) uses numeric path', async () => {
@@ -601,11 +673,18 @@ describe('WorksheetImpl', () => {
       const date = new Date(2024, 0, 15); // Jan 15, 2024
       await ws.setDateValue(0, 0, date);
 
-      expect(CellOps.setDateValue).toHaveBeenCalledWith(ctx, SHEET_ID, 0, 0, {
-        year: 2024,
-        month: 1,
-        day: 15,
-      });
+      expect(CellOps.setDateValue).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        0,
+        0,
+        {
+          year: 2024,
+          month: 1,
+          day: 15,
+        },
+        expectVersionOperationOptions('worksheet.setDateValue', ['cells']),
+      );
     });
 
     it('setTimeValue delegates to CellOps.setTimeValue with hours/minutes/seconds', async () => {
@@ -614,11 +693,18 @@ describe('WorksheetImpl', () => {
       const date = new Date(2024, 0, 1, 14, 30, 45);
       await ws.setTimeValue(0, 0, date);
 
-      expect(CellOps.setTimeValue).toHaveBeenCalledWith(ctx, SHEET_ID, 0, 0, {
-        hours: 14,
-        minutes: 30,
-        seconds: 45,
-      });
+      expect(CellOps.setTimeValue).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        0,
+        0,
+        {
+          hours: 14,
+          minutes: 30,
+          seconds: 45,
+        },
+        expectVersionOperationOptions('worksheet.setTimeValue', ['cells']),
+      );
     });
   });
 
@@ -674,7 +760,14 @@ describe('WorksheetImpl', () => {
       ];
       await ws.setRange('A1:B2', values);
 
-      expect(RangeOps.setRange).toHaveBeenCalledWith(ctx, SHEET_ID, 0, 0, values);
+      expect(RangeOps.setRange).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        0,
+        0,
+        values,
+        expectVersionOperationOptions('worksheet.setRange', ['cells']),
+      );
     });
 
     it('setRange(0, 0, values) uses numeric path', async () => {
@@ -683,7 +776,14 @@ describe('WorksheetImpl', () => {
       const values = [[1, 2]];
       await ws.setRange(0, 0, values);
 
-      expect(RangeOps.setRange).toHaveBeenCalledWith(ctx, SHEET_ID, 0, 0, values);
+      expect(RangeOps.setRange).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        0,
+        0,
+        values,
+        expectVersionOperationOptions('worksheet.setRange', ['cells']),
+      );
     });
 
     it('setRange throws KernelError on failure', async () => {
@@ -704,13 +804,18 @@ describe('WorksheetImpl', () => {
 
       await ws.clearData('A1:B2');
 
-      expect(RangeOps.clearRange).toHaveBeenCalledWith(ctx, SHEET_ID, {
-        sheetId: SHEET_ID,
-        startRow: 0,
-        startCol: 0,
-        endRow: 1,
-        endCol: 1,
-      });
+      expect(RangeOps.clearRange).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        {
+          sheetId: SHEET_ID,
+          startRow: 0,
+          startCol: 0,
+          endRow: 1,
+          endCol: 1,
+        },
+        expectVersionOperationOptions('worksheet.clearData', ['cells']),
+      );
     });
 
     it('clearData(0, 0, 2, 3) uses numeric bounds directly', async () => {
@@ -718,13 +823,18 @@ describe('WorksheetImpl', () => {
 
       await ws.clearData(0, 0, 2, 3);
 
-      expect(RangeOps.clearRange).toHaveBeenCalledWith(ctx, SHEET_ID, {
-        sheetId: SHEET_ID,
-        startRow: 0,
-        startCol: 0,
-        endRow: 2,
-        endCol: 3,
-      });
+      expect(RangeOps.clearRange).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        {
+          sheetId: SHEET_ID,
+          startRow: 0,
+          startCol: 0,
+          endRow: 2,
+          endCol: 3,
+        },
+        expectVersionOperationOptions('worksheet.clearData', ['cells']),
+      );
     });
 
     it('clearData throws when clearRange throws', async () => {
@@ -742,6 +852,13 @@ describe('WorksheetImpl', () => {
     it('clear("A1:B2", "contents") resolves A1 range and clears contents', async () => {
       await expect(ws.clear('A1:B2', 'contents')).resolves.toEqual({ cellCount: 4 });
 
+      expect(RangeQueryOps.clearWithMode).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        { sheetId: SHEET_ID, startRow: 0, startCol: 0, endRow: 1, endCol: 1 },
+        'contents',
+        expectVersionOperationOptions('worksheet.clear', ['cells']),
+      );
       expect(ctx.computeBridge.clearRange).toHaveBeenCalledWith(SHEET_ID, 0, 0, 1, 1);
       expect(ctx.computeBridge.clearRangeByPosition).not.toHaveBeenCalled();
       expect(ctx.computeBridge.clearFormatForRanges).not.toHaveBeenCalled();
@@ -772,6 +889,26 @@ describe('WorksheetImpl', () => {
       expect(ctx.computeBridge.clearRange).not.toHaveBeenCalled();
       expect(ctx.computeBridge.clearFormatForRanges).not.toHaveBeenCalled();
       expect(ctx.computeBridge.clearHyperlinksInRange).not.toHaveBeenCalled();
+    });
+
+    it('replaceAll delegates with version operation context', async () => {
+      (RangeQueryOps.replaceAll as jest.Mock).mockResolvedValue(2);
+
+      await expect(ws.replaceAll('A1:B2', 'old', 'new', { matchCase: true })).resolves.toBe(2);
+
+      expect(RangeQueryOps.replaceAll).toHaveBeenCalledWith(
+        ctx,
+        SHEET_ID,
+        { sheetId: SHEET_ID, startRow: 0, startCol: 0, endRow: 1, endCol: 1 },
+        'old',
+        'new',
+        {
+          caseSensitive: true,
+          wholeCell: undefined,
+          includeFormulas: undefined,
+        },
+        expectVersionOperationOptions('worksheet.replaceAll', ['cells']),
+      );
     });
 
     it('getRawCellData("A1") delegates to CellOps and returns raw data', async () => {
@@ -824,6 +961,7 @@ describe('WorksheetImpl', () => {
         SHEET_ID,
         [[0, 0, 0, 0]],
         format,
+        expectVersionOperationOptions('formats.set', ['cells.formats.direct']),
       );
     });
 
@@ -835,6 +973,7 @@ describe('WorksheetImpl', () => {
         SHEET_ID,
         [[4, 2, 4, 2]],
         format,
+        expectVersionOperationOptions('formats.set', ['cells.formats.direct']),
       );
     });
 
@@ -846,6 +985,7 @@ describe('WorksheetImpl', () => {
         SHEET_ID,
         [[0, 0, 0, 0]],
         format,
+        expectVersionOperationOptions('formats.set', ['cells.formats.direct']),
       );
     });
 
@@ -857,6 +997,7 @@ describe('WorksheetImpl', () => {
         SHEET_ID,
         [[3, 2, 3, 2]],
         format,
+        expectVersionOperationOptions('formats.set', ['cells.formats.direct']),
       );
     });
 
@@ -874,6 +1015,7 @@ describe('WorksheetImpl', () => {
         SHEET_ID,
         [[0, 0, 1, 1]],
         format,
+        expectVersionOperationOptions('formats.setRange', ['cells.formats.direct']),
       );
     });
 
@@ -884,13 +1026,21 @@ describe('WorksheetImpl', () => {
     it('clearFormat("A1") resolves and calls computeBridge.clearFormatForRanges', async () => {
       await ws.formats.clearCell('A1');
 
-      expect(ctx.computeBridge.clearFormatForRanges).toHaveBeenCalledWith(SHEET_ID, [[0, 0, 0, 0]]);
+      expect(ctx.computeBridge.clearFormatForRanges).toHaveBeenCalledWith(
+        SHEET_ID,
+        [[0, 0, 0, 0]],
+        expectVersionOperationOptions('formats.clearCell', ['cells.formats.direct']),
+      );
     });
 
     it('clearFormat(2, 3) uses numeric path', async () => {
       await ws.formats.clearCell(2, 3);
 
-      expect(ctx.computeBridge.clearFormatForRanges).toHaveBeenCalledWith(SHEET_ID, [[2, 3, 2, 3]]);
+      expect(ctx.computeBridge.clearFormatForRanges).toHaveBeenCalledWith(
+        SHEET_ID,
+        [[2, 3, 2, 3]],
+        expectVersionOperationOptions('formats.clearCell', ['cells.formats.direct']),
+      );
     });
 
     it('getFormat("B2") resolves and returns format from computeBridge', async () => {
@@ -924,11 +1074,20 @@ describe('WorksheetImpl', () => {
       // 1) queryRange is called to read the sparse format
       expect(ctx.computeBridge.queryRange).toHaveBeenCalledWith(SHEET_ID, 0, 0, 0, 0);
       // 2) clearFormatForRanges clears all formatting on the cell
-      expect(ctx.computeBridge.clearFormatForRanges).toHaveBeenCalledWith(SHEET_ID, [[0, 0, 0, 0]]);
+      expect(ctx.computeBridge.clearFormatForRanges).toHaveBeenCalledWith(
+        SHEET_ID,
+        [[0, 0, 0, 0]],
+        expectVersionOperationOptions('formats.clearFill', ['cells.formats.direct']),
+      );
       // 3) setFormatForRanges re-applies the non-fill properties
-      expect(ctx.computeBridge.setFormatForRanges).toHaveBeenCalledWith(SHEET_ID, [[0, 0, 0, 0]], {
-        bold: true,
-      });
+      expect(ctx.computeBridge.setFormatForRanges).toHaveBeenCalledWith(
+        SHEET_ID,
+        [[0, 0, 0, 0]],
+        {
+          bold: true,
+        },
+        expectVersionOperationOptions('formats.clearFill', ['cells.formats.direct']),
+      );
     });
 
     it('does not promote row-inherited format to cell-level override', async () => {
@@ -943,7 +1102,11 @@ describe('WorksheetImpl', () => {
       // queryRange is called to read the sparse format
       expect(ctx.computeBridge.queryRange).toHaveBeenCalledWith(SHEET_ID, 2, 0, 2, 0);
       // clearFormatForRanges is called to clear any cell-level formatting
-      expect(ctx.computeBridge.clearFormatForRanges).toHaveBeenCalledWith(SHEET_ID, [[2, 0, 2, 0]]);
+      expect(ctx.computeBridge.clearFormatForRanges).toHaveBeenCalledWith(
+        SHEET_ID,
+        [[2, 0, 2, 0]],
+        expectVersionOperationOptions('formats.clearFill', ['cells.formats.direct']),
+      );
       // setFormatForRanges should NOT be called — no cell-level format to re-apply
       expect(ctx.computeBridge.setFormatForRanges).not.toHaveBeenCalled();
     });
@@ -959,7 +1122,11 @@ describe('WorksheetImpl', () => {
 
       // queryRange + clearFormatForRanges are called
       expect(ctx.computeBridge.queryRange).toHaveBeenCalledWith(SHEET_ID, 0, 0, 0, 0);
-      expect(ctx.computeBridge.clearFormatForRanges).toHaveBeenCalledWith(SHEET_ID, [[0, 0, 0, 0]]);
+      expect(ctx.computeBridge.clearFormatForRanges).toHaveBeenCalledWith(
+        SHEET_ID,
+        [[0, 0, 0, 0]],
+        expectVersionOperationOptions('formats.clearFill', ['cells.formats.direct']),
+      );
       // setFormatForRanges should NOT be called — stripping fill leaves nothing to re-apply
       expect(ctx.computeBridge.setFormatForRanges).not.toHaveBeenCalled();
     });
@@ -973,9 +1140,17 @@ describe('WorksheetImpl', () => {
     it('insertRows delegates to computeBridge.structureChange', async () => {
       await ws.structure.insertRows(2, 3);
 
-      expect(ctx.computeBridge.structureChange).toHaveBeenCalledWith(SHEET_ID, {
-        InsertRows: { at: 2, count: 3, new_row_ids: [] },
-      });
+      expect(ctx.computeBridge.structureChange).toHaveBeenCalledWith(
+        SHEET_ID,
+        {
+          InsertRows: { at: 2, count: 3, new_row_ids: [] },
+        },
+        expectVersionOperationOptions('worksheet.structure.insertRows', [
+          'rows-columns',
+          'cells.formulas',
+          'recalc-caches',
+        ]),
+      );
     });
 
     it('insertRows throws on negative index', async () => {
@@ -985,9 +1160,17 @@ describe('WorksheetImpl', () => {
     it('deleteRows delegates to computeBridge.structureChange', async () => {
       await ws.structure.deleteRows(5, 2);
 
-      expect(ctx.computeBridge.structureChange).toHaveBeenCalledWith(SHEET_ID, {
-        DeleteRows: { at: 5, count: 2, deleted_cell_ids: [] },
-      });
+      expect(ctx.computeBridge.structureChange).toHaveBeenCalledWith(
+        SHEET_ID,
+        {
+          DeleteRows: { at: 5, count: 2, deleted_cell_ids: [] },
+        },
+        expectVersionOperationOptions('worksheet.structure.deleteRows', [
+          'rows-columns',
+          'cells.formulas',
+          'recalc-caches',
+        ]),
+      );
     });
 
     it('deleteRows throws on negative index', async () => {
@@ -997,9 +1180,17 @@ describe('WorksheetImpl', () => {
     it('insertColumns delegates to computeBridge.structureChange', async () => {
       await ws.structure.insertColumns(1, 4);
 
-      expect(ctx.computeBridge.structureChange).toHaveBeenCalledWith(SHEET_ID, {
-        InsertCols: { at: 1, count: 4, new_col_ids: [] },
-      });
+      expect(ctx.computeBridge.structureChange).toHaveBeenCalledWith(
+        SHEET_ID,
+        {
+          InsertCols: { at: 1, count: 4, new_col_ids: [] },
+        },
+        expectVersionOperationOptions('worksheet.structure.insertColumns', [
+          'rows-columns',
+          'cells.formulas',
+          'recalc-caches',
+        ]),
+      );
     });
 
     it('insertColumns throws on negative index', async () => {
@@ -1009,9 +1200,17 @@ describe('WorksheetImpl', () => {
     it('deleteColumns delegates to computeBridge.structureChange', async () => {
       await ws.structure.deleteColumns(0, 2);
 
-      expect(ctx.computeBridge.structureChange).toHaveBeenCalledWith(SHEET_ID, {
-        DeleteCols: { at: 0, count: 2, deleted_cell_ids: [] },
-      });
+      expect(ctx.computeBridge.structureChange).toHaveBeenCalledWith(
+        SHEET_ID,
+        {
+          DeleteCols: { at: 0, count: 2, deleted_cell_ids: [] },
+        },
+        expectVersionOperationOptions('worksheet.structure.deleteColumns', [
+          'rows-columns',
+          'cells.formulas',
+          'recalc-caches',
+        ]),
+      );
     });
 
     it('deleteColumns throws on negative index', async () => {
@@ -1981,6 +2180,7 @@ describe('WorksheetImpl', () => {
         null,
         null,
         'note',
+        expectVersionOperationOptions('comment.addNote', ['comments-notes']),
       );
     });
 
@@ -1996,6 +2196,7 @@ describe('WorksheetImpl', () => {
         null,
         null,
         'note',
+        expectVersionOperationOptions('comment.addNote', ['comments-notes']),
       );
     });
 
@@ -2027,8 +2228,16 @@ describe('WorksheetImpl', () => {
       await ws.comments.removeNote('A1');
 
       expect(ctx.computeBridge.deleteComment).toHaveBeenCalledTimes(2);
-      expect(ctx.computeBridge.deleteComment).toHaveBeenCalledWith(SHEET_ID, 'c1');
-      expect(ctx.computeBridge.deleteComment).toHaveBeenCalledWith(SHEET_ID, 'c2');
+      expect(ctx.computeBridge.deleteComment).toHaveBeenCalledWith(
+        SHEET_ID,
+        'c1',
+        expectVersionOperationOptions('comment.removeNote', ['comments-notes']),
+      );
+      expect(ctx.computeBridge.deleteComment).toHaveBeenCalledWith(
+        SHEET_ID,
+        'c2',
+        expectVersionOperationOptions('comment.removeNote', ['comments-notes']),
+      );
     });
   });
 
@@ -2067,8 +2276,7 @@ describe('WorksheetImpl', () => {
     });
 
     it('getCurrentRegion returns a public worksheet range', async () => {
-      (CellIteration.getCurrentRegion as jest.Mock).mockResolvedValue({
-        sheetId: SHEET_ID,
+      ctx.computeBridge.getCurrentRegion.mockResolvedValue({
         startRow: 1,
         startCol: 2,
         endRow: 4,
@@ -2077,7 +2285,7 @@ describe('WorksheetImpl', () => {
 
       const result = await ws.getCurrentRegion(2, 3);
 
-      expect(CellIteration.getCurrentRegion).toHaveBeenCalledWith(ctx, SHEET_ID, 2, 3);
+      expect(ctx.computeBridge.getCurrentRegion).toHaveBeenCalledWith(SHEET_ID, 2, 3);
       expect(result).toEqual({
         startRow: 1,
         startCol: 2,

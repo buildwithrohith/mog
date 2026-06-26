@@ -101,6 +101,11 @@ export interface FeatureGates {
     /** Show in-cell date picker affordances and calendar popovers for date cells. */
     datePicker?: boolean;
     conditionalFormatting?: boolean;
+    versionControl?: boolean;
+    /** Disable only public version merge endpoints while leaving version reads/status available. */
+    versionControlMerge?: boolean;
+    /** String-key alias for hosts that model the gate as versionControl.merge. */
+    'versionControl.merge'?: boolean;
   };
 }
 
@@ -112,15 +117,17 @@ export interface FeatureGates {
 export const VIEWER_GATES: FeatureGates = {
   editing: false,
   ribbon: false,
+  capabilities: { versionControl: false },
 };
 
 /** Minimal editor — Home + Insert + Formulas + View */
 export const MINIMAL_EDITOR_GATES: FeatureGates = {
   tabs: { draw: false, data: false, review: false },
-  capabilities: { save: false, print: false, export: false },
+  capabilities: { save: false, print: false, export: false, versionControl: false },
 };
 
 /** Desktop default — hide unsupported/internal-only tabs from end users */
 export const DESKTOP_GATES: FeatureGates = {
   tabs: { draw: false },
+  capabilities: { versionControl: false },
 };

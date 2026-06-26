@@ -95,6 +95,7 @@ import type {
   FloatingObjectChangeKind,
   SerializedFloatingObjectGroup as WireFloatingObjectGroup,
 } from './compute/compute-types.gen';
+import { emitViewSelectionChanges } from './mutation-result-view-selection-events';
 
 function toEventFilterKind(value: string | undefined): FilterKind | undefined {
   if (value === 'autoFilter' || value === 'tableFilter' || value === 'advancedFilter') {
@@ -538,6 +539,9 @@ export class MutationResultHandler {
     if (result.scrollPositionChanges?.length) {
       this.handleScrollPositionChanges(result.scrollPositionChanges, source);
     }
+    if (result.viewSelectionChanges?.length) {
+      emitViewSelectionChanges(this.eventBus, result.viewSelectionChanges, source);
+    }
     if (result.workbookSettingsChanges?.length) {
       this.handleWorkbookSettingsChanges(result.workbookSettingsChanges, source);
     }
@@ -645,7 +649,12 @@ export class MutationResultHandler {
             row: c.position.row,
             col: c.position.col,
             value: c.value,
+            displayText: c.displayText,
             oldValue: c.oldValue,
+            oldDisplayText: c.oldDisplayText,
+            oldFormula: c.oldFormula,
+            newFormula: c.newFormula,
+            numberFormat: c.numberFormat,
           };
         })
         .filter((c): c is NonNullable<typeof c> => c !== null);
@@ -1815,16 +1824,15 @@ export class MutationResultHandler {
             });
             break;
           case 'updated':
-            if (change.kind.changedFields?.includes('chartConfig')) {
-              this.eventBus.emit({
-                type: 'chart:updated',
-                timestamp,
-                sheetId: change.sheetId,
-                chartId: change.objectId,
-                changes: {},
-                source,
-              });
-            }
+            this.eventBus.emit({
+              type: 'chart:updated',
+              timestamp,
+              sheetId: change.sheetId,
+              chartId: change.objectId,
+              changes: {},
+              changedFields: change.kind.changedFields ?? [],
+              source,
+            });
             break;
           case 'removed':
             this.eventBus.emit({

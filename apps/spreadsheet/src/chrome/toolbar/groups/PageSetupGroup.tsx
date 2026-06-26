@@ -245,8 +245,13 @@ export function PageSetupGroup() {
       label="Page Setup"
       collapseConfig={PAGE_SETUP_COLLAPSE_CONFIG}
       dropdownIcon={<MarginsIcon />}
-      onDialogLaunch={() => dispatch('OPEN_PAGE_SETUP_DIALOG')}
-      dialogLaunchTitle="Page Setup"
+      dialogLauncher={{
+        id: 'page-setup',
+        testId: 'ribbon-button-page-setup',
+        ariaLabel: 'Page Setup',
+        title: 'Page Setup',
+        onClick: () => dispatch('OPEN_PAGE_SETUP_DIALOG'),
+      }}
     >
       <div className="flex items-center gap-[var(--ribbon-group-items-gap)]">
         {/* Margins Dropdown */}

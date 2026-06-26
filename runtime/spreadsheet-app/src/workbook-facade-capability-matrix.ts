@@ -8,6 +8,15 @@ export type SpreadsheetFacadeDecision = 'allow' | 'deny';
 export interface SpreadsheetFacadeMatrixEntry {
   readonly decision: SpreadsheetFacadeDecision;
   readonly capability?: SpreadsheetCapability;
+  readonly capabilities?: readonly SpreadsheetCapability[];
+  readonly conditionalCapabilities?: readonly {
+    readonly when: {
+      readonly argumentIndex: number;
+      readonly path: readonly string[];
+      readonly presence: 'present';
+    };
+    readonly capabilities: readonly SpreadsheetCapability[];
+  }[];
   readonly reason?: string;
   readonly returns?: readonly string[];
 }
@@ -910,6 +919,53 @@ export const WORKBOOK_SUB_API_INTERFACES: WorkbookSubApiInterfaces = {
         file: 'types/api/src/api/workbook.ts',
       },
       targetInterface: 'WorkbookTimelineStyles',
+    },
+    version: {
+      signature: 'readonly version: WorkbookVersion;',
+      docstring: 'Version-control status and read-only diagnostics.',
+      usedTypes: ['WorkbookVersion'],
+      stableId: 'Workbook.version',
+      canonicalPath: 'wb.version',
+      root: 'subApi',
+      parentRoot: 'workbook',
+      interface: 'Workbook',
+      method: 'version',
+      kind: 'subApiAccessor',
+      visibility: 'public',
+      asyncModel: 'sync',
+      parameters: [],
+      returns: {
+        type: {
+          kind: 'objectRef',
+          name: 'WorkbookVersion',
+        },
+        typeText: 'WorkbookVersion',
+      },
+      typeScript: {
+        signature: 'readonly version: WorkbookVersion;',
+        parameters: [],
+        returnTypeText: 'WorkbookVersion',
+      },
+      ownership: {
+        package: '@mog/types-api',
+      },
+      ownerPackage: '@mog/types-api',
+      alias: {
+        aliasOf: null,
+        aliases: [],
+        replacement: null,
+      },
+      deprecation: {
+        deprecated: false,
+        message: null,
+        replacement: null,
+        since: null,
+      },
+      compatibility: [],
+      source: {
+        file: 'types/api/src/api/workbook.ts',
+      },
+      targetInterface: 'WorkbookVersion',
     },
     viewport: {
       signature: 'readonly viewport: WorkbookViewport;',
@@ -3610,6 +3666,182 @@ export const WORKBOOK_FACADE_CAPABILITY_MATRIX = {
       capability: 'workbook:write',
     },
   },
+  WorkbookVersion: {
+    acceptProposal: {
+      decision: 'allow',
+      capabilities: ['version:proposal', 'version:branch'],
+    },
+    appendReviewDecision: {
+      decision: 'allow',
+      capabilities: ['version:reviewWrite'],
+    },
+    applyMerge: {
+      decision: 'allow',
+      capabilities: ['version:mergePreview', 'version:mergeApply', 'version:branch'],
+    },
+    checkout: {
+      decision: 'allow',
+      capabilities: ['version:checkout'],
+    },
+    commit: {
+      decision: 'allow',
+      capabilities: ['version:commit'],
+    },
+    commitProposalWorkspace: {
+      decision: 'allow',
+      capabilities: ['version:proposal'],
+    },
+    createBranch: {
+      decision: 'allow',
+      capabilities: ['version:branch'],
+    },
+    createProposal: {
+      decision: 'allow',
+      capabilities: ['version:proposal'],
+    },
+    createReview: {
+      decision: 'allow',
+      capabilities: ['version:reviewWrite'],
+    },
+    deleteBranch: {
+      decision: 'allow',
+      capabilities: ['version:branch'],
+    },
+    deleteRef: {
+      decision: 'allow',
+      capabilities: ['version:branch'],
+    },
+    diff: {
+      decision: 'allow',
+      capabilities: ['version:diff'],
+    },
+    disposeProposalWorkspace: {
+      decision: 'allow',
+      capabilities: ['version:proposal'],
+    },
+    failProposal: {
+      decision: 'allow',
+      capabilities: ['version:proposal'],
+    },
+    fastForwardBranch: {
+      decision: 'allow',
+      capabilities: ['version:branch'],
+    },
+    getHead: {
+      decision: 'allow',
+      capabilities: ['version:read'],
+    },
+    getMergeConflictDetail: {
+      decision: 'allow',
+      capabilities: ['version:mergePreview'],
+    },
+    getProposal: {
+      decision: 'allow',
+      capabilities: ['version:proposal'],
+    },
+    getProposalWorkspace: {
+      decision: 'allow',
+      capabilities: ['version:proposal'],
+    },
+    getRef: {
+      decision: 'allow',
+      capabilities: ['version:read'],
+    },
+    getReview: {
+      decision: 'allow',
+      capabilities: ['version:reviewRead'],
+    },
+    getReviewDiff: {
+      decision: 'allow',
+      capabilities: ['version:diff'],
+      conditionalCapabilities: [
+        {
+          when: {
+            argumentIndex: 0,
+            path: ['reviewId'],
+            presence: 'present',
+          },
+          capabilities: ['version:reviewRead'],
+        },
+      ],
+    },
+    getStatus: {
+      decision: 'allow',
+      capabilities: ['version:read'],
+    },
+    getSurfaceStatus: {
+      decision: 'allow',
+      capabilities: [],
+    },
+    listCommits: {
+      decision: 'allow',
+      capabilities: ['version:read'],
+    },
+    listProposals: {
+      decision: 'allow',
+      capabilities: ['version:proposal'],
+    },
+    listRefs: {
+      decision: 'allow',
+      capabilities: ['version:read'],
+    },
+    listReviews: {
+      decision: 'allow',
+      capabilities: ['version:reviewRead'],
+    },
+    markProposalVerified: {
+      decision: 'allow',
+      capabilities: ['version:proposal'],
+    },
+    merge: {
+      decision: 'allow',
+      capabilities: ['version:mergePreview'],
+    },
+    openProposalReview: {
+      decision: 'allow',
+      capabilities: ['version:proposal'],
+    },
+    promotePendingRemote: {
+      decision: 'allow',
+      capabilities: ['version:remotePromote', 'version:provenance'],
+    },
+    putMergeResolutionPayload: {
+      decision: 'allow',
+      capabilities: ['version:mergePreview', 'version:mergeApply'],
+    },
+    readRef: {
+      decision: 'allow',
+      capabilities: ['version:read'],
+    },
+    rejectProposal: {
+      decision: 'allow',
+      capabilities: ['version:proposal'],
+    },
+    revert: {
+      decision: 'allow',
+      capabilities: ['version:revert'],
+    },
+    saveMergeResolutions: {
+      decision: 'allow',
+      capabilities: ['version:mergePreview', 'version:mergeApply'],
+    },
+    startProposalWorkspace: {
+      decision: 'allow',
+      capabilities: ['version:proposal'],
+    },
+    supersedeProposal: {
+      decision: 'allow',
+      capabilities: ['version:proposal'],
+    },
+    updateBranch: {
+      decision: 'allow',
+      capabilities: ['version:branch'],
+    },
+    updateReviewStatus: {
+      decision: 'allow',
+      capabilities: ['version:reviewWrite'],
+    },
+  },
   WorkbookViewport: {
     createRegion: {
       decision: 'allow',
@@ -4171,6 +4403,10 @@ export const WORKBOOK_FACADE_CAPABILITY_MATRIX = {
       decision: 'allow',
       capability: 'workbook:read',
     },
+    getAppModel: {
+      decision: 'allow',
+      capability: 'workbook:read',
+    },
     getAxisItem: {
       decision: 'allow',
       capability: 'workbook:read',
@@ -4295,11 +4531,19 @@ export const WORKBOOK_FACADE_CAPABILITY_MATRIX = {
       decision: 'allow',
       capability: 'workbook:write',
     },
+    setAxisVisible: {
+      decision: 'allow',
+      capability: 'workbook:write',
+    },
     setBubbleSizes: {
       decision: 'allow',
       capability: 'workbook:write',
     },
     setCategoryNames: {
+      decision: 'allow',
+      capability: 'workbook:write',
+    },
+    setChartTitleVisible: {
       decision: 'allow',
       capability: 'workbook:write',
     },
@@ -4312,6 +4556,10 @@ export const WORKBOOK_FACADE_CAPABILITY_MATRIX = {
       capability: 'workbook:write',
     },
     setDataRange: {
+      decision: 'allow',
+      capability: 'workbook:write',
+    },
+    setLegendVisible: {
       decision: 'allow',
       capability: 'workbook:write',
     },
@@ -4344,6 +4592,10 @@ export const WORKBOOK_FACADE_CAPABILITY_MATRIX = {
       capability: 'workbook:write',
     },
     setType: {
+      decision: 'allow',
+      capability: 'workbook:write',
+    },
+    switchSeriesOrientation: {
       decision: 'allow',
       capability: 'workbook:write',
     },
@@ -5032,6 +5284,10 @@ export const WORKBOOK_FACADE_CAPABILITY_MATRIX = {
       capability: 'workbook:read',
     },
     getColumnWidthChars: {
+      decision: 'allow',
+      capability: 'workbook:read',
+    },
+    getFilterHiddenRowsBitmap: {
       decision: 'allow',
       capability: 'workbook:read',
     },
@@ -6329,6 +6585,10 @@ export const WORKBOOK_FACADE_CAPABILITY_MATRIX = {
     getViewOptions: {
       decision: 'allow',
       capability: 'workbook:read',
+    },
+    setFrozenPanes: {
+      decision: 'allow',
+      capability: 'workbook:write',
     },
     setGridlines: {
       decision: 'allow',

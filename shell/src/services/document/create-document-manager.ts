@@ -41,6 +41,8 @@ import {
   extractImportedPivotMetadata,
 } from './imported-pivot-metadata';
 import { importInteractiveHostBackedDocument } from './import-interactive-host-backed-document';
+import { decorateCollaborationHandleWithVersioning } from './collaboration-versioning';
+import { decorateNormalLocalHandleWithDefaultVersioning } from './default-versioning';
 
 /**
  * Create a DocumentManager instance.
@@ -325,6 +327,7 @@ export function createDocumentManager(options: DocumentManagerOptions = {}): Doc
       const result = await DocumentFactory.createFromCsv(source, {
         documentId: fileId,
         csvOptions: options?.csvOptions,
+        ...(options?.skipLocalPersistence === true ? { skipLocalPersistence: true } : {}),
       });
       if (!result.success || !result.handle) {
         throw result.error ?? new Error('Failed to import CSV document');
@@ -334,7 +337,10 @@ export function createDocumentManager(options: DocumentManagerOptions = {}): Doc
           `Document identity mismatch: fileId=${fileId}, documentId=${result.handle.documentId}`,
         );
       }
-      return { handle: result.handle, hostAdapter: null };
+      return {
+        handle: decorateNormalLocalHandleWithDefaultVersioning(result.handle, options),
+        hostAdapter: null,
+      };
     }
 
     // --- Host-backed XLSX import (bytes source) ---
@@ -368,7 +374,10 @@ export function createDocumentManager(options: DocumentManagerOptions = {}): Doc
             ],
           });
         }
-        return { handle, hostAdapter: hostResult };
+        return {
+          handle: decorateNormalLocalHandleWithDefaultVersioning(handle, options),
+          hostAdapter: hostResult,
+        };
       } catch (error) {
         await hostResult.dispose();
         throw error;
@@ -616,7 +625,10 @@ export function createDocumentManager(options: DocumentManagerOptions = {}): Doc
           const handle = await createStandaloneBrowserHostBackedDocument(hostResult, {
             skipDefaultSheet: options?.skipDefaultSheet,
           });
-          const resources = { handle, hostAdapter: hostResult };
+          const resources = {
+            handle: decorateNormalLocalHandleWithDefaultVersioning(handle, options),
+            hostAdapter: hostResult,
+          };
           hostResult = null;
 
           return await publishLoadedDocument(fileId, generation, resources, {
@@ -757,6 +769,7 @@ export function createDocumentManager(options: DocumentManagerOptions = {}): Doc
               `Collaboration roomUrl mismatch: shell=${roomUrl}, host=${result.room.roomUrl}`,
             );
           }
+          handle = decorateCollaborationHandleWithVersioning(handle, sidecar, result.room.roomId);
           const resources = { handle, hostAdapter: hostResult };
 
           if (disposedAll || isDisposeRequested(fileId, generation)) {

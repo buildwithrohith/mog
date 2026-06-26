@@ -18,6 +18,11 @@ import { join } from 'node:path';
 import { attachWsSidecar, ComputeBridgeLike, fetchRoomSnapshot, WsSidecar } from '../ws-sidecar';
 import { createEventLog, type EventLog } from '../event-log';
 import { createCollabTestLog, type CollabTestLog } from './test-log-collector';
+import type { ClassifiedRawSyncUpdateProvenance } from '../../providers/provider';
+import {
+  createAdmittedSyncApplyContext,
+  type AdmittedSyncApplyContext,
+} from '../../../bridges/compute/sync-apply-admission';
 
 // ---------------------------------------------------------------------------
 // NAPI addon loading
@@ -188,7 +193,10 @@ interface MockBridge extends ComputeBridgeLike {
   _handle: number;
   _pid: string;
   _appliedUpdates: Uint8Array[];
+  _classifiedProvenance: ClassifiedRawSyncUpdateProvenance[];
+  _admittedContexts: AdmittedSyncApplyContext[];
   _updateCallbacks: Set<(update: Uint8Array) => void>;
+  syncApply(update: Uint8Array, syncApplyContext?: AdmittedSyncApplyContext): Promise<unknown>;
   /** Simulate a local change by pushing another coordinator's state. */
   _simulateLocalChange(sourceHandle: number): void;
   _dispose(): void;
@@ -200,6 +208,8 @@ function createMockBridge(participantId: string): MockBridge {
   addon.coordinator_join(handle, participantId);
 
   const appliedUpdates: Uint8Array[] = [];
+  const classifiedProvenance: ClassifiedRawSyncUpdateProvenance[] = [];
+  const admittedContexts: AdmittedSyncApplyContext[] = [];
   const updateCallbacks = new Set<(update: Uint8Array) => void>();
   let disposed = false;
 
@@ -207,6 +217,8 @@ function createMockBridge(participantId: string): MockBridge {
     _handle: handle,
     _pid: participantId,
     _appliedUpdates: appliedUpdates,
+    _classifiedProvenance: classifiedProvenance,
+    _admittedContexts: admittedContexts,
     _updateCallbacks: updateCallbacks,
 
     async syncStateVector(): Promise<Uint8Array> {
@@ -224,8 +236,14 @@ function createMockBridge(participantId: string): MockBridge {
       }
     },
 
-    async syncApply(update: Uint8Array): Promise<unknown> {
+    async syncApply(
+      update: Uint8Array,
+      syncApplyContext?: AdmittedSyncApplyContext,
+    ): Promise<unknown> {
       if (disposed || update.length === 0) return;
+      if (syncApplyContext) {
+        admittedContexts.push(syncApplyContext);
+      }
       try {
         const sv = addon.coordinator_state_vector(handle);
         addon.coordinator_push(handle, participantId, Buffer.from(update), [], sv);
@@ -274,6 +292,33 @@ function createMockBridge(participantId: string): MockBridge {
   return bridge;
 }
 
+function createBridgeSyncPort(
+  bridge: MockBridge,
+  roomId: string,
+): {
+  applyClassifiedRawUpdate(
+    update: Uint8Array,
+    provenance: ClassifiedRawSyncUpdateProvenance,
+  ): Promise<void>;
+} {
+  return {
+    async applyClassifiedRawUpdate(update, provenance) {
+      bridge._classifiedProvenance.push(provenance);
+      await bridge.syncApply(
+        update,
+        createAdmittedSyncApplyContext({
+          source: 'test-ws-sidecar',
+          docId: roomId,
+          envelopeVersion: 'classified-raw',
+          updateId: provenance.updateIdentity.updateId,
+          payloadHash: provenance.updateIdentity.payloadHash,
+          provenance,
+        }),
+      );
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -319,7 +364,13 @@ describeWithAddon('WsSidecar integration (real server)', () => {
   async function attachWithLog(opts: {
     url: string;
     participantId: string;
-    computeBridge: ComputeBridgeLike;
+    computeBridge: MockBridge;
+    syncPort?: {
+      applyClassifiedRawUpdate(
+        update: Uint8Array,
+        provenance: ClassifiedRawSyncUpdateProvenance,
+      ): Promise<void>;
+    };
   }): Promise<WsSidecar> {
     const roomId = roomIdFromUrl(opts.url);
     if (!preseededRooms.has(roomId)) {
@@ -334,6 +385,7 @@ describeWithAddon('WsSidecar integration (real server)', () => {
       preflightRoomEpoch: snapshot.roomEpoch,
       preflightFullStateHash: snapshot.fullStateHash,
       preflightSnapshotToken: snapshot.snapshotToken,
+      syncPort: opts.syncPort ?? createBridgeSyncPort(opts.computeBridge, roomId),
       eventLog,
     });
     testLog.addSidecar(opts.participantId, eventLog, () => sidecar.status);
@@ -440,6 +492,35 @@ describeWithAddon('WsSidecar integration (real server)', () => {
     }
 
     expect(bridgeB._appliedUpdates.length).toBeGreaterThan(bAppliedBefore);
+    expect(bridgeB._classifiedProvenance).toContainEqual(
+      expect.objectContaining({
+        sourceKind: 'collaborationMixedRemote',
+        capturePolicy: 'excluded',
+        author: { kind: 'mixedRemote', reason: 'aggregateWithoutBoundaries' },
+        replay: false,
+        system: false,
+        exclusionDiagnostic: expect.objectContaining({
+          reason: 'mixedAuthors',
+        }),
+      }),
+    );
+    expect(bridgeB._admittedContexts).toContainEqual(
+      expect.objectContaining({
+        operationContext: expect.objectContaining({
+          capturePolicy: 'excluded',
+          writeAdmissionMode: 'captureDisabledNoHistory',
+          collaboration: expect.objectContaining({
+            sourceKind: 'collaborationMixedRemote',
+            roomId,
+            authorState: 'mixedRemote',
+            replay: false,
+            system: false,
+            commitGrouping: 'excludedLifecycle',
+            exclusionReason: 'mixedAuthors',
+          }),
+        }),
+      }),
+    );
   }, 10_000);
 
   test('sidecar transitions to offline on detach', async () => {
@@ -522,8 +603,38 @@ describeWithAddon('WsSidecar integration (real server)', () => {
     });
 
     // B should have received the full state during JOIN handshake
-    // (syncApply is called with the JOIN_RESPONSE's full state)
+    // (classified raw sync admission is called with the JOIN_RESPONSE's full state)
     expect(bridgeB._appliedUpdates.length).toBeGreaterThan(bAppliedBefore);
+    expect(bridgeB._classifiedProvenance).toContainEqual(
+      expect.objectContaining({
+        sourceKind: 'collaborationHydration',
+        capturePolicy: 'excluded',
+        replay: true,
+        system: true,
+        author: { kind: 'system', systemRef: 'collaboration-hydration' },
+        updateIdentity: expect.objectContaining({
+          originKind: 'room',
+          roomId,
+        }),
+      }),
+    );
+    expect(bridgeB._admittedContexts).toContainEqual(
+      expect.objectContaining({
+        operationContext: expect.objectContaining({
+          capturePolicy: 'excluded',
+          writeAdmissionMode: 'captureDisabledNoHistory',
+          collaboration: expect.objectContaining({
+            sourceKind: 'collaborationHydration',
+            roomId,
+            authorState: 'system',
+            replay: true,
+            system: true,
+            commitGrouping: 'excludedLifecycle',
+            exclusionReason: 'hydration',
+          }),
+        }),
+      }),
+    );
   }, 10_000);
 
   test('bidirectional: both clients send and both receive', async () => {
@@ -655,6 +766,7 @@ describeWithAddon('WsSidecar integration (real server)', () => {
         url: 'ws://localhost:1/unreachable-room', // nothing listening
         participantId: 'user-fail',
         computeBridge: bridge,
+        syncPort: createBridgeSyncPort(bridge, 'unreachable-room'),
       }),
     ).rejects.toThrow();
   }, 10_000);

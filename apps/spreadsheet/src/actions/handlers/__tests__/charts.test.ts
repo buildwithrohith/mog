@@ -18,7 +18,7 @@
 
 import { jest } from '@jest/globals';
 
-import type { SerializedChart } from '@mog/charts';
+import { DEFAULT_CHART_COLORS, type SerializedChart } from '@mog/charts';
 import type { ActionDependencies } from '@mog-sdk/contracts/actions';
 import { sheetId as makeSheetId } from '@mog-sdk/contracts/core';
 
@@ -67,7 +67,13 @@ function createMockDeps(overrides?: Partial<ActionDependencies>): ActionDependen
       get: jest.fn().mockResolvedValue(null),
       list: jest.fn().mockResolvedValue([]),
       add: jest.fn().mockResolvedValue(createChartAddReceipt()),
+      duplicate: jest.fn().mockResolvedValue(createChartAddReceipt('duplicated-chart-id')),
       update: jest.fn().mockResolvedValue(undefined),
+      setSourceData: jest.fn().mockResolvedValue(undefined),
+      getAppModel: jest.fn().mockResolvedValue({
+        source: { orientation: 'columns', supportsOrientationSwitch: true },
+      }),
+      switchSeriesOrientation: jest.fn().mockResolvedValue({ status: 'applied' }),
       remove: jest.fn().mockResolvedValue(undefined),
       bringToFront: jest.fn().mockResolvedValue(undefined),
       sendToBack: jest.fn().mockResolvedValue(undefined),
@@ -136,6 +142,7 @@ function createMockDeps(overrides?: Partial<ActionDependencies>): ActionDependen
       setChartWizardError: jest.fn(),
       setActiveSheetId: jest.fn(),
       setActiveSheet: jest.fn(),
+      setChartEditorTab: jest.fn(),
     }),
   };
 
@@ -502,14 +509,19 @@ describe('Chart Handlers - Clipboard Actions', () => {
   });
 
   describe('DUPLICATE_CHART', () => {
-    it('should use Mutations layer (not onUIAction) to duplicate chart', async () => {
+    it('should use the worksheet chart duplicate API', async () => {
       const deps = createMockDeps();
       const result = await ChartHandlers.DUPLICATE_CHART(deps, { chartId: 'chart-123' });
 
-      // Handler uses Mutations layer, not onUIAction (correct architecture)
-      // In unit tests without full Yjs setup, this will fail with chart not found
-      expect(result.handled).toBe(false);
-      expect(result.error).toContain('not found');
+      expect(result.handled).toBe(true);
+      expect(deps.workbook.activeSheet.charts.duplicate).toHaveBeenCalledWith('chart-123');
+      expect(deps.workbook.activeSheet.charts.get).not.toHaveBeenCalled();
+      expect(deps.workbook.activeSheet.charts.add).not.toHaveBeenCalled();
+      expect(deps.commands.object.selectObject).toHaveBeenCalledWith(
+        'duplicated-chart-id',
+        false,
+        false,
+      );
     });
 
     it('should return not handled when chartId is missing', async () => {
@@ -822,6 +834,76 @@ describe('Chart Handlers - Dialog Actions', () => {
     });
   });
 
+  describe('APPLY_SELECT_DATA', () => {
+    function setupOpenSelectDataDialog(orientation: 'rows' | 'columns' = 'columns') {
+      const deps = createMockDeps();
+      const closeSelectDataDialog = jest.fn();
+      (deps.uiStore as any).getState = () => ({
+        selectDataDialog: {
+          isOpen: true,
+          chartId: 'chart-1',
+          sheetId: deps.getActiveSheetId(),
+          dataRange: 'A1:C5',
+          orientation,
+        },
+        closeSelectDataDialog,
+      });
+      const ws = (deps.workbook as any).getSheetById(deps.getActiveSheetId());
+      return { deps, ws, closeSelectDataDialog };
+    }
+
+    it('updates source data without switching when orientation already matches', async () => {
+      const { deps, ws, closeSelectDataDialog } = setupOpenSelectDataDialog('columns');
+      ws.charts.getAppModel.mockResolvedValue({
+        source: { orientation: 'columns', supportsOrientationSwitch: true },
+      });
+
+      const result = await ChartHandlers.APPLY_SELECT_DATA(deps);
+
+      expect(result.handled).toBe(true);
+      expect(ws.charts.setSourceData).toHaveBeenCalledWith('chart-1', { dataRange: 'A1:C5' });
+      expect(ws.charts.switchSeriesOrientation).not.toHaveBeenCalled();
+      expect(ws.charts.update).not.toHaveBeenCalled();
+      expect(closeSelectDataDialog).toHaveBeenCalledTimes(1);
+    });
+
+    it('switches row/column when requested orientation differs', async () => {
+      const { deps, ws, closeSelectDataDialog } = setupOpenSelectDataDialog('rows');
+      ws.charts.getAppModel.mockResolvedValue({
+        source: { orientation: 'columns', supportsOrientationSwitch: true },
+      });
+
+      const result = await ChartHandlers.APPLY_SELECT_DATA(deps);
+
+      expect(result.handled).toBe(true);
+      expect(ws.charts.setSourceData).toHaveBeenCalledWith('chart-1', { dataRange: 'A1:C5' });
+      expect(ws.charts.switchSeriesOrientation).toHaveBeenCalledWith('chart-1');
+      expect(ws.charts.update).not.toHaveBeenCalled();
+      expect(closeSelectDataDialog).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps dialog open when requested orientation switch is unsupported', async () => {
+      const { deps, ws, closeSelectDataDialog } = setupOpenSelectDataDialog('rows');
+      ws.charts.getAppModel.mockResolvedValue({
+        source: { orientation: 'columns', supportsOrientationSwitch: false },
+      });
+      ws.charts.switchSeriesOrientation.mockResolvedValue({
+        status: 'unsupported',
+        diagnostics: [{ message: 'Cannot switch explicit series' }],
+      });
+
+      const result = await ChartHandlers.APPLY_SELECT_DATA(deps);
+
+      expect(result).toEqual({
+        handled: false,
+        error: 'Cannot switch explicit series',
+      });
+      expect(ws.charts.setSourceData).toHaveBeenCalledWith('chart-1', { dataRange: 'A1:C5' });
+      expect(ws.charts.switchSeriesOrientation).toHaveBeenCalledWith('chart-1');
+      expect(closeSelectDataDialog).not.toHaveBeenCalled();
+    });
+  });
+
   describe('OPEN_INSERT_CHART_WIZARD_DIALOG', () => {
     it('should return handled', async () => {
       const deps = createMockDeps();
@@ -893,8 +975,8 @@ describe('Chart Handlers - Dialog Actions', () => {
         gridLines: true,
         visible: true,
       });
-      expect(addedConfig.axis.xAxis).toEqual(addedConfig.axis.categoryAxis);
-      expect(addedConfig.axis.yAxis).toEqual(addedConfig.axis.valueAxis);
+      expect(addedConfig.axis).not.toHaveProperty('xAxis');
+      expect(addedConfig.axis).not.toHaveProperty('yAxis');
       expect(addedConfig.dataLabels).toEqual({ show: true });
       expect(addedConfig).not.toHaveProperty('showDataLabels');
       expect(addedConfig).not.toHaveProperty('xAxis');
@@ -1168,8 +1250,10 @@ describe('Chart Handlers - Context Menu Actions', () => {
       const deps = createMockDeps();
       const result = await ChartHandlers.RESET_CHART_STYLE(deps, { chartId: 'chart-123' });
 
-      // Handler uses ws.updateChart via unified API
       expect(result.handled).toBe(true);
+      expect(deps.workbook.activeSheet.charts.update).toHaveBeenCalledWith('chart-123', {
+        colors: [...DEFAULT_CHART_COLORS],
+      });
     });
   });
 
@@ -1183,10 +1267,20 @@ describe('Chart Handlers - Context Menu Actions', () => {
   });
 
   describe('OPEN_FORMAT_CHART_AREA', () => {
-    it('should call onUIAction with chart ID', () => {
-      const deps = createMockDeps();
+    it('should open the chart editor on the style tab', () => {
+      const setChartEditorTab = jest.fn();
+      const deps = createMockDeps({
+        uiStore: {
+          getState: jest.fn(() => ({
+            setChartEditorTab,
+          })),
+        },
+      });
       ChartHandlers.OPEN_FORMAT_CHART_AREA(deps, { chartId: 'chart-123' });
 
+      expect(setChartEditorTab).toHaveBeenCalledWith('style');
+      expect(deps.commands.object.selectObject).toHaveBeenCalledWith('chart-123', false, false);
+      expect(deps.commands.chart.startEdit).toHaveBeenCalled();
       expect(deps.onUIAction).toHaveBeenCalledWith('OPEN_FORMAT_CHART_AREA:chart-123');
     });
   });
