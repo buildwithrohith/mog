@@ -171,6 +171,15 @@ describe('SheetView workbook data sources', () => {
     view.dispose();
   });
 
+  it('keeps the embed renderer hit-test host pointer-active', () => {
+    const view = new SheetView({ container, scrollable: true });
+    const rendererContainer = container.firstElementChild as HTMLElement | null;
+
+    expect(rendererContainer?.style.pointerEvents).toBe('auto');
+
+    view.dispose();
+  });
+
   it('cancels a stale viewport refresh when switchSheet disposes the old region', async () => {
     let resolveRefresh: (() => void) | null = null;
     const staleRefresh = jest.fn(

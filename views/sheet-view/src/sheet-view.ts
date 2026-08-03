@@ -427,7 +427,10 @@ export class SheetView {
     rc.style.position = 'absolute';
     rc.style.top = '0';
     rc.style.left = '0';
-    rc.style.pointerEvents = 'none';
+    // The renderer owns the hit-test, wheel, and click listeners for the
+    // embed surface. Keep the canvases/decorations transparent, but the
+    // listener host itself must participate in hit testing.
+    rc.style.pointerEvents = 'auto';
     this._rendererContainer = rc;
     this._syncRendererContainerInset();
     config.container.insertBefore(rc, config.container.firstChild);
