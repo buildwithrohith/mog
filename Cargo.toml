@@ -119,3 +119,5 @@ lto = "off"
 codegen-units = 16
 incremental = true
 opt-level = 2
+# sapiex-patches: keep symbol names so wasm trap stacks are readable.
+strip = "none"

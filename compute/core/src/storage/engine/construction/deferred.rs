@@ -489,10 +489,32 @@ pub(in crate::storage::engine) fn stage_deferred_hydration(
 
         dh_log!("phase 1 done: IDs allocated, snapshot built");
 
+        // sapiex-patches: the Yrs CRDT write costs >4GB of wasm32 linear memory
+        // on ~1.5M-cell workbooks (measured: rust_oom in hashbrown reserve_rehash
+        // at 4,077MB, sheet 14/21 of the 19.4MB Cadence repro). Above this
+        // threshold, skip the Yrs hydration entirely and build every index from
+        // the parse output instead — the workbook renders fully and switches
+        // sheets, but mutations/persistence (which require Yrs) are not durable.
+        // A preview surface never needed them; the alternative was a dead tab.
+        const SAPIEX_YRS_HYDRATION_MAX_CELLS: u64 = 600_000;
+        let sapiex_total_cells: u64 = full_parse_output
+            .sheets
+            .iter()
+            .map(|sheet| sheet.cells.len() as u64)
+            .sum();
+        let sapiex_skip_yrs = sapiex_total_cells > SAPIEX_YRS_HYDRATION_MAX_CELLS;
+
         dh_log!("phase 2a: YrsStorage::new()");
         let mut new_storage = YrsStorage::new();
-        dh_log!("phase 2b: hydrate_from_parse_output_with_ranges start");
-        let id_map = {
+        let id_map = if sapiex_skip_yrs {
+            tracing::warn!(
+                target: "deferred_hydration",
+                total_cells = sapiex_total_cells,
+                "sapiex-patches: skipping Yrs hydration (workbook exceeds wasm32 budget); read-only"
+            );
+            crate::storage::infra::hydration::HydrationIdMap::default()
+        } else {
+            dh_log!("phase 2b: hydrate_from_parse_output_with_ranges start");
             let mut profile = crate::xlsx_profile::PhaseTimer::new(
                 "complete_deferred_hydration",
                 "hydrate_from_parse_output_with_ranges",
@@ -522,12 +544,37 @@ pub(in crate::storage::engine) fn stage_deferred_hydration(
 
         let seed = snapshot_id_high_water_mark(&full_snap);
         let shared_alloc = std::sync::Arc::new(cell_types::IdAllocator::with_seed(seed));
-        let grid_indexes =
-            build_grid_indexes_from_yrs(&new_storage, &full_snap, shared_alloc.clone())?;
-        let merge_indexes = build_merge_indexes(&new_storage, &full_snap, &grid_indexes)?;
         let layout_metrics = engine.stores.layout_metrics;
-        let layout_indexes =
-            build_layout_indexes(&new_storage, &full_snap, &grid_indexes, layout_metrics)?;
+        let (grid_indexes, merge_indexes, layout_indexes) = if sapiex_skip_yrs {
+            // Mirror the fast path's parse-output builders over ALL sheets.
+            let all_sheets = 0..full_snap.sheets.len();
+            let grid_indexes = build_grid_indexes_from_allocations_range(
+                &full_snap,
+                &allocations,
+                all_sheets.clone(),
+                shared_alloc.clone(),
+            )?;
+            let merge_indexes = build_merge_indexes_from_parse_output_range(
+                &full_parse_output,
+                &full_snap,
+                all_sheets.clone(),
+            )?;
+            let layout_indexes = build_layout_indexes_from_parse_output_range(
+                &full_parse_output,
+                &full_snap,
+                &grid_indexes,
+                all_sheets,
+                layout_metrics,
+            )?;
+            (grid_indexes, merge_indexes, layout_indexes)
+        } else {
+            let grid_indexes =
+                build_grid_indexes_from_yrs(&new_storage, &full_snap, shared_alloc.clone())?;
+            let merge_indexes = build_merge_indexes(&new_storage, &full_snap, &grid_indexes)?;
+            let layout_indexes =
+                build_layout_indexes(&new_storage, &full_snap, &grid_indexes, layout_metrics)?;
+            (grid_indexes, merge_indexes, layout_indexes)
+        };
 
         dh_log!("phase 3 done: grid/merge/layout indexes built");
 

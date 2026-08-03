@@ -111,7 +111,13 @@ export async function loadWasmModule(
           nodeWasmInput === undefined ? { kind: 'default' } : { kind: 'node-resolved-bytes' };
       }
 
-      await mod.default(moduleInput === undefined ? undefined : { module_or_path: moduleInput });
+      const wasmExports = await mod.default(
+        moduleInput === undefined ? undefined : { module_or_path: moduleInput },
+      );
+      // sapiex-patches diagnostic: expose linear memory for trap telemetry.
+      (globalThis as Record<string, unknown>).__sapiexWasmMemory = (
+        wasmExports as { memory?: WebAssembly.Memory }
+      )?.memory;
       wasmModule = mod;
       wasmModuleSource = moduleSource;
       wasmLoadingModuleSource = null;

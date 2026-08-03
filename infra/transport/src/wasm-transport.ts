@@ -92,6 +92,15 @@ export function createWasmTransport(getModule: () => WasmModule): BridgeTranspor
         return result;
       } catch (err) {
         if (isWasmTrap(err)) {
+          // sapiex-patches diagnostic: dump the raw wasm frames once.
+          const mem = (globalThis as Record<string, unknown>).__sapiexWasmMemory as WebAssembly.Memory | undefined;
+          // eslint-disable-next-line no-console
+          console.error(
+            '[SAPIEX-TRAP-STACK]',
+            command,
+            `wasmMemMB=${mem ? Math.round(mem.buffer.byteLength / 1048576) : -1}`,
+            (err as Error).stack,
+          );
           throw new TrapError(command, err.message, { cause: err });
         }
         throw TransportError.fromCommand(err, command);
