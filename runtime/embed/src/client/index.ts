@@ -79,6 +79,20 @@ export interface MogClientOptions {
 // ---------------------------------------------------------------------------
 
 /** @stability public-experimental */
+/**
+ * sapiex-patches: serialize every client boot AND deferred workbook disposal
+ * through one queue. React Strict Mode double-mounts race two boots against
+ * the module-scoped wasm singleton (measured: compute_drain_pending_updates
+ * null in the #2395 spike); ordering boots and disposals removes the race
+ * without touching the wasm layer.
+ */
+let embedClientBootQueue: Promise<unknown> = Promise.resolve();
+function enqueueEmbedClientBoot<T>(boot: () => Promise<T>): Promise<T> {
+  const queued = embedClientBootQueue.then(boot);
+  embedClientBootQueue = queued.catch(() => {});
+  return queued;
+}
+
 export class MogClient {
   /** Resolves when the client reaches 'ready' status. Rejects on error. */
   readonly ready: Promise<void>;
@@ -88,7 +102,7 @@ export class MogClient {
   private readonly _emitter = new ClientEventEmitterBridge();
 
   constructor(options: MogClientOptions) {
-    this.ready = this._boot(options);
+    this.ready = enqueueEmbedClientBoot(() => this._boot(options));
   }
 
   // ---------------------------------------------------------------------------
@@ -154,10 +168,14 @@ export class MogClient {
   /** Tear down the client, workbook, and all listeners. */
   dispose(): void {
     if (this._status === 'disposed') return;
-    this._workbook?.dispose();
+    const workbook = this._workbook;
     this._workbook = null;
     this._setStatus('disposed');
     this._emitter.removeAllListeners();
+    if (workbook) {
+      // Disposal joins the boot queue so it can never interleave with a boot.
+      void enqueueEmbedClientBoot(async () => workbook.dispose());
+    }
   }
 
   on<K extends keyof EmbedEventMap>(
@@ -176,6 +194,11 @@ export class MogClient {
     this._emitter._emit('status', status);
   }
 
+  /** sapiex-patches: opaque to TS control-flow narrowing across awaits. */
+  private _isDisposed(): boolean {
+    return this._status === 'disposed';
+  }
+
   private _assertReady(): void {
     if (this._status !== 'ready') {
       throw new Error(`MogClient is not ready (status: ${this._status})`);
@@ -188,21 +211,36 @@ export class MogClient {
 
   private async _boot(options: MogClientOptions): Promise<void> {
     try {
+      // sapiex-patches: a dispose that landed while queued wins outright.
+      if (this._isDisposed()) return;
+
       // 1. Resolve source bytes
       const xlsxBytes = this._normalizeSourceBytes(options.sourceBytes);
 
       // 2. Create workbook via zero-ceremony path
-      this._workbook = (await createWorkbook(xlsxBytes)) as unknown as InternalWorkbook;
+      const workbook = (await createWorkbook(xlsxBytes)) as unknown as InternalWorkbook;
+      if (this._isDisposed()) {
+        workbook.dispose();
+        return;
+      }
+      this._workbook = workbook;
 
       // 3. If a specific sheet was requested, switch to it
       if (options.sheet != null) {
         await this.setActiveSheet(options.sheet);
+      }
+      if (this._isDisposed()) {
+        const abandoned = this._workbook;
+        this._workbook = null;
+        abandoned?.dispose();
+        return;
       }
 
       // 4. Transition to ready
       this._setStatus('ready');
       this._emitter._emit('ready', undefined);
     } catch (err) {
+      if (this._isDisposed()) return;
       this._setStatus('error');
       const error = err instanceof Error ? err : new Error(String(err));
       this._emitter._emit('error', error);

@@ -51,6 +51,8 @@ export class EmbedRenderOrchestrator extends TypedEventEmitter<OrchestratorEvent
   private readonly _viewEvents: SheetDisposable;
   private _client: MogClient | null = null;
   private _disposed = false;
+  /** sapiex-patches: invalidates in-flight cell-info fetches on selection/sheet change. */
+  private _selectionRequestId = 0;
 
   constructor(container: HTMLElement, options?: EmbedRendererOptions) {
     super();
@@ -120,6 +122,7 @@ export class EmbedRenderOrchestrator extends TypedEventEmitter<OrchestratorEvent
   /** Switch to a different sheet by its SheetId. Called by the web component / React wrapper. */
   updateSheet(sheetId: string): void {
     if (this._disposed) return;
+    this._selectionRequestId++;
     this._view.switchSheet(sheetId);
   }
 
@@ -150,6 +153,48 @@ export class EmbedRenderOrchestrator extends TypedEventEmitter<OrchestratorEvent
       match[1]!.split('').reduce((acc, c) => acc * 26 + c.toUpperCase().charCodeAt(0) - 64, 0) - 1;
     const row = parseInt(match[2]!, 10) - 1;
     if (row >= 0 && col >= 0) this._view.scrollTo(row, col);
+  }
+
+  /** sapiex-patches: select a range via Mog's native selection renderer and scroll to it. */
+  selectRange(range: string): void {
+    if (this._disposed) return;
+    const parsed = parseA1RangeSafe(range);
+    if (!parsed) return;
+    this._applySelection(parsed, true);
+  }
+
+  /** sapiex-patches: host-owned visual mark anchored to a cell or A1 range. */
+  addDecoration(group: string, decoration: EmbedDecoration): void {
+    if (this._disposed) return;
+    const parsed = parseA1RangeSafe(decoration.range);
+    if (!parsed) return;
+    const isCell = parsed.startRow === parsed.endRow && parsed.startCol === parsed.endCol;
+    this._view.decorations.add({
+      group,
+      kind: decoration.kind,
+      anchor: isCell
+        ? { type: 'cell', row: parsed.startRow, col: parsed.startCol }
+        : { type: 'range', ...parsed },
+      style: {
+        color: decoration.color,
+        borderColor: decoration.borderColor,
+        borderWidth: decoration.borderWidth,
+        opacity: decoration.opacity,
+      },
+      animation: decoration.animation
+        ? {
+            preset: decoration.animation,
+            durationMs: decoration.durationMs,
+            iterations: decoration.iterations,
+          }
+        : undefined,
+    } as Parameters<SheetViewHandle['decorations']['add']>[0]);
+  }
+
+  /** sapiex-patches: clear all host-owned decorations in a group. */
+  clearDecorations(group: string): void {
+    if (this._disposed) return;
+    this._view.decorations.removeGroup(group);
   }
 
   setScrollPosition(position: { x: number; y: number }): void {
@@ -292,18 +337,43 @@ export class EmbedRenderOrchestrator extends TypedEventEmitter<OrchestratorEvent
     const merge = this._view.geometry.getMergeAnchor(row, col);
     const anchorRow = merge ? merge.startRow : row;
     const anchorCol = merge ? merge.startCol : col;
-
-    this._formulaBar?.setRef(anchorRow, anchorCol);
-    this.emit('cellSelect', { row: anchorRow, col: anchorCol });
-    void this._fetchCellInfo(anchorRow, anchorCol);
+    this._applySelection(
+      { startRow: anchorRow, startCol: anchorCol, endRow: anchorRow, endCol: anchorCol },
+      false,
+    );
   }
 
-  private async _fetchCellInfo(row: number, col: number): Promise<void> {
+  private _applySelection(
+    range: { startRow: number; startCol: number; endRow: number; endCol: number },
+    shouldScroll: boolean,
+  ): void {
+    const activeCell = { row: range.startRow, col: range.startCol };
+    this._view.renderState.update({
+      selection: { ranges: [range], activeCell },
+    } as Parameters<SheetViewHandle['renderState']['update']>[0]);
+    if (shouldScroll) this._view.scrollTo(activeCell.row, activeCell.col);
+    this._formulaBar?.setRef(activeCell.row, activeCell.col);
+    this.emit('cellSelect', activeCell);
+    const requestId = ++this._selectionRequestId;
+    void this._fetchCellInfo(activeCell.row, activeCell.col, requestId);
+  }
+
+  private async _fetchCellInfo(row: number, col: number, requestId: number): Promise<void> {
     const client = this._client;
     if (!client || client.status !== 'ready') return;
     try {
       const ws = client.getActiveSheet();
       const cell = await ws.getCell(row, col);
+      // sapiex-patches: a newer selection, sheet switch, client swap, or
+      // dispose invalidates this fetch — never write a stale formula bar.
+      if (
+        this._disposed ||
+        this._client !== client ||
+        client.status !== 'ready' ||
+        requestId !== this._selectionRequestId
+      ) {
+        return;
+      }
       const ref = cellRef(row, col);
       const formula = cell?.formula ?? cell?.value?.toString() ?? '';
       this._formulaBar?.setCellInfo({ ref, formula });
@@ -311,6 +381,45 @@ export class EmbedRenderOrchestrator extends TypedEventEmitter<OrchestratorEvent
       // Ignore — embed is display-only.
     }
   }
+}
+
+/** sapiex-patches: host-owned visual mark anchored to a cell or A1 range. */
+export interface EmbedDecoration {
+  range: string;
+  kind: 'fill' | 'border' | 'underline' | 'stripe' | 'glow';
+  color?: string;
+  borderColor?: string;
+  borderWidth?: number;
+  opacity?: number;
+  animation?: 'none' | 'pulse' | 'shimmer';
+  durationMs?: number;
+  iterations?: number;
+}
+
+/** Zero-based A1 range parse; null on anything unparseable or negative. */
+function parseA1RangeSafe(
+  range: string,
+): { startRow: number; startCol: number; endRow: number; endCol: number } | null {
+  const parseCell = (ref: string): { row: number; col: number } | null => {
+    const match = /^\$?([A-Z]+)\$?(\d+)$/i.exec(ref.trim());
+    if (!match) return null;
+    const col =
+      match[1]!.toUpperCase().split('').reduce((acc, c) => acc * 26 + c.charCodeAt(0) - 64, 0) - 1;
+    const row = parseInt(match[2]!, 10) - 1;
+    if (row < 0 || col < 0) return null;
+    return { row, col };
+  };
+  const [startRef, endRef] = range.split(':');
+  const start = parseCell(startRef ?? '');
+  if (!start) return null;
+  const end = endRef ? parseCell(endRef) : start;
+  if (!end) return null;
+  return {
+    startRow: Math.min(start.row, end.row),
+    startCol: Math.min(start.col, end.col),
+    endRow: Math.max(start.row, end.row),
+    endCol: Math.max(start.col, end.col),
+  };
 }
 
 /** Factory (back-compat with the web component + React wrapper). */

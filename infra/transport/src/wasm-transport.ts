@@ -83,6 +83,11 @@ export function createWasmTransport(getModule: () => WasmModule): BridgeTranspor
   return {
     async call<T = unknown>(command: string, args: Record<string, unknown>): Promise<T> {
       const wasm = getModule();
+      if (!wasm) {
+        // sapiex-patches: after a trap reset the module slot is null until
+        // re-instantiation; surface a catchable transport error, not a TypeError.
+        throw new TransportError(command, 'WASM module is unavailable after a trap reset');
+      }
       const fn = wasm[command];
       if (!fn) {
         throw new TransportError(command, `Unknown WASM function: ${command}`);

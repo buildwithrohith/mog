@@ -89,10 +89,29 @@ export interface MogSheetHandle {
   getEffectiveState(): MogEmbedEffectiveState | null;
   /** Navigate to a cell range (e.g. "A1", "B2:D10"). */
   navigateToRange(range: string): void;
+  /** sapiex-patches: select a range via Mog's native selection renderer and scroll to it. */
+  selectRange(range: string): void;
+  /** sapiex-patches: add a host-owned decoration to the active sheet. */
+  addDecoration(group: string, decoration: MogSheetDecoration): void;
+  /** sapiex-patches: clear all host-owned decorations in a group. */
+  clearDecorations(group: string): void;
   /** Recalculate layout after external container resize. */
   resize(): void;
   /** Tear down renderer and workbook resources. */
   dispose(): void;
+}
+
+/** sapiex-patches: host-owned visual mark anchored to a cell or A1 range. */
+export interface MogSheetDecoration {
+  range: string;
+  kind: 'fill' | 'border' | 'underline' | 'stripe' | 'glow';
+  color?: string;
+  borderColor?: string;
+  borderWidth?: number;
+  opacity?: number;
+  animation?: 'none' | 'pulse' | 'shimmer';
+  durationMs?: number;
+  iterations?: number;
 }
 
 /** @stability public-experimental */
@@ -316,6 +335,15 @@ export const MogSheet = forwardRef<MogSheetHandle, MogSheetProps>(function MogSh
     navigateToRange: (range: string) => {
       rendererRef.current?.navigateToRange?.(range);
     },
+    selectRange: (range: string) => {
+      rendererRef.current?.selectRange?.(range);
+    },
+    addDecoration: (group: string, decoration: MogSheetDecoration) => {
+      rendererRef.current?.addDecoration?.(group, decoration);
+    },
+    clearDecorations: (group: string) => {
+      rendererRef.current?.clearDecorations?.(group);
+    },
     resize: () => {
       const container = containerRef.current;
       if (!container || !rendererRef.current) return;
@@ -402,8 +430,16 @@ export const MogSheet = forwardRef<MogSheetHandle, MogSheetProps>(function MogSh
       offClientListeners.push(offReady, offError);
     };
 
-    void createReactEmbedHost(config, hostPolicy, sheet)
+    // sapiex-patches: defer creation past the current effect turn so React
+    // Strict Mode's synchronous mount/unmount pair cancels cleanly instead of
+    // racing two hosts against the wasm singleton (#2395 spike, 2c45d837f).
+    void Promise.resolve()
+      .then(() => {
+        if (disposed) return null;
+        return createReactEmbedHost(config, hostPolicy, sheet);
+      })
       .then((nextHost) => {
+        if (!nextHost) return;
         if (disposed) {
           nextHost.dispose();
           return;
