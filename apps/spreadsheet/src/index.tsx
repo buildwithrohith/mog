@@ -401,11 +401,33 @@ export default function SpreadsheetApp({
 
       // Trigger deferred Yrs hydration after React commits the first paint.
       // This must happen AFTER setContextValue so the grid renders first.
-      requestAnimationFrame(() => {
-        void handle!.scheduleDeferredHydration().catch((err) => {
-          console.warn('[SpreadsheetApp] Deferred hydration durability failed:', err);
+      //
+      // sapiex-patches: SKIP ENTIRELY IN READ-ONLY MODE.
+      //
+      // The fast-path import (`import_from_xlsx_bytes_deferred`) has already
+      // parsed the workbook and built its indexes — the grid is on screen by
+      // the time this fires. Per compute's own docs, this second stage exists
+      // only "to enable mutations and persistence"
+      // (compute/core/src/storage/engine/bridge_imports.rs:120). A read-only
+      // surface performs neither, so every byte it costs is waste.
+      //
+      // And the cost is fatal on large workbooks: the stage re-parses the
+      // whole XLSX (phase 0) and rebuilds every index, which exhausts the
+      // wasm32 4GiB address-space ceiling and traps the module with
+      // `unreachable`. Measured on the 19.4MB / 1.41M-cell / 28-sheet Cadence
+      // repro: `compute_complete_deferred_hydration wasmMemMB=4096`, after
+      // which the document is dead and shows the "Couldn't open this file"
+      // trap card. bb67ba70 skipped the Yrs WRITE above 600k cells, but the
+      // trap is downstream of that skip, so it did not help.
+      //
+      // Not upstreamable as-is: a read/write host still needs durability.
+      if (!readOnly) {
+        requestAnimationFrame(() => {
+          void handle!.scheduleDeferredHydration().catch((err) => {
+            console.warn('[SpreadsheetApp] Deferred hydration durability failed:', err);
+          });
         });
-      });
+      }
     }
 
     init();
