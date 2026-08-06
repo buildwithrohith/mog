@@ -35,7 +35,7 @@
       "path": "dev/version-control/registry/operation-classification.json",
       "kind": "operation-classification-registry",
       "generator": "dev/version-control/registry/check-operation-classification.mjs",
-      "sha256": "sha256:140bf45aad26a4da04ccc61ee5128d61657e5630c24fc0daf6be189074670387",
+      "sha256": "sha256:3438ae3389b164d7e829ed8bcc9035f8843ef9718827b72daf66dca7a27b9dea",
       "inputs": [
         {
           "path": "dev/version-control/registry/check-operation-classification.mjs",

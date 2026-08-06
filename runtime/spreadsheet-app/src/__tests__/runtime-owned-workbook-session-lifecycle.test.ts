@@ -20,7 +20,7 @@ import {
   decorateRuntimeOwnedHandleWithDefaultVersioning,
   type RegisteredSpreadsheetAppBridge,
 } from '../runtime-types';
-import { loadDocumentForSource } from '../shell-documents';
+import { loadDocumentForSource, materializeSpreadsheetWorkbook } from '../shell-documents';
 
 type WorkbookConfig = DocumentHandleWorkbookConfig;
 
@@ -373,6 +373,62 @@ test('runtime-owned workbook session stays usable headlessly and is disposed exp
     assert.deepEqual(disposedEvents, ['disposed']);
     assert.equal(runtime.getWorkbookSession(workbook.workbookId), null);
     assert.throws(() => workbook.getWorkbook(), /disposed/i);
+  } finally {
+    await disposeRuntime(runtime);
+  }
+});
+
+test('runtime workbook materialization passes read-only into the first workbook construction', async () => {
+  const capturedConfigs: Array<WorkbookConfig | undefined> = [];
+  const workbook = {};
+  const handle = {
+    workbook: async (config?: WorkbookConfig) => {
+      capturedConfigs.push(config);
+      return workbook;
+    },
+  } as DocumentHandle;
+  const skippedVersioning = {
+    status: 'skipped' as const,
+    providerSelection: null,
+    reason: 'local-persistence-skipped' as const,
+    diagnostics: [],
+  };
+
+  await materializeSpreadsheetWorkbook(handle, skippedVersioning, true);
+  assert.deepEqual(capturedConfigs, [{ readOnly: true }]);
+
+  capturedConfigs.length = 0;
+  await materializeSpreadsheetWorkbook(handle, skippedVersioning, false);
+  assert.deepEqual(capturedConfigs, [undefined]);
+
+  capturedConfigs.length = 0;
+  await materializeSpreadsheetWorkbook(handle, skippedVersioning);
+  assert.deepEqual(capturedConfigs, [undefined]);
+});
+
+test('public read-only open rejects workbook mutations and marks its attachment read-only', async () => {
+  let runtime: SpreadsheetRuntime | undefined;
+  try {
+    runtime = await createSpreadsheetRuntime(runtimeOptions('runtime-public-read-only'));
+    await runtime.ready;
+
+    const workbook = await runtime.openWorkbook({
+      workbookId: 'runtime-public-read-only-workbook',
+      readOnly: true,
+      source: { kind: 'blank' },
+    });
+    await workbook.ready;
+
+    await assert.rejects(() => workbook.getWorkbook().activeSheet.setCell('A1', 'blocked'));
+
+    const controller = (runtime as any)[SPREADSHEET_RUNTIME_ATTACHMENT_CONTROLLER];
+    const attachment = await controller.attach({
+      attachmentId: 'read-only-attachment',
+      workbook,
+      props: {},
+    });
+    assert.equal(attachment.readOnly, true);
+    await attachment.detach();
   } finally {
     await disposeRuntime(runtime);
   }

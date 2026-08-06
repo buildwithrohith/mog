@@ -252,6 +252,75 @@ pub(super) fn active_visible_deferred_fixture_xlsx() -> Vec<u8> {
     zip.finish().expect("write active-visible deferred fixture")
 }
 
+pub(super) fn three_sheet_deferred_fixture_xlsx() -> Vec<u8> {
+    let workbook = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <bookViews><workbookView activeTab="0"/></bookViews>
+  <sheets>
+    <sheet name="Reported KPIs" sheetId="1" r:id="rId1"/>
+    <sheet name="Retention" sheetId="2" r:id="rId2"/>
+    <sheet name="Usage &amp; Renewal" sheetId="3" r:id="rId3"/>
+  </sheets>
+</workbook>"#;
+    let reported = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <dimension ref="A1"/>
+  <sheetData><row r="1"><c r="A1"><v>274</v></c></row></sheetData>
+</worksheet>"#;
+    let retention = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <dimension ref="A1:C4"/>
+  <cols><col min="2" max="2" width="19.5" customWidth="1"/></cols>
+  <sheetData>
+    <row r="1"><c r="A1"><v>579</v></c></row>
+    <row r="4"><c r="C4"><v>42</v></c></row>
+  </sheetData>
+</worksheet>"#;
+    let usage = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <dimension ref="A1"/>
+  <sheetData><row r="1"><c r="A1"><v>1430</v></c></row></sheetData>
+</worksheet>"#;
+
+    let mut zip = ZipWriter::new();
+    zip.add_file(
+        "[Content_Types].xml",
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/worksheets/sheet3.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>"#
+            .to_vec(),
+    )
+    .add_file(
+        "_rels/.rels",
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>"#
+            .to_vec(),
+    )
+    .add_file("xl/workbook.xml", workbook.as_bytes().to_vec())
+    .add_file(
+        "xl/_rels/workbook.xml.rels",
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet3.xml"/>
+</Relationships>"#
+            .to_vec(),
+    )
+    .add_file("xl/worksheets/sheet1.xml", reported.as_bytes().to_vec())
+    .add_file("xl/worksheets/sheet2.xml", retention.as_bytes().to_vec())
+    .add_file("xl/worksheets/sheet3.xml", usage.as_bytes().to_vec());
+    zip.finish().expect("write three-sheet deferred fixture")
+}
+
 pub(super) fn metadata_outline_deferred_fixture_xlsx() -> Vec<u8> {
     let workbook = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">

@@ -112,6 +112,13 @@ describe('Compute mutation admission', () => {
       writeAdmissionMode: 'captureDisabledNoHistory',
       operationKind: 'sync-import',
     });
+    expect(
+      classifyWriteOperation('compute_materialize_deferred_sheet', 'system-mutation'),
+    ).toMatchObject({
+      capturePolicy: 'excluded',
+      writeAdmissionMode: 'captureDisabledNoHistory',
+      domainClass: 'external',
+    });
     expect(classifyWriteOperation('compute_init', 'lifecycle')).toMatchObject({
       capturePolicy: 'rootCreation',
       writeAdmissionMode: 'capture',
@@ -708,6 +715,27 @@ describe('Compute mutation admission', () => {
       widthPx: 120,
     });
     expect(afterMutationHook).not.toHaveBeenCalled();
+    expect(ctx.services?.undo.notifyForwardMutation).not.toHaveBeenCalled();
+  });
+
+  it('materializes a deferred preview sheet without public admission or provider writes', async () => {
+    const awaitMaterialized = jest.fn(async () => undefined);
+    const ctx = makeMockContext({ awaitMaterialized } as Partial<IKernelContext>);
+    const transport: BridgeTransport & { call: jest.Mock } = {
+      call: jest.fn(async () => [new Uint8Array(), mutationResult()]),
+    };
+    const bridge = createStartedBridge(ctx, transport);
+    const gate = new WriteGate();
+    gate.enterClosed();
+    bridge.setWriteGate(gate);
+
+    await bridge.materializeDeferredSheet(sheetId('sheet-a'));
+
+    expect(awaitMaterialized).not.toHaveBeenCalled();
+    expect(transport.call).toHaveBeenCalledWith('compute_materialize_deferred_sheet', {
+      docId: 'test-doc',
+      sheetId: 'sheet-a',
+    });
     expect(ctx.services?.undo.notifyForwardMutation).not.toHaveBeenCalled();
   });
 

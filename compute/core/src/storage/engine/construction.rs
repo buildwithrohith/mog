@@ -62,7 +62,8 @@ pub(in crate::storage::engine) use axis_resolver::{
 };
 pub(super) use csv::{from_csv_bytes, import_from_csv_bytes};
 pub(super) use deferred::{
-    commit_deferred_hydration, import_from_xlsx_bytes_deferred, stage_deferred_hydration,
+    commit_deferred_hydration, import_from_xlsx_bytes_deferred, materialize_deferred_sheet,
+    stage_deferred_hydration,
 };
 pub(super) use indexes::{
     build_grid_indexes_from_allocations_range, build_grid_indexes_from_yrs,

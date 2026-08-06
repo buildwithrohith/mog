@@ -6,6 +6,7 @@
 //! widths to the document.
 
 use cell_types::SheetId;
+use compute_layout_index::LayoutIndex;
 use domain_types::units::Pixels;
 use rustc_hash::FxHashMap;
 
@@ -48,5 +49,20 @@ impl DimensionPreviewOverlay {
     pub(crate) fn clear_all(&mut self) {
         self.row_heights.clear();
         self.col_widths.clear();
+    }
+
+    /// Reapply session-local overrides after construction replaces layout
+    /// indexes from a sparse deferred snapshot.
+    pub(crate) fn replay_into(&self, layout_indexes: &mut FxHashMap<SheetId, LayoutIndex>) {
+        for ((sheet_id, row), height) in &self.row_heights {
+            if let Some(layout) = layout_indexes.get_mut(sheet_id) {
+                layout.set_row_height(*row as usize, *height);
+            }
+        }
+        for ((sheet_id, col), width) in &self.col_widths {
+            if let Some(layout) = layout_indexes.get_mut(sheet_id) {
+                layout.set_col_width(*col as usize, *width);
+            }
+        }
     }
 }

@@ -92,6 +92,53 @@ describe('useSheetTabActions', () => {
     expect(setActiveSheetMock).toHaveBeenCalledWith('sheet-2');
   });
 
+  it('checks sheet materialization even after the import durability barrier has resolved', async () => {
+    const awaitMaterialized = jest
+      .fn<Promise<void>, [SheetId | 'allSheets'?]>()
+      .mockResolvedValue(undefined);
+    importDurabilityMock = {
+      isImportDurabilityPending: false,
+      awaitMaterialized,
+      awaitImportDurability: jest.fn<Promise<void>, []>().mockResolvedValue(undefined),
+    };
+
+    const { result } = renderHook(() => useSheetTabActions());
+
+    await act(async () => {
+      result.current.handleSelectSheet('sheet-2' as SheetId);
+    });
+
+    expect(awaitMaterialized).toHaveBeenCalledWith('sheet-2');
+    expect(importDurabilityMock.awaitImportDurability).not.toHaveBeenCalled();
+    expect(setActiveSheetMock).toHaveBeenCalledWith('sheet-2');
+  });
+
+  it('keeps the current sheet active when materializing the requested sheet fails', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const awaitMaterialized = jest
+      .fn<Promise<void>, [SheetId | 'allSheets'?]>()
+      .mockRejectedValue(new Error('sheet materialization failed'));
+    importDurabilityMock = {
+      isImportDurabilityPending: false,
+      awaitMaterialized,
+      awaitImportDurability: jest.fn<Promise<void>, []>().mockResolvedValue(undefined),
+    };
+
+    const { result } = renderHook(() => useSheetTabActions());
+
+    await act(async () => {
+      result.current.handleSelectSheet('sheet-2' as SheetId);
+    });
+
+    expect(awaitMaterialized).toHaveBeenCalledWith('sheet-2');
+    expect(setActiveSheetMock).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      '[SheetTabActions] Failed to materialize sheet before activation:',
+      expect.any(Error),
+    );
+    warn.mockRestore();
+  });
+
   it('only activates the latest requested imported sheet after materialization', async () => {
     let resolveFirst!: () => void;
     const firstMaterialization = new Promise<void>((resolve) => {

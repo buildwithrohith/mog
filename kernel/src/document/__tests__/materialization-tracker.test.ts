@@ -52,4 +52,18 @@ describe('DocumentMaterializationTracker', () => {
       sheetId('first'),
     ]);
   });
+
+  it('marks only the requested deferred sheet as materialized', () => {
+    const tracker = new DocumentMaterializationTracker();
+    tracker.markDeferredImport(
+      [sheetId('critical'), sheetId('secondary'), sheetId('tertiary')],
+      [sheetId('critical')],
+    );
+
+    tracker.markMaterialized(sheetId('secondary'));
+
+    expect(tracker.requiresDeferredHydration(sheetId('secondary'))).toBe(false);
+    expect(tracker.requiresDeferredHydration(sheetId('tertiary'))).toBe(true);
+    expect(tracker.requiresDeferredHydration('allSheets')).toBe(true);
+  });
 });

@@ -217,6 +217,7 @@
           "compute_import_from_xlsx_bytes",
           "compute_import_from_xlsx_bytes_deferred",
           "compute_import_sheets_from_xlsx",
+          "compute_materialize_deferred_sheet",
           "compute_settle_for_mirror"
         ]
       },
@@ -344,6 +345,7 @@
       "match": {
         "type": "prefix",
         "prefixes": [
+          "compute_preview_",
           "compute_set_calculation",
           "compute_set_convergence",
           "compute_set_default_",

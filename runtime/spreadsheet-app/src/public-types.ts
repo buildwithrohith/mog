@@ -486,6 +486,12 @@ export interface SpreadsheetOpenWorkbookRequest {
   readonly workbookId: string;
   readonly workbookSessionId?: WorkbookSessionId;
   readonly displayName?: string;
+  /**
+   * Opens the workbook as document-lifetime read-only. This is a hard document
+   * invariant; attachment edit policies may further restrict access but cannot
+   * make a read-only workbook writable.
+   */
+  readonly readOnly?: boolean;
   readonly source: SpreadsheetDocumentSource;
 }
 

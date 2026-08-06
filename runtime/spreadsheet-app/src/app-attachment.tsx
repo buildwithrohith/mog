@@ -15,6 +15,7 @@ import { ShellProvider } from '@mog/app-spreadsheet';
 import { SpreadsheetEmbedRuntimeProvider } from '@mog/app-spreadsheet/embed-runtime';
 
 import {
+  enforceAttachmentDocumentReadOnly,
   SPREADSHEET_RUNTIME_ATTACHMENT_CONTROLLER,
   type SpreadsheetAttachmentCommandRequest,
   type SpreadsheetRuntimeAttachmentEnvironment,
@@ -752,11 +753,24 @@ const MogSpreadsheetAppImpl = forwardRef<
 
   const environment = state.environment;
   const effectiveFeatureGates = useMemo(
-    () =>
-      mergeFeatureGates(props.featurePolicy, props.chrome, props.commands, props.editModel, {
-        versionControl: state.defaultVersioning?.status === 'attached',
-      }),
-    [props.featurePolicy, props.chrome, props.commands, props.editModel, state.defaultVersioning],
+    () => {
+      const merged = mergeFeatureGates(
+        props.featurePolicy,
+        props.chrome,
+        props.commands,
+        props.editModel,
+        { versionControl: state.defaultVersioning?.status === 'attached' },
+      );
+      return enforceAttachmentDocumentReadOnly(merged, environment?.readOnly === true);
+    },
+    [
+      props.featurePolicy,
+      props.chrome,
+      props.commands,
+      props.editModel,
+      state.defaultVersioning,
+      environment?.readOnly,
+    ],
   );
 
   const hostCommands = useMemo(

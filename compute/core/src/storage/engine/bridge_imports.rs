@@ -2,6 +2,7 @@ use bridge_core as bridge;
 
 use super::{CsvImportOptions, YrsComputeEngine, construction, services};
 use crate::snapshot::{ChangeKind, MutationResult, RecalcResult, WorkbookSnapshot};
+use cell_types::SheetId;
 use value_types::ComputeError;
 
 #[bridge::api(
@@ -206,6 +207,31 @@ impl YrsComputeEngine {
         suppress_deferred_duplicate_filter_created_changes(
             &mut result,
             &deferred_filter_created_keys,
+        );
+        Ok((
+            compute_wire::mutation::serialize_multi_viewport_patches(&[]),
+            result,
+        ))
+    }
+
+    /// Materialize one deferred XLSX sheet for preview without hydrating Yrs.
+    ///
+    /// This keeps the workbook deferred: mutations, persistence, and exports
+    /// still require `complete_deferred_hydration`. It exists for read-only
+    /// surfaces that need to switch sheets without paying the all-workbook Yrs
+    /// write or constructing every sheet in wasm memory at once.
+    #[bridge::write(scope = "sheet")]
+    #[bridge::skip(ts_bridge)]
+    #[tracing::instrument(name = "engine_materialize_deferred_sheet", skip_all)]
+    pub fn materialize_deferred_sheet(
+        &mut self,
+        sheet_id: SheetId,
+    ) -> Result<(Vec<u8>, MutationResult), ComputeError> {
+        construction::materialize_deferred_sheet(self, sheet_id)?;
+        let result = services::mutation_handlers::build_mutation_result_for_deferred(
+            &self.stores,
+            &self.mirror,
+            self.deferred_hydration.as_ref(),
         );
         Ok((
             compute_wire::mutation::serialize_multi_viewport_patches(&[]),

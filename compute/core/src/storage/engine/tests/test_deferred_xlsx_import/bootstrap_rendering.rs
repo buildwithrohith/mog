@@ -204,6 +204,96 @@ fn deferred_xlsx_import_materializes_active_visible_sheet_before_full_hydration(
 }
 
 #[test]
+fn deferred_xlsx_preview_materializes_only_the_requested_sheet_without_yrs_completion() {
+    let bytes = three_sheet_deferred_fixture_xlsx();
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(simple_snapshot()).unwrap();
+    engine
+        .import_from_xlsx_bytes_deferred(&bytes)
+        .expect("deferred XLSX import should succeed");
+
+    let ids = engine.get_all_sheet_ids();
+    assert_eq!(ids.len(), 3);
+    let reported = SheetId::from_uuid_str(&ids[0]).unwrap();
+    let retention = SheetId::from_uuid_str(&ids[1]).unwrap();
+    let usage = SheetId::from_uuid_str(&ids[2]).unwrap();
+    assert_eq!(
+        engine.get_cell_value(&reported, 0, 0),
+        CellValue::number(274.0)
+    );
+    assert!(engine.get_cell_id_at(&retention, 0, 0).is_none());
+    assert!(engine.get_cell_id_at(&usage, 0, 0).is_none());
+    engine
+        .preview_set_col_width(&reported, 0, 123.0)
+        .expect("landing-sheet preview resize should succeed");
+
+    engine
+        .materialize_deferred_sheet(retention)
+        .expect("sheet-scoped preview materialization should succeed");
+
+    assert_eq!(
+        engine.get_cell_value(&retention, 0, 0),
+        CellValue::number(579.0),
+        "Retention should become queryable without full hydration"
+    );
+    assert_eq!(
+        engine.get_cell_value(&retention, 3, 2),
+        CellValue::number(42.0)
+    );
+    assert_eq!(
+        engine.get_cell_value(&reported, 0, 0),
+        CellValue::number(274.0),
+        "the landing sheet should remain materialized after the sparse rebuild"
+    );
+    assert_eq!(
+        engine.get_col_width_query(&reported, 0),
+        123.0,
+        "sheet switching must replay the session-local resize overlay"
+    );
+    assert!(
+        engine.get_cell_id_at(&usage, 0, 0).is_none(),
+        "Usage & Renewal must remain metadata-only until explicitly requested"
+    );
+    assert!(
+        engine.deferred_hydration.is_some(),
+        "preview materialization must retain the durability/export guard"
+    );
+    assert!(
+        engine.get_col_width_query(&retention, 1) > engine.get_col_width_query(&retention, 0),
+        "the selected sheet's custom column width should reach its layout index"
+    );
+    assert!(
+        engine.export_to_parse_output().is_err(),
+        "a partially materialized preview must not export the incomplete Yrs document"
+    );
+
+    let retention_a1_id = engine
+        .get_cell_id_at(&retention, 0, 0)
+        .expect("Retention A1 should have a stable allocated identity");
+    engine
+        .materialize_deferred_sheet(usage)
+        .expect("a second sheet-scoped preview materialization should succeed");
+    assert_eq!(
+        engine.get_cell_value(&usage, 0, 0),
+        CellValue::number(1430.0),
+        "Usage & Renewal should become queryable when requested"
+    );
+    assert_eq!(
+        engine.get_cell_value(&retention, 0, 0),
+        CellValue::number(579.0),
+        "the cumulative sparse rebuild must retain Retention"
+    );
+    assert_eq!(
+        engine.get_cell_id_at(&retention, 0, 0).as_deref(),
+        Some(retention_a1_id.as_str()),
+        "materializing another sheet must reuse Retention's allocated cell ID"
+    );
+    assert!(
+        engine.deferred_hydration.is_some(),
+        "materializing every previewed sheet still must not claim Yrs durability"
+    );
+}
+
+#[test]
 fn deferred_xlsx_completion_then_grouped_paste_undo_preserves_redo_stack() {
     let bytes = active_visible_deferred_fixture_xlsx();
 

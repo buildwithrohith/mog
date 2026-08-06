@@ -352,6 +352,12 @@ export class DocumentLifecycleSystem {
   /** Owns deferred-import sheet scope; not a sheet-existence registry. */
   private readonly materializationTracker = new DocumentMaterializationTracker();
 
+  /** In-flight read-only materialization, keyed by deferred sheet for request deduplication. */
+  private readonly readOnlySheetMaterializationPromises = new Map<SheetId, Promise<void>>();
+
+  /** Serializes read-only sheet materialization because each request mutates shared engine state. */
+  private readOnlySheetMaterializationTail: Promise<void> = Promise.resolve();
+
   /** Provider registry for the host-backed path (the storage provider lifecycle). */
   private readonly providerRegistry: StorageProviderRegistry;
 
@@ -931,7 +937,36 @@ export class DocumentLifecycleSystem {
       return;
     }
 
+    if (scope !== 'allSheets' && this.isReadOnlyDocument()) {
+      await this.materializeReadOnlySheet(scope);
+      return;
+    }
+
     await this.ensureDeferredHydration();
+  }
+
+  private materializeReadOnlySheet(sheetId: SheetId): Promise<void> {
+    const existing = this.readOnlySheetMaterializationPromises.get(sheetId);
+    if (existing) return existing;
+
+    const bridge = this.actor.getSnapshot().context.computeBridge;
+    if (!bridge) {
+      return Promise.reject(new Error(`Cannot materialize deferred sheet ${sheetId}: bridge missing`));
+    }
+
+    const materialization = this.readOnlySheetMaterializationTail
+      .catch(() => undefined)
+      .then(() => bridge.materializeDeferredSheet(sheetId))
+      .then(async () => {
+        await bridge.forceRefreshAllViewports();
+        this.materializationTracker.markMaterialized(sheetId);
+      })
+      .finally(() => {
+        this.readOnlySheetMaterializationPromises.delete(sheetId);
+      });
+    this.readOnlySheetMaterializationPromises.set(sheetId, materialization);
+    this.readOnlySheetMaterializationTail = materialization;
+    return materialization;
   }
 
   getMaterializationState(): MaterializationState {
@@ -963,7 +998,11 @@ export class DocumentLifecycleSystem {
       };
     }
 
-    if (this.deferredHydrationPending || this.importDurabilityPending) {
+    if (
+      this.deferredHydrationPending ||
+      this.importDurabilityPending ||
+      this.materializationTracker.requiresDeferredHydration('allSheets')
+    ) {
       return {
         phase: 'CriticalSheetReady',
         isDeferred: true,
@@ -1008,6 +1047,12 @@ export class DocumentLifecycleSystem {
     return Promise.resolve();
   }
 
+  private resolveImportDurabilityWithoutWork(): Promise<void> {
+    this.deferredHydrationPending = false;
+    this.importDurabilityPending = false;
+    return Promise.resolve();
+  }
+
   /**
    * Schedule the deferred Yrs CRDT hydration.
    * Call AFTER the first viewport paint to avoid blocking the UI.
@@ -1015,7 +1060,7 @@ export class DocumentLifecycleSystem {
    */
   scheduleDeferredHydration(options?: { immediate?: boolean }): Promise<void> {
     if (this.isReadOnlyDocument()) {
-      return this.resolveDeferredHydrationWithoutWork();
+      return this.resolveImportDurabilityWithoutWork();
     }
     if (this.deferredHydrationPromise) {
       if (options?.immediate) {
@@ -2264,7 +2309,12 @@ export class DocumentLifecycleSystem {
    */
   private async executeDisposeBridge(input: DisposeBridgeInput): Promise<void> {
     if (this.isReadOnlyDocument()) {
-      await this.resolveDeferredHydrationWithoutWork();
+      await this.resolveImportDurabilityWithoutWork();
+      try {
+        await this.readOnlySheetMaterializationTail;
+      } catch (err) {
+        slog('documentLifecycle.disposeReadOnlySheetMaterializationFailed', { error: err });
+      }
     } else {
       try {
         await this.awaitImportDurability();

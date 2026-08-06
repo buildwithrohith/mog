@@ -112,9 +112,12 @@ export async function resolveDocumentVersioningReadiness(
 export async function materializeSpreadsheetWorkbook(
   handle: SpreadsheetAppDocumentHandle,
   documentVersioning: SpreadsheetRuntimeDocumentVersioningReadiness,
+  readOnly = false,
 ): Promise<ShellDocumentWorkbookResult> {
   try {
-    const workbook = (await handle.workbook()) as SpreadsheetAppWorkbook;
+    const workbook = (await (readOnly
+      ? handle.workbook({ readOnly: true })
+      : handle.workbook())) as SpreadsheetAppWorkbook;
     return {
       workbook,
       documentVersioning: await resolveDocumentVersioningReadiness(workbook, documentVersioning),

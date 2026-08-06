@@ -177,14 +177,17 @@ export function useSheetTabActions(
       const requestId = ++selectSheetRequestIdRef.current;
 
       void (async () => {
-        if (importDurability?.isImportDurabilityPending) {
-          const awaitMaterialized =
-            importDurability.awaitMaterialized?.bind(importDurability) ??
-            importDurability.awaitImportDurability.bind(importDurability);
+        if (importDurability) {
+          const awaitMaterialized = importDurability.awaitMaterialized?.bind(importDurability);
           try {
-            await awaitMaterialized(sheetId);
+            if (awaitMaterialized) {
+              await awaitMaterialized(sheetId);
+            } else if (importDurability.isImportDurabilityPending) {
+              await importDurability.awaitImportDurability();
+            }
           } catch (error) {
             console.warn('[SheetTabActions] Failed to materialize sheet before activation:', error);
+            return;
           }
         }
 

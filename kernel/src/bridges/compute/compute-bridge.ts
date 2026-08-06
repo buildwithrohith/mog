@@ -573,6 +573,22 @@ export class ComputeBridge extends GeneratedBridgeBase {
   }
 
   /**
+   * Materialize one deferred XLSX sheet into session-local preview state.
+   *
+   * Like dimension previews, this bypasses the public write gate and provider
+   * drain: the Rust command updates engine-local mirror/index state while the
+   * deferred durability/export guard remains installed.
+   */
+  materializeDeferredSheet(sheetId: SheetId): Promise<MutationResult> {
+    return this.core.mutateSystemView('compute_materialize_deferred_sheet', () =>
+      this.core.transport.call<[Uint8Array, MutationResult]>(
+        'compute_materialize_deferred_sheet',
+        { docId: this.core.docId, sheetId },
+      ),
+    );
+  }
+
+  /**
    * Apply an ephemeral row-height preview through the system/view pipeline.
    * This is intentionally handwritten so it bypasses public materialization
    * admission and the closed read-only WriteGate without changing durable

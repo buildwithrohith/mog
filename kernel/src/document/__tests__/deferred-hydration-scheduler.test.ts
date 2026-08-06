@@ -31,6 +31,8 @@ type SchedulerHarness = Pick<
   importDurabilityPending: boolean;
   materializationError: null;
   materializationTracker: DocumentMaterializationTracker;
+  readOnlySheetMaterializationPromises: Map<SheetId, Promise<void>>;
+  readOnlySheetMaterializationTail: Promise<void>;
   _storageState: { readOnly: boolean };
 };
 
@@ -47,14 +49,20 @@ function createSchedulerHarness(
     (options.deferredImportSheetIds ?? ['critical-sheet', 'secondary-sheet']) as SheetId[],
     (options.materializedSheetIds ?? ['critical-sheet']) as SheetId[],
   );
+  const computeBridge = {
+    completeDeferredHydration,
+    forceRefreshAllViewports: jest.fn().mockResolvedValue(undefined),
+  } as {
+    completeDeferredHydration: jest.Mock;
+    forceRefreshAllViewports: jest.Mock;
+    materializeDeferredSheet?: jest.Mock;
+  };
 
   const harness = Object.create(DocumentLifecycleSystem.prototype) as SchedulerHarness;
   harness.actor = {
     getSnapshot: () => ({
       context: {
-        computeBridge: {
-          completeDeferredHydration,
-        },
+        computeBridge,
         initialSheetIds: ['critical-sheet', 'secondary-sheet'],
       },
       matches: (state: string) => state === 'ready',
@@ -70,6 +78,8 @@ function createSchedulerHarness(
   harness.importDurabilityPending = false;
   harness.materializationError = null;
   harness.materializationTracker = materializationTracker;
+  harness.readOnlySheetMaterializationPromises = new Map();
+  harness.readOnlySheetMaterializationTail = Promise.resolve();
   harness._storageState = { readOnly: false };
   return harness;
 }
@@ -93,7 +103,7 @@ describe('DocumentLifecycleSystem deferred hydration scheduling', () => {
     expect(harness.startDeferredHydrationNow).toBeNull();
   });
 
-  it('resolves read-only hydration barriers without invoking the bridge write path', async () => {
+  it('resolves read-only durability barriers without falsely materializing deferred sheets', async () => {
     const completeDeferredHydration = jest.fn().mockResolvedValue(undefined);
     const harness = createSchedulerHarness(completeDeferredHydration);
     harness._storageState.readOnly = true;
@@ -105,7 +115,12 @@ describe('DocumentLifecycleSystem deferred hydration scheduling', () => {
     expect(harness.importDurabilityPending).toBe(false);
     expect(
       harness.materializationTracker.requiresDeferredHydration('secondary-sheet' as SheetId),
-    ).toBe(false);
+    ).toBe(true);
+    expect(harness.getMaterializationState()).toMatchObject({
+      phase: 'CriticalSheetReady',
+      isDeferred: true,
+      isMaterialized: false,
+    });
   });
 
   it('uses workbook read-only configuration at the scheduler call site', async () => {
@@ -175,6 +190,106 @@ describe('DocumentLifecycleSystem deferred hydration scheduling', () => {
     expect(completeDeferredHydration).toHaveBeenCalledTimes(1);
     expect(harness.deferredHydrationPending).toBe(false);
     expect(harness.importDurabilityPending).toBe(false);
+  });
+
+  it('materializes only the requested deferred sheet in read-only mode', async () => {
+    const completeDeferredHydration = jest.fn().mockResolvedValue(undefined);
+    const materializeDeferredSheet = jest.fn().mockResolvedValue(undefined);
+    const harness = createSchedulerHarness(completeDeferredHydration, {
+      deferredImportSheetIds: ['critical-sheet', 'secondary-sheet', 'tertiary-sheet'],
+    });
+    harness.setWorkbookReadOnly(true);
+    (
+      harness.actor.getSnapshot().context.computeBridge as {
+        materializeDeferredSheet: typeof materializeDeferredSheet;
+      }
+    ).materializeDeferredSheet = materializeDeferredSheet;
+
+    await harness.awaitMaterialized('secondary-sheet' as SheetId);
+
+    expect(materializeDeferredSheet).toHaveBeenCalledTimes(1);
+    expect(materializeDeferredSheet).toHaveBeenCalledWith('secondary-sheet');
+    expect(
+      (
+        harness.actor.getSnapshot().context.computeBridge as {
+          forceRefreshAllViewports: jest.Mock;
+        }
+      ).forceRefreshAllViewports,
+    ).toHaveBeenCalledTimes(1);
+    expect(completeDeferredHydration).not.toHaveBeenCalled();
+    expect(
+      harness.materializationTracker.requiresDeferredHydration('secondary-sheet' as SheetId),
+    ).toBe(false);
+    expect(
+      harness.materializationTracker.requiresDeferredHydration('tertiary-sheet' as SheetId),
+    ).toBe(true);
+  });
+
+  it('deduplicates concurrent read-only sheet materialization', async () => {
+    const completeDeferredHydration = jest.fn().mockResolvedValue(undefined);
+    let resolveMaterialization!: () => void;
+    const materialization = new Promise<void>((resolve) => {
+      resolveMaterialization = resolve;
+    });
+    const materializeDeferredSheet = jest.fn().mockReturnValue(materialization);
+    const harness = createSchedulerHarness(completeDeferredHydration);
+    harness.setWorkbookReadOnly(true);
+    (
+      harness.actor.getSnapshot().context.computeBridge as {
+        materializeDeferredSheet: typeof materializeDeferredSheet;
+      }
+    ).materializeDeferredSheet = materializeDeferredSheet;
+
+    const first = harness.awaitMaterialized('secondary-sheet' as SheetId);
+    const second = harness.awaitMaterialized('secondary-sheet' as SheetId);
+    resolveMaterialization();
+
+    await Promise.all([first, second]);
+    expect(materializeDeferredSheet).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a sheet deferred when read-only materialization fails', async () => {
+    const completeDeferredHydration = jest.fn().mockResolvedValue(undefined);
+    const materializeDeferredSheet = jest
+      .fn()
+      .mockRejectedValue(new Error('sheet materialization failed'));
+    const harness = createSchedulerHarness(completeDeferredHydration);
+    harness.setWorkbookReadOnly(true);
+    (
+      harness.actor.getSnapshot().context.computeBridge as {
+        materializeDeferredSheet: typeof materializeDeferredSheet;
+      }
+    ).materializeDeferredSheet = materializeDeferredSheet;
+
+    await expect(harness.awaitMaterialized('secondary-sheet' as SheetId)).rejects.toThrow(
+      'sheet materialization failed',
+    );
+
+    expect(
+      harness.materializationTracker.requiresDeferredHydration('secondary-sheet' as SheetId),
+    ).toBe(true);
+  });
+
+  it('keeps a sheet deferred when its post-materialization viewport refresh fails', async () => {
+    const completeDeferredHydration = jest.fn().mockResolvedValue(undefined);
+    const materializeDeferredSheet = jest.fn().mockResolvedValue(undefined);
+    const harness = createSchedulerHarness(completeDeferredHydration);
+    harness.setWorkbookReadOnly(true);
+    const bridge = harness.actor.getSnapshot().context.computeBridge as {
+      materializeDeferredSheet: typeof materializeDeferredSheet;
+      forceRefreshAllViewports: jest.Mock;
+    };
+    bridge.materializeDeferredSheet = materializeDeferredSheet;
+    bridge.forceRefreshAllViewports.mockRejectedValue(new Error('viewport refresh failed'));
+
+    await expect(harness.awaitMaterialized('secondary-sheet' as SheetId)).rejects.toThrow(
+      'viewport refresh failed',
+    );
+
+    expect(materializeDeferredSheet).toHaveBeenCalledTimes(1);
+    expect(
+      harness.materializationTracker.requiresDeferredHydration('secondary-sheet' as SheetId),
+    ).toBe(true);
   });
 
   it('does not force deferred import hydration for sheets outside the deferred scope', async () => {

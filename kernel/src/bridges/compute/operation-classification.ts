@@ -45,6 +45,7 @@ const SYNC_EXCLUDED_COMMANDS = new Set([
   'compute_import_from_xlsx_bytes',
   'compute_import_from_xlsx_bytes_deferred',
   'compute_import_sheets_from_xlsx',
+  'compute_materialize_deferred_sheet',
   'compute_settle_for_mirror',
 ]);
 

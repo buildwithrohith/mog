@@ -85,6 +85,7 @@ type ShellRuntimeAssetConfig = ShellBootstrapConfig & {
 type RuntimeWorkbookRecord = WorkbookRecord & {
   readonly appKernel: IAppKernelAPI;
   readonly displayName: string;
+  readonly readOnly: boolean;
   readonly documentVersioning: SpreadsheetRuntimeDocumentVersioningReadiness;
   attachmentState: SpreadsheetAttachmentState;
   readonly attachmentListeners: Set<(state: SpreadsheetAttachmentState) => void>;
@@ -536,6 +537,7 @@ class SpreadsheetRuntimeController
       attachmentId: request.attachmentId,
       workbookId: record.workbookId,
       workbook: request.workbook,
+      readOnly: record.readOnly,
       documentId: record.documentId,
       documentVersioning: record.documentVersioning,
       shell: this.shell,
@@ -977,6 +979,7 @@ class SpreadsheetRuntimeController
         'Embedded Mog workbook',
       loaded.documentVersioning,
       source.kind === 'xlsx-bytes' ? source.versionId : undefined,
+      input.readOnly === true,
     );
     this.records.set(workbookSessionId, record);
     const session = new RuntimeWorkbookSession(this, record);
@@ -993,9 +996,10 @@ class SpreadsheetRuntimeController
     displayName: string,
     documentVersioning: SpreadsheetRuntimeDocumentVersioningReadiness,
     versionId?: string,
+    readOnly = false,
   ): Promise<RuntimeWorkbookRecord> {
     const { workbook, documentVersioning: resolvedDocumentVersioning } =
-      await materializeSpreadsheetWorkbook(handle, documentVersioning);
+      await materializeSpreadsheetWorkbook(handle, documentVersioning, readOnly);
     workbook.markClean();
     const record: RuntimeWorkbookRecord = {
       workbookSessionId,
@@ -1003,6 +1007,7 @@ class SpreadsheetRuntimeController
       workbookId,
       epoch,
       displayName,
+      readOnly,
       documentVersioning: resolvedDocumentVersioning,
       foreground: false,
       handle,

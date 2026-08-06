@@ -38,6 +38,10 @@ export class DocumentMaterializationTracker {
     this.deferredSheetIds.clear();
   }
 
+  markMaterialized(sheetId: SheetId): void {
+    this.deferredSheetIds.delete(sheetId);
+  }
+
   requiresDeferredHydration(scope: SheetId | 'allSheets'): boolean {
     if (scope === 'allSheets') return this.deferredSheetIds.size > 0;
     return this.deferredSheetIds.has(scope);

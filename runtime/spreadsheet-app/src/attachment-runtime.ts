@@ -1,4 +1,5 @@
 import type { IAppKernelAPI } from '@mog-sdk/contracts/apps';
+import type { FeatureGates } from '@mog-sdk/contracts/feature-gates';
 import type { ShellBootstrapResult } from '@mog/shell/bootstrap';
 
 import type {
@@ -16,6 +17,13 @@ import type {
 export const SPREADSHEET_RUNTIME_ATTACHMENT_CONTROLLER: unique symbol = Symbol.for(
   '@mog-sdk/spreadsheet-app.runtimeAttachmentController',
 ) as never;
+
+export function enforceAttachmentDocumentReadOnly(
+  featureGates: FeatureGates,
+  readOnly: boolean,
+): FeatureGates {
+  return readOnly ? { ...featureGates, editing: false } : featureGates;
+}
 
 export type SpreadsheetAttachmentCommandRequest = {
   readonly command: SpreadsheetCommandRequest['command'];
@@ -76,6 +84,8 @@ export interface SpreadsheetRuntimeAttachmentEnvironment {
   readonly attachmentId: string;
   readonly workbookId: string;
   readonly workbook: SpreadsheetWorkbookSession;
+  /** Hard document-level read-only invariant established when the workbook opened. */
+  readonly readOnly: boolean;
   readonly documentId: string;
   readonly documentVersioning: SpreadsheetRuntimeDocumentVersioningReadiness;
   readonly shell: ShellBootstrapResult;
