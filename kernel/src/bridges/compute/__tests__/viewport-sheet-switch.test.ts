@@ -224,6 +224,49 @@ describe('refreshViewportForRegion — sheet-scoped viewport IDs', () => {
     );
   });
 
+  it('resets the previous sheet and repopulates its viewport when revisited', async () => {
+    const transport = makeMockTransport();
+    const core = createStartedCore(transport);
+
+    // Visit sheet-1, then simulate the switch cleanup performed before
+    // disposing its viewport region.
+    await core.refreshViewportForRegion('main:sheet-1', sheetId('sheet-1'), bounds);
+    expect(core.getPerViewportStates().has('main:sheet-1')).toBe(true);
+
+    transport.call.mockClear();
+    await core.resetSheetViewportRegions(sheetId('sheet-1'));
+    await core.unregisterViewportRegion('main:sheet-1');
+
+    expect(transport.call).toHaveBeenCalledWith(
+      'compute_reset_sheet_viewports',
+      { docId: 'test-doc', sheetId: 'sheet-1' },
+    );
+    expect(transport.call).toHaveBeenCalledWith(
+      'compute_unregister_viewport',
+      { docId: 'test-doc', viewportId: 'main:sheet-1' },
+    );
+    expect(core.getPerViewportStates().has('main:sheet-1')).toBe(false);
+
+    // Visit sheet-2 to model the active sheet after the switch.
+    await core.refreshViewportForRegion('main:sheet-2', sheetId('sheet-2'), bounds);
+    expect(core.getPerViewportStates().has('main:sheet-2')).toBe(true);
+
+    transport.call.mockClear();
+
+    // Revisit sheet-1: cleanup removed its cache, so it must register and
+    // fetch fresh data rather than reusing the old buffer.
+    await core.refreshViewportForRegion('main:sheet-1', sheetId('sheet-1'), bounds);
+
+    expect(transport.call).toHaveBeenCalledWith(
+      'compute_get_viewport_binary',
+      expect.objectContaining({ sheetId: 'sheet-1' }),
+    );
+    expect(core.getPerViewportStates().has('main:sheet-1')).toBe(true);
+    const accessor = core.getViewportBuffer('main:sheet-1')?.createAccessor();
+    expect(accessor?.moveTo(0, 0)).toBe(true);
+    expect(accessor?.displayText).toBe('Sheet1 Data');
+  });
+
   it('switch-back sets visible window to real bounds (not zero)', async () => {
     const transport = makeMockTransport();
     const core = createStartedCore(transport);

@@ -52,9 +52,11 @@ function createSchedulerHarness(
   const computeBridge = {
     completeDeferredHydration,
     forceRefreshAllViewports: jest.fn().mockResolvedValue(undefined),
+    forceRefreshSheetViewports: jest.fn().mockResolvedValue(undefined),
   } as {
     completeDeferredHydration: jest.Mock;
     forceRefreshAllViewports: jest.Mock;
+    forceRefreshSheetViewports: jest.Mock;
     materializeDeferredSheet?: jest.Mock;
   };
 
@@ -212,10 +214,17 @@ describe('DocumentLifecycleSystem deferred hydration scheduling', () => {
     expect(
       (
         harness.actor.getSnapshot().context.computeBridge as {
-          forceRefreshAllViewports: jest.Mock;
+          forceRefreshSheetViewports: jest.Mock;
         }
-      ).forceRefreshAllViewports,
+      ).forceRefreshSheetViewports,
     ).toHaveBeenCalledTimes(1);
+    expect(
+      (
+        harness.actor.getSnapshot().context.computeBridge as {
+          forceRefreshSheetViewports: jest.Mock;
+        }
+      ).forceRefreshSheetViewports,
+    ).toHaveBeenCalledWith('secondary-sheet');
     expect(completeDeferredHydration).not.toHaveBeenCalled();
     expect(
       harness.materializationTracker.requiresDeferredHydration('secondary-sheet' as SheetId),
@@ -277,10 +286,10 @@ describe('DocumentLifecycleSystem deferred hydration scheduling', () => {
     harness.setWorkbookReadOnly(true);
     const bridge = harness.actor.getSnapshot().context.computeBridge as {
       materializeDeferredSheet: typeof materializeDeferredSheet;
-      forceRefreshAllViewports: jest.Mock;
+      forceRefreshSheetViewports: jest.Mock;
     };
     bridge.materializeDeferredSheet = materializeDeferredSheet;
-    bridge.forceRefreshAllViewports.mockRejectedValue(new Error('viewport refresh failed'));
+    bridge.forceRefreshSheetViewports.mockRejectedValue(new Error('viewport refresh failed'));
 
     await expect(harness.awaitMaterialized('secondary-sheet' as SheetId)).rejects.toThrow(
       'viewport refresh failed',

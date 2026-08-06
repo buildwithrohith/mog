@@ -958,7 +958,7 @@ export class DocumentLifecycleSystem {
       .catch(() => undefined)
       .then(() => bridge.materializeDeferredSheet(sheetId))
       .then(async () => {
-        await bridge.forceRefreshAllViewports();
+        await bridge.forceRefreshSheetViewports(sheetId);
         this.materializationTracker.markMaterialized(sheetId);
       })
       .finally(() => {
@@ -1100,9 +1100,9 @@ export class DocumentLifecycleSystem {
       // displayed-format cascade), so a coordinator whose buffer was committed
       // before completion keeps showing no bars/icons until some unrelated
       // scroll/resize forces a refetch. Mirror the post-Provider-replay path
-      // (see `forceRefreshAllViewports` in attachProviders) and refresh every
-      // registered coordinator from Rust now that the cache is complete. No-op
-      // when no coordinator is registered yet.
+      // in attachProviders and refresh every registered coordinator from Rust
+      // now that the cache is complete. No-op when no coordinator is registered
+      // yet.
       try {
         await bridge.forceRefreshAllViewports();
       } catch (err) {
@@ -1824,24 +1824,26 @@ export class DocumentLifecycleSystem {
     }
     const sheetIds = await input.computeBridge.getAllSheetIds();
 
-    // After Provider replay (or default-sheet creation), force-refresh
-    // viewport buffers so the renderer sees the post-attach cell state.
+    // After Provider replay (or default-sheet creation), force-refresh the
+    // affected sheet viewport buffers so the renderer sees post-attach state.
     // The replay's `syncApply` calls populate the engine but do NOT
     // propagate to viewport buffers when no coordinator is registered yet
     // (initial mount happens AFTER attach). The
     // `ViewportCoordinatorRegistry` arms a hydration-deficit flag on every
     // dropped patch (added in this round); the renderer's first
     // coordinator-mount fires the bridge-wired handler that re-fetches
-    // every coordinator. This `forceRefreshAllViewports` here is the
+    // every coordinator for the replay-resolved sheet set. This is the
     // belt-and-suspenders path for cases where coordinators ARE already
     // registered before attach (warm-reset, sheet-switch into a hydrated
-    // doc) — it's a no-op when the registry is empty, which is the
+    // doc) — it is a no-op when the registry is empty, which is the
     // cold-boot case the deficit flag handles.
     if (providerAttached) {
       try {
-        await input.computeBridge.core.forceRefreshAllViewports();
+        await Promise.all(
+          sheetIds.map((sheetId) => input.computeBridge.forceRefreshSheetViewports(sheetId)),
+        );
       } catch (err) {
-        slog('documentLifecycle.attachProvidersForceRefreshAllViewportsFailed', { error: err });
+        slog('documentLifecycle.attachProvidersForceRefreshSheetViewportsFailed', { error: err });
       }
     }
 
