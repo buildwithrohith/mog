@@ -331,6 +331,9 @@ export class DocumentLifecycleSystem {
   /** Whether deferred Yrs hydration is pending (XLSX import fast-path) */
   private deferredHydrationPending = false;
 
+  /** Whether the workbook facade has disabled mutations for this lifecycle. */
+  private workbookReadOnly = false;
+
   /** Stable import durability barrier for deferred import hydration. */
   private deferredHydrationPromise: Promise<void> | null = null;
 
@@ -844,6 +847,16 @@ export class DocumentLifecycleSystem {
     return this._storageState;
   }
 
+  /**
+   * Record the workbook-level read-only configuration before any deferred
+   * hydration barrier can be scheduled. Storage-level read-only state remains
+   * authoritative when the host provides it; this covers ephemeral hosts where
+   * the workbook facade is read-only even though storage is still writable.
+   */
+  setWorkbookReadOnly(readOnly: boolean): void {
+    this.workbookReadOnly = readOnly;
+  }
+
   /** Timestamp of the last successful full-state checkpoint (the storage state lifecycle). */
   get lastCheckpointAt(): number | null {
     return this._lastCheckpointAt;
@@ -984,12 +997,26 @@ export class DocumentLifecycleSystem {
     return err;
   }
 
+  private isReadOnlyDocument(): boolean {
+    return this.workbookReadOnly || this._storageState.readOnly;
+  }
+
+  private resolveDeferredHydrationWithoutWork(): Promise<void> {
+    this.deferredHydrationPending = false;
+    this.importDurabilityPending = false;
+    this.materializationTracker.markAllMaterialized();
+    return Promise.resolve();
+  }
+
   /**
    * Schedule the deferred Yrs CRDT hydration.
    * Call AFTER the first viewport paint to avoid blocking the UI.
    * The heavy Yrs write (~2s) runs asynchronously.
    */
   scheduleDeferredHydration(options?: { immediate?: boolean }): Promise<void> {
+    if (this.isReadOnlyDocument()) {
+      return this.resolveDeferredHydrationWithoutWork();
+    }
     if (this.deferredHydrationPromise) {
       if (options?.immediate) {
         this.startDeferredHydrationNow?.();
@@ -999,12 +1026,7 @@ export class DocumentLifecycleSystem {
     if (!this.deferredHydrationPending) return Promise.resolve();
     const snap = this.actor.getSnapshot();
     const bridge = snap.context.computeBridge;
-    if (!bridge) {
-      this.deferredHydrationPending = false;
-      this.importDurabilityPending = false;
-      this.materializationTracker.markAllMaterialized();
-      return Promise.resolve();
-    }
+    if (!bridge) return this.resolveDeferredHydrationWithoutWork();
 
     const run = async () => {
       this.materializationError = null;
@@ -1503,6 +1525,10 @@ export class DocumentLifecycleSystem {
             this.recordImportInitializeProviderRefId(handle.providerRefId);
           }
         }
+        this._storageState = {
+          ...this._storageState,
+          readOnly: lifecycleInput.storage.handoff.storageConstraint === 'read-only',
+        };
         this.updateStoragePhase(
           lifecycleInput.storage.handoff.storageConstraint === 'read-only'
             ? 'readyReadOnly'
@@ -2237,10 +2263,14 @@ export class DocumentLifecycleSystem {
    * 2. If computeBridge exists: await computeBridge.destroy()
    */
   private async executeDisposeBridge(input: DisposeBridgeInput): Promise<void> {
-    try {
-      await this.awaitImportDurability();
-    } catch (err) {
-      slog('documentLifecycle.disposeImportDurabilityBarrierFailed', { error: err });
+    if (this.isReadOnlyDocument()) {
+      await this.resolveDeferredHydrationWithoutWork();
+    } else {
+      try {
+        await this.awaitImportDurability();
+      } catch (err) {
+        slog('documentLifecycle.disposeImportDurabilityBarrierFailed', { error: err });
+      }
     }
 
     // 1. Destroy document context — unsubscribes all domain bridge event handlers

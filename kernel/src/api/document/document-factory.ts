@@ -864,6 +864,10 @@ function createDocumentHandle(
       const ownerHandle = (this as DocumentHandleInternal | undefined) ?? handle;
       // Config-accepting path: fresh workbook each call (not cached).
       if (config) {
+        // Workbook read-only mode is separate from storage-provider durability.
+        // Record it before any async workbook setup so lifecycle barriers
+        // (sheet switches and teardown included) see the same mode.
+        lifecycle.setWorkbookReadOnly(config.readOnly === true);
         const { createWorkbookFromConfig } = await loadWorkbookModule();
         const { resolveDocumentWorkbookVersioningLifecycle } =
           await import('../../document/version-store/lifecycle');

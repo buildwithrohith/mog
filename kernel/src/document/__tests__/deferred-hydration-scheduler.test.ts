@@ -6,6 +6,7 @@ import { DocumentMaterializationTracker } from '../materialization-tracker';
 type SchedulerHarness = Pick<
   DocumentLifecycleSystem,
   | 'scheduleDeferredHydration'
+  | 'setWorkbookReadOnly'
   | 'ensureDeferredHydration'
   | 'awaitMaterialized'
   | 'getMaterializationState'
@@ -30,6 +31,7 @@ type SchedulerHarness = Pick<
   importDurabilityPending: boolean;
   materializationError: null;
   materializationTracker: DocumentMaterializationTracker;
+  _storageState: { readOnly: boolean };
 };
 
 function createSchedulerHarness(
@@ -68,6 +70,7 @@ function createSchedulerHarness(
   harness.importDurabilityPending = false;
   harness.materializationError = null;
   harness.materializationTracker = materializationTracker;
+  harness._storageState = { readOnly: false };
   return harness;
 }
 
@@ -88,6 +91,62 @@ describe('DocumentLifecycleSystem deferred hydration scheduling', () => {
     expect(harness.importDurabilityPending).toBe(false);
     expect(harness.deferredHydrationTimer).toBeNull();
     expect(harness.startDeferredHydrationNow).toBeNull();
+  });
+
+  it('resolves read-only hydration barriers without invoking the bridge write path', async () => {
+    const completeDeferredHydration = jest.fn().mockResolvedValue(undefined);
+    const harness = createSchedulerHarness(completeDeferredHydration);
+    harness._storageState.readOnly = true;
+
+    await expect(harness.scheduleDeferredHydration()).resolves.toBeUndefined();
+
+    expect(completeDeferredHydration).not.toHaveBeenCalled();
+    expect(harness.deferredHydrationPending).toBe(false);
+    expect(harness.importDurabilityPending).toBe(false);
+    expect(
+      harness.materializationTracker.requiresDeferredHydration('secondary-sheet' as SheetId),
+    ).toBe(false);
+  });
+
+  it('uses workbook read-only configuration at the scheduler call site', async () => {
+    const completeDeferredHydration = jest.fn().mockResolvedValue(undefined);
+    const harness = createSchedulerHarness(completeDeferredHydration);
+    harness.setWorkbookReadOnly(true);
+
+    await expect(harness.scheduleDeferredHydration({ immediate: true })).resolves.toBeUndefined();
+
+    expect(completeDeferredHydration).not.toHaveBeenCalled();
+    expect(harness.deferredHydrationPending).toBe(false);
+    expect(harness.importDurabilityPending).toBe(false);
+  });
+
+  it('does not promote read-only hydration while disposing the bridge', async () => {
+    const completeDeferredHydration = jest.fn().mockResolvedValue(undefined);
+    const harness = createSchedulerHarness(completeDeferredHydration);
+    harness.setWorkbookReadOnly(true);
+    (
+      harness as unknown as { hostProviderMaterializerHandles: unknown[] }
+    ).hostProviderMaterializerHandles = [];
+    const destroy = jest.fn().mockResolvedValue(undefined);
+
+    await expect(
+      (
+        harness as unknown as {
+          executeDisposeBridge(input: {
+            documentContext: null;
+            computeBridge: { destroy: typeof destroy };
+            rustDocument: null;
+          }): Promise<void>;
+        }
+      ).executeDisposeBridge({
+        documentContext: null,
+        computeBridge: { destroy },
+        rustDocument: null,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(completeDeferredHydration).not.toHaveBeenCalled();
+    expect(destroy).toHaveBeenCalledTimes(1);
   });
 
   it('does not force full hydration for the already materialized critical sheet', async () => {

@@ -421,13 +421,13 @@ export default function SpreadsheetApp({
       // trap is downstream of that skip, so it did not help.
       //
       // Not upstreamable as-is: a read/write host still needs durability.
-      if (!readOnly) {
-        requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!configRef.current.readOnly) {
           void handle!.scheduleDeferredHydration().catch((err) => {
             console.warn('[SpreadsheetApp] Deferred hydration durability failed:', err);
           });
-        });
-      }
+        }
+      });
     }
 
     init();
