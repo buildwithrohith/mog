@@ -109,11 +109,11 @@ pub(crate) fn allocate_sheet_ids_with_previous_allocation(
     SheetIdAllocation {
         sheet_id,
         sheet_hex,
-        row_ids,
+        row_ids: row_ids.into(),
         row_id_hexes,
-        col_ids,
+        col_ids: col_ids.into(),
         col_id_hexes,
-        cell_ids,
+        cell_ids: cell_ids.into(),
         identity_only_cells,
     }
 }
@@ -152,11 +152,11 @@ fn allocate_sheet_ids_after_sheet_id(
     SheetIdAllocation {
         sheet_id,
         sheet_hex,
-        row_ids,
+        row_ids: row_ids.into(),
         row_id_hexes,
-        col_ids,
+        col_ids: col_ids.into(),
         col_id_hexes,
-        cell_ids,
+        cell_ids: cell_ids.into(),
         identity_only_cells,
     }
 }

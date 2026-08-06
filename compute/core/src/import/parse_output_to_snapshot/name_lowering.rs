@@ -91,12 +91,16 @@ pub(crate) fn convert_named_ranges(
 ///
 /// `all_row_ids` and `all_col_ids` are the hydration ID maps indexed by
 /// `[sheet_index][positional_index]`, enabling position-to-identity lookups.
-pub(crate) fn link_named_ranges_to_data_ranges(
+pub(crate) fn link_named_ranges_to_data_ranges<R, C>(
     named_ranges: &mut [NamedRangeDef],
     sheets: &[SheetSnapshot],
-    all_row_ids: &[Vec<RowId>],
-    all_col_ids: &[Vec<ColId>],
-) {
+    all_row_ids: &[R],
+    all_col_ids: &[C],
+)
+where
+    R: AsRef<[RowId]>,
+    C: AsRef<[ColId]>,
+{
     for def in named_ranges.iter_mut() {
         let raw = def.raw_expression.as_deref().unwrap_or("");
 
@@ -135,11 +139,11 @@ pub(crate) fn link_named_ranges_to_data_ranges(
         // could narrow this, but the cost is negligible at import time.
         for (sheet_idx, sheet) in sheets.iter().enumerate() {
             let row_ids = match all_row_ids.get(sheet_idx) {
-                Some(r) => r,
+                Some(r) => r.as_ref(),
                 None => continue,
             };
             let col_ids = match all_col_ids.get(sheet_idx) {
-                Some(c) => c,
+                Some(c) => c.as_ref(),
                 None => continue,
             };
 

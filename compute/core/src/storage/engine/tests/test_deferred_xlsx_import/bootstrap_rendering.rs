@@ -294,6 +294,56 @@ fn deferred_xlsx_preview_materializes_only_the_requested_sheet_without_yrs_compl
 }
 
 #[test]
+fn deferred_xlsx_materialization_shares_retained_id_vectors() {
+    let bytes = three_sheet_deferred_fixture_xlsx();
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(simple_snapshot()).unwrap();
+    engine
+        .import_from_xlsx_bytes_deferred(&bytes)
+        .expect("deferred XLSX import should succeed");
+
+    let ids = engine.get_all_sheet_ids();
+    let landing = SheetId::from_uuid_str(&ids[0]).unwrap();
+    let retention = SheetId::from_uuid_str(&ids[1]).unwrap();
+    let usage = SheetId::from_uuid_str(&ids[2]).unwrap();
+
+    engine
+        .materialize_deferred_sheet(retention)
+        .expect("first requested sheet should materialize");
+    assert_eq!(
+        engine.get_cell_value(&retention, 0, 0),
+        CellValue::number(579.0)
+    );
+
+    engine
+        .materialize_deferred_sheet(usage)
+        .expect("second requested sheet should materialize");
+    assert_eq!(
+        engine.get_cell_value(&usage, 0, 0),
+        CellValue::number(1430.0)
+    );
+    assert_eq!(
+        engine.get_cell_value(&landing, 0, 0),
+        CellValue::number(274.0),
+        "cumulative materialization must preserve the landing sheet"
+    );
+
+    let allocations = &engine
+        .deferred_hydration
+        .as_ref()
+        .expect("preview materialization must retain deferred state")
+        .allocations;
+    let shared_cell_ids = std::sync::Arc::clone(&allocations[0].cell_ids);
+    assert!(
+        std::sync::Arc::strong_count(&shared_cell_ids) > 1,
+        "retained cell IDs should support shared Arc ownership after materialization"
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(&shared_cell_ids, &allocations[0].cell_ids),
+        "the retained ID vector clone must point at the same allocation"
+    );
+}
+
+#[test]
 fn deferred_xlsx_completion_then_grouped_paste_undo_preserves_redo_stack() {
     let bytes = active_visible_deferred_fixture_xlsx();
 

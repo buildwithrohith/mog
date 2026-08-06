@@ -80,9 +80,9 @@ pub(in crate::storage::engine) fn import_from_xlsx_bytes_deferred(
         let mut m = HydrationIdMap::default();
         for alloc in &allocations {
             m.sheet_ids.push(alloc.sheet_id);
-            m.cell_ids.push(alloc.cell_ids.clone());
-            m.row_ids.push(alloc.row_ids.clone());
-            m.col_ids.push(alloc.col_ids.clone());
+            m.cell_ids.push(std::sync::Arc::clone(&alloc.cell_ids));
+            m.row_ids.push(std::sync::Arc::clone(&alloc.row_ids));
+            m.col_ids.push(std::sync::Arc::clone(&alloc.col_ids));
             for identity in &alloc.identity_only_cells {
                 m.identity_only_cells.push((
                     alloc.sheet_id,
@@ -216,7 +216,7 @@ pub(in crate::storage::engine) fn import_from_xlsx_bytes_deferred(
         engine
             .stores
             .compute
-            .init_from_snapshot_viewport_only(&mut engine.mirror, workbook_snap.clone())?;
+            .init_from_snapshot_viewport_only(&mut engine.mirror, &workbook_snap)?;
         profile.counter("sheets", workbook_snap.sheets.len() as u64);
         profile.counter(
             "snapshot_cells",
@@ -386,108 +386,125 @@ fn materialize_deferred_sheet_inner(
             message: format!("selected-sheet parse omitted editable sheet index {sheet_index}"),
         })?;
 
-    let mut cumulative_parse = deferred.parse_output.clone();
-    let cumulative_sheet = cumulative_parse
-        .sheets
-        .get_mut(sheet_index)
-        .ok_or_else(|| ComputeError::Deserialize {
-            message: format!("deferred parse output omitted editable sheet index {sheet_index}"),
-        })?;
-    *cumulative_sheet = selected_sheet;
+    // Move the retained parse output out while rebuilding it so materializing
+    // another sheet does not briefly retain both the old and cumulative copies.
+    // The closure boundary restores it on every `?` path below.
+    let mut cumulative_parse = std::mem::take(&mut deferred.parse_output);
+    let result = (|| -> Result<(), ComputeError> {
+        let cumulative_sheet = cumulative_parse
+            .sheets
+            .get_mut(sheet_index)
+            .ok_or_else(|| ComputeError::Deserialize {
+                message: format!(
+                    "deferred parse output omitted editable sheet index {sheet_index}"
+                ),
+            })?;
+        *cumulative_sheet = selected_sheet;
 
-    use crate::storage::infra::hydration::{
-        DefaultIdAllocator, HydrationIdMap, allocate_sheet_ids_with_previous_allocation,
-    };
-    let mut allocator =
-        DefaultIdAllocator::with_seed(seed_after_allocations(&deferred.allocations));
-    let allocations: Vec<_> = cumulative_parse
-        .sheets
-        .iter()
-        .enumerate()
-        .map(|(index, sheet)| {
-            allocate_sheet_ids_with_previous_allocation(
-                sheet,
-                &mut allocator,
-                deferred.allocations.get(index),
-            )
-        })
-        .collect();
-
-    let mut id_map = HydrationIdMap::default();
-    for allocation in &allocations {
-        id_map.sheet_ids.push(allocation.sheet_id);
-        id_map.cell_ids.push(allocation.cell_ids.clone());
-        id_map.row_ids.push(allocation.row_ids.clone());
-        id_map.col_ids.push(allocation.col_ids.clone());
-        for identity in &allocation.identity_only_cells {
-            id_map.identity_only_cells.push((
-                allocation.sheet_id,
-                identity.cell_id,
-                identity.row,
-                identity.col,
-            ));
-        }
-    }
-
-    let cumulative_snap =
-        crate::import::parse_output_to_snapshot::parse_output_to_workbook_snapshot(
-            &cumulative_parse,
-            Some(&id_map),
-            &mut allocator,
-        );
-    let seed = snapshot_id_high_water_mark(&cumulative_snap);
-    let shared_alloc = std::sync::Arc::new(cell_types::IdAllocator::with_seed(seed));
-    let all_sheets = 0..cumulative_snap.sheets.len();
-    let grid_indexes = build_grid_indexes_from_allocations_range(
-        &cumulative_snap,
-        &allocations,
-        all_sheets.clone(),
-        shared_alloc.clone(),
-    )?;
-    let merge_indexes = build_merge_indexes_from_parse_output_range(
-        &cumulative_parse,
-        &cumulative_snap,
-        all_sheets.clone(),
-    )?;
-    let mut layout_indexes = build_layout_indexes_from_parse_output_range(
-        &cumulative_parse,
-        &cumulative_snap,
-        &grid_indexes,
-        all_sheets,
-        engine.stores.layout_metrics,
-    )?;
-    engine
-        .stores
-        .dimension_preview
-        .replay_into(&mut layout_indexes);
-
-    let mut compute = ComputeCore::new();
-    let mut mirror = CellMirror::new();
-    compute.init_from_snapshot_viewport_only(&mut mirror, cumulative_snap.clone())?;
-    compute.set_id_alloc(shared_alloc.clone());
-    mirror.install_row_col_indexes(
-        grid_indexes
+        use crate::storage::infra::hydration::{
+            DefaultIdAllocator, HydrationIdMap, allocate_sheet_ids_with_previous_allocation,
+        };
+        let mut allocator =
+            DefaultIdAllocator::with_seed(seed_after_allocations(&deferred.allocations));
+        let allocations: Vec<_> = cumulative_parse
+            .sheets
             .iter()
-            .map(|(sid, grid)| (*sid, grid.row_ids_ordered(), grid.col_ids_ordered())),
-    );
-    // The critical sheet's Yrs-backed range formats remain authoritative. The
-    // newly selected sheet's values/ranges come from the cumulative snapshot.
-    hydrate_mirror_format_ranges(&engine.stores.storage, &mut mirror);
-    mirror.finalize_range_hydration();
+            .enumerate()
+            .map(|(index, sheet)| {
+                allocate_sheet_ids_with_previous_allocation(
+                    sheet,
+                    &mut allocator,
+                    deferred.allocations.get(index),
+                )
+            })
+            .collect();
 
-    engine.stores.compute = compute;
-    engine.stores.grid_id_alloc = shared_alloc;
-    engine.stores.grid_indexes = grid_indexes;
-    engine.stores.merge_indexes = merge_indexes;
-    engine.stores.layout_indexes = layout_indexes;
-    engine.mirror = mirror;
-    engine.viewport.clear();
+        let mut id_map = HydrationIdMap::default();
+        for allocation in &allocations {
+            id_map.sheet_ids.push(allocation.sheet_id);
+            id_map
+                .cell_ids
+                .push(std::sync::Arc::clone(&allocation.cell_ids));
+            id_map
+                .row_ids
+                .push(std::sync::Arc::clone(&allocation.row_ids));
+            id_map
+                .col_ids
+                .push(std::sync::Arc::clone(&allocation.col_ids));
+            for identity in &allocation.identity_only_cells {
+                id_map.identity_only_cells.push((
+                    allocation.sheet_id,
+                    identity.cell_id,
+                    identity.row,
+                    identity.col,
+                ));
+            }
+        }
 
-    merge_import_reports(&mut engine.import_report, selected_import_report);
+        let cumulative_snap =
+            crate::import::parse_output_to_snapshot::parse_output_to_workbook_snapshot(
+                &cumulative_parse,
+                Some(&id_map),
+                &mut allocator,
+            );
+        let seed = snapshot_id_high_water_mark(&cumulative_snap);
+        let shared_alloc = std::sync::Arc::new(cell_types::IdAllocator::with_seed(seed));
+        let all_sheets = 0..cumulative_snap.sheets.len();
+        let grid_indexes = build_grid_indexes_from_allocations_range(
+            &cumulative_snap,
+            &allocations,
+            all_sheets.clone(),
+            shared_alloc.clone(),
+        )?;
+        let merge_indexes = build_merge_indexes_from_parse_output_range(
+            &cumulative_parse,
+            &cumulative_snap,
+            all_sheets.clone(),
+        )?;
+        let mut layout_indexes = build_layout_indexes_from_parse_output_range(
+            &cumulative_parse,
+            &cumulative_snap,
+            &grid_indexes,
+            all_sheets,
+            engine.stores.layout_metrics,
+        )?;
+        engine
+            .stores
+            .dimension_preview
+            .replay_into(&mut layout_indexes);
+
+        let mut compute = ComputeCore::new();
+        let mut mirror = CellMirror::new();
+        compute.init_from_snapshot_viewport_only(&mut mirror, &cumulative_snap)?;
+        compute.set_id_alloc(shared_alloc.clone());
+        mirror.install_row_col_indexes(
+            grid_indexes
+                .iter()
+                .map(|(sid, grid)| (*sid, grid.row_ids_ordered(), grid.col_ids_ordered())),
+        );
+        // The critical sheet's Yrs-backed range formats remain authoritative. The
+        // newly selected sheet's values/ranges come from the cumulative snapshot.
+        hydrate_mirror_format_ranges(&engine.stores.storage, &mut mirror);
+        mirror.finalize_range_hydration();
+
+        engine.stores.compute = compute;
+        engine.stores.grid_id_alloc = shared_alloc;
+        engine.stores.grid_indexes = grid_indexes;
+        engine.stores.merge_indexes = merge_indexes;
+        engine.stores.layout_indexes = layout_indexes;
+        engine.mirror = mirror;
+        engine.viewport.clear();
+
+        merge_import_reports(&mut engine.import_report, selected_import_report);
+        deferred.allocations = allocations;
+        deferred.workbook_snap = cumulative_snap;
+        Ok(())
+    })();
+
+    // Preserve the cumulative parse output even when rebuilding the engine
+    // fails partway through, so a later materialization can retry safely.
     deferred.parse_output = cumulative_parse;
-    deferred.allocations = allocations;
-    deferred.workbook_snap = cumulative_snap;
-    Ok(())
+    result
 }
 
 /// Complete the deferred Yrs CRDT hydration.
@@ -579,9 +596,9 @@ pub(in crate::storage::engine) fn stage_deferred_hydration(
             let mut m = HydrationIdMap::default();
             for alloc in &allocations {
                 m.sheet_ids.push(alloc.sheet_id);
-                m.cell_ids.push(alloc.cell_ids.clone());
-                m.row_ids.push(alloc.row_ids.clone());
-                m.col_ids.push(alloc.col_ids.clone());
+                m.cell_ids.push(std::sync::Arc::clone(&alloc.cell_ids));
+                m.row_ids.push(std::sync::Arc::clone(&alloc.row_ids));
+                m.col_ids.push(std::sync::Arc::clone(&alloc.col_ids));
                 for identity in &alloc.identity_only_cells {
                     m.identity_only_cells.push((
                         alloc.sheet_id,
@@ -847,13 +864,13 @@ fn seed_after_allocations(
 
     for allocation in allocations {
         max_id = max_id.max(allocation.sheet_id.as_u128());
-        for row_id in &allocation.row_ids {
+        for row_id in allocation.row_ids.iter() {
             max_id = max_id.max(row_id.as_u128());
         }
-        for col_id in &allocation.col_ids {
+        for col_id in allocation.col_ids.iter() {
             max_id = max_id.max(col_id.as_u128());
         }
-        for cell_id in &allocation.cell_ids {
+        for cell_id in allocation.cell_ids.iter() {
             max_id = max_id.max(cell_id.as_u128());
         }
         for identity in &allocation.identity_only_cells {

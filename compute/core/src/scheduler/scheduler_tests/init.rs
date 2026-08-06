@@ -380,7 +380,7 @@ fn test_minimal_init_first_formula_edit_survives_deferred_graph_build() {
 fn test_viewport_only_init_seeds_materialized_formula_readback() {
     let mut core = ComputeCore::new();
     let mut mirror = CellMirror::new();
-    core.init_from_snapshot_viewport_only(&mut mirror, basic_snapshot())
+    core.init_from_snapshot_viewport_only(&mut mirror, &basic_snapshot())
         .unwrap();
 
     let c1_id = cid(0x12);
@@ -395,7 +395,7 @@ fn test_viewport_only_init_seeds_materialized_formula_readback() {
 fn test_viewport_only_init_rejects_partial_graph_build() {
     let mut core = ComputeCore::new();
     let mut mirror = CellMirror::new();
-    core.init_from_snapshot_viewport_only(&mut mirror, basic_snapshot())
+    core.init_from_snapshot_viewport_only(&mut mirror, &basic_snapshot())
         .unwrap();
 
     let err = core.ensure_graph_built(&mut mirror).unwrap_err();

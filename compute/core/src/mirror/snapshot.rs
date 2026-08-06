@@ -116,6 +116,80 @@ impl CellMirror {
         Ok(mirror)
     }
 
+    /// Build a viewport mirror from a borrowed snapshot without retaining a
+    /// second workbook-sized snapshot. Each sheet is cloned only long enough
+    /// for `add_sheet` to move its cell data into the mirror.
+    #[tracing::instrument(name = "mirror_from_snapshot_viewport_only", skip_all)]
+    pub(crate) fn from_snapshot_viewport_only(
+        snapshot: &WorkbookSnapshot,
+    ) -> Result<Self, ComputeError> {
+        let mut mirror = Self::new();
+
+        let total_cells: usize = snapshot.sheets.iter().map(|s| s.cells.len()).sum();
+        mirror.cell_to_sheet.reserve(total_cells);
+        mirror.sheet_names.reserve(snapshot.sheets.len());
+        mirror.sheets.reserve(snapshot.sheets.len());
+
+        for nr in &snapshot.named_ranges {
+            let scope = nr.scope.clone();
+            mirror.variables.insert(scope, nr.name.clone(), nr.clone());
+        }
+
+        mirror.table_defs = snapshot.tables.clone();
+        mirror.tables = mirror
+            .table_defs
+            .iter()
+            .map(|td| domain_types::domain::table::Table {
+                id: td.name.clone(),
+                name: td.name.clone(),
+                display_name: td.name.clone(),
+                sheet_id: td.sheet.to_uuid_string(),
+                range: cell_types::SheetRange::new(
+                    td.start_row,
+                    td.start_col,
+                    td.end_row,
+                    td.end_col,
+                ),
+                columns: td
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, name)| domain_types::domain::table::TableColumn {
+                        id: format!("{}", i + 1),
+                        name: name.clone(),
+                        index: i as u32,
+                        totals_function: None,
+                        totals_label: None,
+                        calculated_formula: None,
+                        ..Default::default()
+                    })
+                    .collect(),
+                has_header_row: td.has_headers,
+                has_totals_row: td.has_totals,
+                style: "TableStyleMedium2".to_string(),
+                banded_rows: true,
+                banded_columns: false,
+                emphasize_first_column: false,
+                emphasize_last_column: false,
+                show_filter_buttons: true,
+                auto_expand: true,
+                auto_calculated_columns: true,
+                ..Default::default()
+            })
+            .collect();
+
+        mirror.pivot_tables = snapshot.pivot_tables.clone();
+        mirror.data_table_regions = snapshot.data_table_regions.clone();
+
+        for sheet_snap in &snapshot.sheets {
+            let cell_count = sheet_snap.cells.len();
+            let _span = tracing::info_span!("mirror_add_sheet", cell_count).entered();
+            mirror.add_sheet(sheet_snap.clone())?;
+        }
+
+        Ok(mirror)
+    }
+
     /// Add a new sheet from a snapshot.
     ///
     /// Recomputes materialized `rows`/`cols` from actual cell positions rather

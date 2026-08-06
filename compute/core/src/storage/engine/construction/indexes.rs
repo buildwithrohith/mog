@@ -42,8 +42,8 @@ pub(in crate::storage::engine) fn build_grid_indexes_from_allocations_range(
         let sheet_id = SheetId::from_uuid_str(&sheet_snap.id)?;
         let mut grid = GridIndex::from_axis_stores(
             sheet_id,
-            AxisIdentityStore::Explicit(allocation.row_ids.clone()),
-            AxisIdentityStore::Explicit(allocation.col_ids.clone()),
+            AxisIdentityStore::Explicit(allocation.row_ids.to_vec()),
+            AxisIdentityStore::Explicit(allocation.col_ids.to_vec()),
             grid_id_alloc.clone(),
         );
         for cell_data in &sheet_snap.cells {

@@ -926,9 +926,9 @@ fn engine_from_parse_output_with_ranges(output: &ParseOutput) -> YrsComputeEngin
     let mut id_map = HydrationIdMap::default();
     for alloc in &allocations {
         id_map.sheet_ids.push(alloc.sheet_id);
-        id_map.cell_ids.push(alloc.cell_ids.clone());
-        id_map.row_ids.push(alloc.row_ids.clone());
-        id_map.col_ids.push(alloc.col_ids.clone());
+        id_map.cell_ids.push(std::sync::Arc::clone(&alloc.cell_ids));
+        id_map.row_ids.push(std::sync::Arc::clone(&alloc.row_ids));
+        id_map.col_ids.push(std::sync::Arc::clone(&alloc.col_ids));
         for identity in &alloc.identity_only_cells {
             id_map.identity_only_cells.push((
                 alloc.sheet_id,

@@ -363,7 +363,7 @@ fn full_recalc_with_options_err_restores_settings_and_keeps_pending_manual_dirty
     let _guard = FULL_RECALC_WITH_OPTIONS_TEST_LOCK.lock().unwrap();
     let mut core = ComputeCore::new();
     let mut mirror = CellMirror::new();
-    core.init_from_snapshot_viewport_only(&mut mirror, basic_snapshot())
+    core.init_from_snapshot_viewport_only(&mut mirror, &basic_snapshot())
         .expect("viewport-only snapshot should initialize");
     core.set_iterative_calc(false);
     core.set_max_iterations(77);

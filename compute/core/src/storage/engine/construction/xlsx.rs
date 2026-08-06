@@ -146,9 +146,9 @@ pub(in crate::storage::engine) fn parse_and_hydrate_xlsx(
         let mut m = HydrationIdMap::default();
         for alloc in &allocations {
             m.sheet_ids.push(alloc.sheet_id);
-            m.cell_ids.push(alloc.cell_ids.clone());
-            m.row_ids.push(alloc.row_ids.clone());
-            m.col_ids.push(alloc.col_ids.clone());
+            m.cell_ids.push(std::sync::Arc::clone(&alloc.cell_ids));
+            m.row_ids.push(std::sync::Arc::clone(&alloc.row_ids));
+            m.col_ids.push(std::sync::Arc::clone(&alloc.col_ids));
             for identity in &alloc.identity_only_cells {
                 m.identity_only_cells.push((
                     alloc.sheet_id,

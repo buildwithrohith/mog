@@ -324,7 +324,7 @@ impl ComputeCore {
     pub fn init_from_snapshot_viewport_only(
         &mut self,
         mirror: &mut CellMirror,
-        snapshot: WorkbookSnapshot,
+        snapshot: &WorkbookSnapshot,
     ) -> Result<RecalcResult, ComputeError> {
         self.iterative_calc = snapshot.iterative_calc;
         self.max_iterations = snapshot.max_iterations;
@@ -341,8 +341,6 @@ impl ComputeCore {
             .filter_map(|(idx, sheet)| SheetId::from_uuid_str(&sheet.id).ok().map(|sid| (sid, idx)))
             .collect();
         self.rebuild_ordered_sheets_cache();
-        let deferred_snapshot = snapshot.clone();
-
         let materialized_formula_cells = Self::extract_formula_cells_from_snapshot(&snapshot);
         self.cell_formula_text = FxHashMap::with_capacity_and_hasher(
             materialized_formula_cells.len(),
@@ -353,9 +351,12 @@ impl ComputeCore {
         // Store the viewport-only marker so graph/recalc callers can reject
         // partial workbook graph construction until full hydration completes.
         // Readback does not depend on this marker.
-        self.deferred_snapshot = Some(deferred_snapshot);
+        // This field is only a guard that prevents graph construction while
+        // the deferred workbook is still sparse; it does not need another
+        // owned copy of the snapshot.
+        self.deferred_snapshot = Some(WorkbookSnapshot::default());
 
-        *mirror = CellMirror::from_snapshot(snapshot)?;
+        *mirror = CellMirror::from_snapshot_viewport_only(snapshot)?;
 
         Ok(RecalcResult::empty())
     }

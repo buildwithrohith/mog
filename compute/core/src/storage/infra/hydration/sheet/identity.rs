@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use cell_types::{CellId, ColId, RowId, SheetId};
 use compute_document::hex::{SmallHex, id_to_hex};
@@ -116,10 +117,10 @@ pub(crate) fn insert_missing_anchored_identities(
 pub(crate) struct SheetIdAllocation {
     pub sheet_id: SheetId,
     pub sheet_hex: SmallHex,
-    pub row_ids: Vec<RowId>,
+    pub row_ids: Arc<[RowId]>,
     pub row_id_hexes: Vec<SmallHex>,
-    pub col_ids: Vec<ColId>,
+    pub col_ids: Arc<[ColId]>,
     pub col_id_hexes: Vec<SmallHex>,
-    pub cell_ids: Vec<CellId>,
+    pub cell_ids: Arc<[CellId]>,
     pub identity_only_cells: Vec<AnchoredCellIdentity>,
 }

@@ -165,9 +165,9 @@ impl YrsStorage {
                 allocator,
             )?;
             id_map.sheet_ids.push(sheet_id);
-            id_map.cell_ids.push(sheet_cell_ids);
-            id_map.row_ids.push(sheet_row_ids);
-            id_map.col_ids.push(sheet_col_ids);
+            id_map.cell_ids.push(sheet_cell_ids.into());
+            id_map.row_ids.push(sheet_row_ids.into());
+            id_map.col_ids.push(sheet_col_ids.into());
             for (cell_id, row, col) in sheet_phantom_cells {
                 id_map.phantom_cells.push((sheet_id, cell_id, row, col));
             }
@@ -451,9 +451,9 @@ impl YrsStorage {
 
             let sheet_id = alloc.sheet_id;
             id_map.sheet_ids.push(sheet_id);
-            id_map.cell_ids.push(alloc.cell_ids.clone());
-            id_map.row_ids.push(alloc.row_ids.clone());
-            id_map.col_ids.push(alloc.col_ids.clone());
+            id_map.cell_ids.push(std::sync::Arc::clone(&alloc.cell_ids));
+            id_map.row_ids.push(std::sync::Arc::clone(&alloc.row_ids));
+            id_map.col_ids.push(std::sync::Arc::clone(&alloc.col_ids));
             for (cell_id, row, col) in phantom_cells {
                 id_map.phantom_cells.push((sheet_id, cell_id, row, col));
             }

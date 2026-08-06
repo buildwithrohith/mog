@@ -27,6 +27,8 @@
 //!     └── Workbook-level data (named ranges, tables, theme, protection)
 //! ```
 
+use std::sync::Arc;
+
 // NOTE: `impl YrsStorage` is intentionally split across `snapshot.rs` (populate/snapshot path)
 // and `import.rs` (XLSX import path). This is valid Rust — impl blocks can span multiple files
 // in the same crate.
@@ -86,7 +88,7 @@ pub struct HydrationIdMap {
     pub sheet_ids: Vec<SheetId>,
     /// Cell IDs per sheet, in the same order as `SheetData.cells`.
     /// `cell_ids[sheet_index][cell_index]` = CellId for that cell.
-    pub cell_ids: Vec<Vec<CellId>>,
+    pub cell_ids: Vec<Arc<[CellId]>>,
     /// Physical placeholder cells created during hydration for features that
     /// still require a Yrs cell entry, such as merges and hyperlinks on empty
     /// cells. Each entry is `(SheetId, CellId, row, col)`.
@@ -98,10 +100,10 @@ pub struct HydrationIdMap {
     pub identity_only_cells: Vec<(SheetId, CellId, u32, u32)>,
     /// Row IDs per sheet, indexed by positional row index.
     /// `row_ids[sheet_index][row_position]` = RowId allocated during hydration.
-    pub row_ids: Vec<Vec<RowId>>,
+    pub row_ids: Vec<Arc<[RowId]>>,
     /// Column IDs per sheet, indexed by positional column index.
     /// `col_ids[sheet_index][col_position]` = ColId allocated during hydration.
-    pub col_ids: Vec<Vec<ColId>>,
+    pub col_ids: Vec<Arc<[ColId]>>,
 }
 
 // ===========================================================================
