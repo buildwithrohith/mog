@@ -48,7 +48,7 @@ pub(crate) struct ViewportService {
     /// Keys are viewport IDs (e.g., "main", "split-bottom"), values are registrations.
     registered_viewports: RefCell<FxHashMap<String, ViewportRegistration>>,
     /// Per-sheet format palettes for binary viewport transfer.
-    /// Append-only within a sheet; cleared on sheet switch.
+    /// Append-only within a sheet; removed when a sheet's viewports are reset.
     format_palettes: RefCell<FxHashMap<SheetId, format_palette::FormatPalette>>,
 }
 
@@ -73,6 +73,11 @@ impl ViewportService {
     /// viewport render.
     pub fn clear_all_palettes(&self) {
         self.format_palettes.borrow_mut().clear();
+    }
+
+    /// Remove the format palette for one sheet after its viewports are reset.
+    pub fn remove_sheet_palette(&self, sheet_id: &SheetId) {
+        self.format_palettes.borrow_mut().remove(sheet_id);
     }
 
     /// Borrow the registered-viewports map for reading. Callers that need
@@ -149,5 +154,42 @@ impl ViewportService {
             out.extend_from_slice(&b[2..]);
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ViewportService;
+    use cell_types::SheetId;
+    use domain_types::CellFormat;
+    use crate::storage::engine::viewport::functions::reset_viewport_state;
+
+    #[test]
+    fn reset_viewport_state_removes_only_the_reset_sheet_palette() {
+        let viewport = ViewportService::new();
+        let sheet_a = SheetId::from_uuid_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let sheet_b = SheetId::from_uuid_str("550e8400-e29b-41d4-a716-446655440099").unwrap();
+
+        // Rendering a sheet creates its palette and interns the rendered format.
+        let mut palettes = viewport.format_palettes_mut();
+        palettes
+            .entry(sheet_a)
+            .or_default()
+            .intern(&CellFormat::default())
+            .unwrap();
+        palettes
+            .entry(sheet_b)
+            .or_default()
+            .intern(&CellFormat::default())
+            .unwrap();
+        drop(palettes);
+
+        assert!(viewport.format_palettes().contains_key(&sheet_a));
+        assert!(viewport.format_palettes().contains_key(&sheet_b));
+
+        reset_viewport_state(&viewport, &sheet_a).unwrap();
+
+        assert!(!viewport.format_palettes().contains_key(&sheet_a));
+        assert!(viewport.format_palettes().contains_key(&sheet_b));
     }
 }
