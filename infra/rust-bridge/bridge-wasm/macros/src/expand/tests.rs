@@ -375,6 +375,38 @@ fn skip_targets_parsed_correctly() {
 }
 
 #[test]
+fn skip_ts_bridge_method_remains_a_wasm_export_with_an_explicit_name() {
+    let input = r#"
+            bridge_version = 1;
+            group = ops;
+            service = KvStore;
+            key_type = str;
+            key_param = "store_id";
+            method write preview_set_col_widths {
+                params { [serde] widths: Vec<(u32, f64)>, }
+                return_type = (Vec<u8>, MutationResult);
+                fallible;
+                skip ts_bridge;
+            }
+        "#;
+    let desc: WasmDescriptor = syn::parse_str(input).unwrap();
+    let code = expand(&desc).to_string();
+
+    assert!(
+        code.contains("js_name = \"kv_store_preview_set_col_widths\""),
+        "ts_bridge-only methods need an explicit wasm-bindgen export name: {code}"
+    );
+    assert!(
+        code.contains("kv_store_preview_set_col_widths"),
+        "ts_bridge-only methods must still be emitted for WASM: {code}"
+    );
+    assert!(
+        code.contains("pub fn __kv_store_preview_set_col_widths"),
+        "ts_bridge-only methods should use a private Rust/WASM symbol: {code}"
+    );
+}
+
+#[test]
 fn skip_lifecycle_create_still_emits_registry() {
     let input = r#"
             bridge_version = 1;

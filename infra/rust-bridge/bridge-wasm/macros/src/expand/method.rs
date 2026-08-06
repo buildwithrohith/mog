@@ -9,6 +9,38 @@ use super::params::build_params_and_conversions;
 use super::returns::build_return_handling;
 use super::types::is_direct_return;
 
+/// Keep methods hidden from the generated TypeScript bridge while making their
+/// direct WASM transport name an explicit part of the binding contract.
+///
+/// `skip(ts_bridge)` is intentionally not `skip(wasm)`: handwritten system
+/// mutations use the generated wasm-bindgen function directly. An explicit
+/// `js_name` prevents a future Rust/wasm-bindgen naming change from making the
+/// transport lookup (`wasm[command]`) diverge from the command name.
+fn wasm_bindgen_attr(method: &WasmMethod, fn_name: &Ident) -> TokenStream {
+    if is_ts_bridge_skipped(method) {
+        let export_name = fn_name.to_string();
+        quote! { #[wasm_bindgen(js_name = #export_name)] }
+    } else {
+        quote! { #[wasm_bindgen] }
+    }
+}
+
+/// Give ts-bridge-only functions a private Rust/WASM symbol while preserving
+/// the public JavaScript command name through `js_name`. This makes the
+/// handwritten transport export a distinct binding rather than relying on
+/// wasm-bindgen's implicit Rust-name mapping.
+fn wasm_rust_fn_name(method: &WasmMethod, fn_name: &Ident) -> Ident {
+    if is_ts_bridge_skipped(method) {
+        format_ident!("__{}", fn_name)
+    } else {
+        fn_name.clone()
+    }
+}
+
+fn is_ts_bridge_skipped(method: &WasmMethod) -> bool {
+    method.skip_targets.iter().any(|target| target == "ts_bridge")
+}
+
 pub(super) fn emit_pure_method(
     _desc: &WasmDescriptor,
     method: &WasmMethod,
@@ -26,6 +58,8 @@ pub(super) fn emit_pure_method(
 
     let (return_type_tokens, result_conversion) =
         build_return_handling(&method.return_type, method.is_fallible);
+    let wasm_bindgen_attr = wasm_bindgen_attr(method, &fn_name);
+    let wasm_fn_name = wasm_rust_fn_name(method, &fn_name);
 
     let call_expr = if method.is_fallible {
         quote! {
@@ -39,8 +73,8 @@ pub(super) fn emit_pure_method(
     };
 
     quote! {
-        #[wasm_bindgen]
-        pub fn #fn_name(#(#wasm_params),*) -> #return_type_tokens {
+        #wasm_bindgen_attr
+        pub fn #wasm_fn_name(#(#wasm_params),*) -> #return_type_tokens {
             #(#conversion_stmts)*
             #call_expr
             #result_conversion
@@ -70,6 +104,8 @@ pub(super) fn emit_service_method(
     let key_param = format_ident!("{}", key_param_name);
 
     let (wasm_params, conversion_stmts, call_args) = build_params_and_conversions(&method.params);
+    let wasm_bindgen_attr = wasm_bindgen_attr(method, &fn_name);
+    let wasm_fn_name = wasm_rust_fn_name(method, &fn_name);
 
     // Key param comes first
     let mut all_wasm_params = vec![quote! { #key_param: &str }];
@@ -165,8 +201,8 @@ pub(super) fn emit_service_method(
     };
 
     quote! {
-        #[wasm_bindgen]
-        pub fn #fn_name(#(#all_wasm_params),*) -> #return_type_tokens {
+        #wasm_bindgen_attr
+        pub fn #wasm_fn_name(#(#all_wasm_params),*) -> #return_type_tokens {
             #(#conversion_stmts)*
             #helper_fn(#key_param, |instance| {
                 #closure_body
