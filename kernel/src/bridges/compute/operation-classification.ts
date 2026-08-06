@@ -86,6 +86,7 @@ const SHADOW_ONLY_EXACT_COMMANDS = new Set([
 const SECRET_NO_HISTORY_PREFIXES = ['compute_wb_security_'];
 
 const SHADOW_ONLY_PREFIXES = [
+  'compute_preview_',
   'compute_set_calculation',
   'compute_set_convergence',
   'compute_set_default_',

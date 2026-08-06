@@ -776,6 +776,7 @@ export class GridEditingSystem implements IGridEditingSystem {
         workbook: this.config.workbook,
         getActiveSheetId: () =>
           toSheetId((this.config.getActiveSheetId ?? (() => this.config.initialSheetId))()),
+        readOnly: this.config.readOnly,
       });
       this.cleanupFns.push(() => {
         this.resizeCoordinator?.dispose();

@@ -22,11 +22,15 @@ function makeState(
   };
 }
 
-function createHarness(initialState: ReturnType<typeof makeState>) {
+function createHarness(initialState: ReturnType<typeof makeState>, readOnly = false) {
   let onState: ((state: ReturnType<typeof makeState>) => void) | null = null;
   const setColumnWidth = jest.fn(async () => undefined);
   const setColumnWidths = jest.fn(async () => undefined);
   const setRowHeight = jest.fn(async () => undefined);
+  const setPreviewColumnWidth = jest.fn(async () => undefined);
+  const setPreviewColumnWidths = jest.fn(async () => undefined);
+  const setPreviewRowHeight = jest.fn(async () => undefined);
+  const setPreviewRowHeights = jest.fn(async () => undefined);
   const send = jest.fn();
   const coordinator = new ResizeCoordinator();
 
@@ -46,9 +50,16 @@ function createHarness(initialState: ReturnType<typeof makeState>) {
           setColumnWidths,
           setRowHeight,
         },
+        _internal: {
+          setPreviewColumnWidth,
+          setPreviewColumnWidths,
+          setPreviewRowHeight,
+          setPreviewRowHeights,
+        },
       })),
     } as never,
     getActiveSheetId: jest.fn(() => 'sheet1' as never),
+    readOnly,
   });
 
   return {
@@ -57,6 +68,10 @@ function createHarness(initialState: ReturnType<typeof makeState>) {
     setColumnWidth,
     setColumnWidths,
     setRowHeight,
+    setPreviewColumnWidth,
+    setPreviewColumnWidths,
+    setPreviewRowHeight,
+    setPreviewRowHeights,
   };
 }
 
@@ -131,6 +146,25 @@ describe('ResizeCoordinator', () => {
       [3, 86],
     ]);
     expect(harness.send).toHaveBeenCalledWith({ type: 'CLEAR_RESIZE' });
+    expect(harness.setColumnWidth).not.toHaveBeenCalled();
+  });
+
+  it('routes a read-only header resize to the ephemeral preview bridge', async () => {
+    const harness = createHarness(
+      makeState('resizingHeader', {
+        resizeType: 'column',
+        resizeIndex: 2,
+        resizeStartPosition: 100,
+        resizeStartSize: 64,
+        resizeCurrentSize: 70,
+      }),
+      true,
+    );
+
+    harness.emit(makeState('idle'));
+    await flushAsyncResize();
+
+    expect(harness.setPreviewColumnWidth).toHaveBeenCalledWith(2, 70);
     expect(harness.setColumnWidth).not.toHaveBeenCalled();
   });
 });

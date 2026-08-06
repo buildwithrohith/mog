@@ -677,6 +677,40 @@ describe('Compute mutation admission', () => {
     expect(gate.bypassDepth).toBe(0);
   });
 
+  it('lets ephemeral preview mutations bypass a closed gate without provider or undo work', async () => {
+    const awaitMaterialized = jest.fn(async () => undefined);
+    const ctx = makeMockContext({ awaitMaterialized } as Partial<IKernelContext>);
+    const transport: BridgeTransport & { call: jest.Mock } = {
+      call: jest.fn(async () => [new Uint8Array(), mutationResult()]),
+    };
+    const core = createStartedCore(ctx, transport);
+    const afterMutationHook = jest.fn(async () => undefined);
+    core.setAfterMutationHook(afterMutationHook);
+
+    const gate = new WriteGate();
+    gate.enterClosed();
+    core.setWriteGate(gate);
+
+    await core.mutateSystemView('compute_preview_set_col_width', () =>
+      transport.call('compute_preview_set_col_width', {
+        docId: 'test-doc',
+        sheetId: 'sheet-a',
+        col: 2,
+        widthPx: 120,
+      }) as Promise<[Uint8Array, MutationResult]>,
+    );
+
+    expect(awaitMaterialized).not.toHaveBeenCalled();
+    expect(transport.call).toHaveBeenCalledWith('compute_preview_set_col_width', {
+      docId: 'test-doc',
+      sheetId: 'sheet-a',
+      col: 2,
+      widthPx: 120,
+    });
+    expect(afterMutationHook).not.toHaveBeenCalled();
+    expect(ctx.services?.undo.notifyForwardMutation).not.toHaveBeenCalled();
+  });
+
   it('lets UI-state workbook settings patch without waiting for all sheets', async () => {
     const materialized = deferred<void>();
     const awaitMaterialized = jest.fn(() => materialized.promise);

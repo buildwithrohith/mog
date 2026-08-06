@@ -263,6 +263,7 @@ pub(in crate::storage::engine) fn import_from_xlsx_bytes_deferred(
         critical_sheet_range,
         engine.stores.layout_metrics,
     )?;
+    engine.stores.dimension_preview.clear_all();
 
     engine.mirror.install_row_col_indexes(
         engine
@@ -630,6 +631,7 @@ pub(in crate::storage::engine) fn stage_deferred_hydration(
             id_alloc,
             grid_indexes,
             layout_indexes,
+            dimension_preview: Default::default(),
             merge_indexes,
             compute: new_compute,
             cf_cache: FxHashMap::default(),

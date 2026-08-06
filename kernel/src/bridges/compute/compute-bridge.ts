@@ -572,6 +572,81 @@ export class ComputeBridge extends GeneratedBridgeBase {
     return this.core.writeGate;
   }
 
+  /**
+   * Apply an ephemeral row-height preview through the system/view pipeline.
+   * This is intentionally handwritten so it bypasses public materialization
+   * admission and the closed read-only WriteGate without changing durable
+   * layout setters.
+   */
+  previewSetRowHeight(
+    sheetId: SheetId,
+    row: number,
+    heightPx: number,
+    admissionOptions?: MutationAdmissionOptions,
+  ): Promise<MutationResult> {
+    return this.core.mutateSystemView(
+      'compute_preview_set_row_height',
+      () =>
+        this.core.transport.call<[Uint8Array, MutationResult]>(
+          'compute_preview_set_row_height',
+          { docId: this.core.docId, sheetId, row, heightPx },
+        ),
+      admissionOptions,
+    );
+  }
+
+  /** Apply multiple ephemeral row-height previews. */
+  previewSetRowHeights(
+    sheetId: SheetId,
+    heights: [number, number][],
+    admissionOptions?: MutationAdmissionOptions,
+  ): Promise<MutationResult> {
+    return this.core.mutateSystemView(
+      'compute_preview_set_row_heights',
+      () =>
+        this.core.transport.call<[Uint8Array, MutationResult]>(
+          'compute_preview_set_row_heights',
+          { docId: this.core.docId, sheetId, heights },
+        ),
+      admissionOptions,
+    );
+  }
+
+  /** Apply an ephemeral column-width preview. */
+  previewSetColWidth(
+    sheetId: SheetId,
+    col: number,
+    widthPx: number,
+    admissionOptions?: MutationAdmissionOptions,
+  ): Promise<MutationResult> {
+    return this.core.mutateSystemView(
+      'compute_preview_set_col_width',
+      () =>
+        this.core.transport.call<[Uint8Array, MutationResult]>(
+          'compute_preview_set_col_width',
+          { docId: this.core.docId, sheetId, col, widthPx },
+        ),
+      admissionOptions,
+    );
+  }
+
+  /** Apply multiple ephemeral column-width previews. */
+  previewSetColWidths(
+    sheetId: SheetId,
+    widths: [number, number][],
+    admissionOptions?: MutationAdmissionOptions,
+  ): Promise<MutationResult> {
+    return this.core.mutateSystemView(
+      'compute_preview_set_col_widths',
+      () =>
+        this.core.transport.call<[Uint8Array, MutationResult]>(
+          'compute_preview_set_col_widths',
+          { docId: this.core.docId, sheetId, widths },
+        ),
+      admissionOptions,
+    );
+  }
+
   createEngine(snapshot?: Record<string, unknown>): Promise<RecalcResult> {
     return this.core.createEngine(snapshot);
   }

@@ -7,6 +7,68 @@ use compute_wire::mutation::serialize_multi_viewport_patches;
 use value_types::ComputeError;
 
 impl YrsComputeEngine {
+    pub(super) fn apply_preview_set_row_height(
+        &mut self,
+        sheet_id: &SheetId,
+        row: u32,
+        height_px: f64,
+    ) -> Result<(Vec<u8>, MutationResult), ComputeError> {
+        let height_px = domain_types::units::Pixels(height_px);
+        let height_pt = domain_types::units::pixels_to_points(height_px);
+        validation::structure::validate_row_height(height_pt)?;
+        services::structural::preview_set_row_height(&mut self.stores, sheet_id, row, height_px)
+            .map(|r| (serialize_multi_viewport_patches(&[]), r))
+    }
+
+    pub(super) fn apply_preview_set_row_heights(
+        &mut self,
+        sheet_id: &SheetId,
+        heights: &[(u32, f64)],
+    ) -> Result<(Vec<u8>, MutationResult), ComputeError> {
+        let heights_px: Vec<(u32, domain_types::units::Pixels)> = heights
+            .iter()
+            .map(|(row, height)| (*row, domain_types::units::Pixels(*height)))
+            .collect();
+        for (_, height_px) in &heights_px {
+            let height_pt = domain_types::units::pixels_to_points(*height_px);
+            validation::structure::validate_row_height(height_pt)?;
+        }
+        services::structural::preview_set_row_heights(&mut self.stores, sheet_id, &heights_px)
+            .map(|r| (serialize_multi_viewport_patches(&[]), r))
+    }
+
+    pub(super) fn apply_preview_set_col_width(
+        &mut self,
+        sheet_id: &SheetId,
+        col: u32,
+        width_px: f64,
+    ) -> Result<(Vec<u8>, MutationResult), ComputeError> {
+        let width_px = domain_types::units::Pixels(width_px);
+        let mdw = self.stores.layout_metrics.column_width_mdw;
+        let width_cw = domain_types::units::pixels_to_char_width(width_px, mdw);
+        validation::structure::validate_col_width(width_cw)?;
+        services::structural::preview_set_col_width(&mut self.stores, sheet_id, col, width_px)
+            .map(|r| (serialize_multi_viewport_patches(&[]), r))
+    }
+
+    pub(super) fn apply_preview_set_col_widths(
+        &mut self,
+        sheet_id: &SheetId,
+        widths: &[(u32, f64)],
+    ) -> Result<(Vec<u8>, MutationResult), ComputeError> {
+        let mdw = self.stores.layout_metrics.column_width_mdw;
+        let widths_px: Vec<(u32, domain_types::units::Pixels)> = widths
+            .iter()
+            .map(|(col, width)| (*col, domain_types::units::Pixels(*width)))
+            .collect();
+        for (_, width_px) in &widths_px {
+            let width_cw = domain_types::units::pixels_to_char_width(*width_px, mdw);
+            validation::structure::validate_col_width(width_cw)?;
+        }
+        services::structural::preview_set_col_widths(&mut self.stores, sheet_id, &widths_px)
+            .map(|r| (serialize_multi_viewport_patches(&[]), r))
+    }
+
     pub(super) fn apply_set_row_height(
         &mut self,
         sheet_id: &SheetId,

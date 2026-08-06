@@ -93,6 +93,7 @@ fn rebuild_layout_index_if_dimension_default_changed(
         engine.stores.layout_metrics,
     );
     engine.stores.layout_indexes.insert(*sheet_id, layout);
+    engine.stores.dimension_preview.clear_sheet(sheet_id);
 }
 
 pub(in crate::storage::engine) fn protect_sheet(

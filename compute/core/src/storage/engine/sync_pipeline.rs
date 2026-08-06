@@ -103,6 +103,7 @@ impl YrsComputeEngine {
             &self.stores.grid_indexes,
             self.stores.layout_metrics,
         )?;
+        self.stores.dimension_preview.clear_all();
 
         self.settings = construction::derive_settings(&self.stores.storage);
         self.init_cf_caches();
@@ -311,6 +312,7 @@ impl YrsComputeEngine {
             self.stores.layout_metrics,
         );
         self.stores.layout_indexes.insert(sheet_id, li);
+        self.stores.dimension_preview.clear_sheet(&sheet_id);
 
         Ok(true)
     }
@@ -425,6 +427,7 @@ impl YrsComputeEngine {
             }
             self.mirror.remove_sheet(&sheet_id);
             self.stores.layout_indexes.remove(&sheet_id);
+            self.stores.dimension_preview.clear_sheet(&sheet_id);
         }
 
         let deleted_sheets: HashSet<SheetId> =
@@ -477,6 +480,7 @@ impl YrsComputeEngine {
                 &self.stores.grid_indexes,
                 self.stores.layout_metrics,
             )?;
+            self.stores.dimension_preview.clear_all();
 
             self.settings = construction::derive_settings(&self.stores.storage);
             self.init_cf_caches();

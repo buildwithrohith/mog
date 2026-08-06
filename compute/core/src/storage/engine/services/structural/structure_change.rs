@@ -170,6 +170,7 @@ pub(in crate::storage::engine) fn apply_structure_change(
             stores.layout_metrics,
         );
         stores.layout_indexes.insert(*sheet_id, layout);
+        stores.dimension_preview.clear_sheet(sheet_id);
     }
 
     // Delegate to ComputeCore for formula reparsing and full recalc.

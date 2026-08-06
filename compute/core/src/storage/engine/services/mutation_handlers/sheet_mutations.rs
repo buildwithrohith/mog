@@ -153,6 +153,7 @@ fn create_sheet_with_origin(
             default_col_width,
         ),
     );
+    stores.dimension_preview.clear_sheet(&sheet_id);
 
     // 4. Add to ComputeCore via add_sheet with empty snapshot
     let snap = crate::snapshot::SheetSnapshot {
@@ -247,6 +248,7 @@ pub(in crate::storage::engine) fn mutation_delete_sheet(
     stores.grid_indexes.remove(sheet_id);
     stores.merge_indexes.remove(sheet_id);
     stores.layout_indexes.remove(sheet_id);
+    stores.dimension_preview.clear_sheet(sheet_id);
 
     let mut result = MutationResult::empty();
     result.sheet_changes.push(SheetChange {
@@ -417,6 +419,7 @@ pub(in crate::storage::engine) fn mutation_copy_sheet(
         stores.layout_metrics,
     );
     stores.layout_indexes.insert(new_id, li);
+    stores.dimension_preview.clear_sheet(&new_id);
 
     // 4. Build a SheetSnapshot from yrs (not mirror/compute, which hasn't been initialized yet)
     let snap = construction::build_sheet_snapshot_from_yrs(&stores.storage, &new_id)?.ok_or_else(

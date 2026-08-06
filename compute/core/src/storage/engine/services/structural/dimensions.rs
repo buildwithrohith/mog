@@ -85,6 +85,180 @@ fn ensure_axis_capacity(
     Ok(())
 }
 
+fn validate_preview_row_index(
+    stores: &EngineStores,
+    sheet_id: &SheetId,
+    row: u32,
+) -> Result<(), ComputeError> {
+    let Some(layout) = stores.layout_indexes.get(sheet_id) else {
+        return Err(ComputeError::SheetNotFound {
+            sheet_id: sheet_id.to_uuid_string(),
+        });
+    };
+    if row as usize >= layout.row_count() {
+        return Err(ComputeError::InvalidInput {
+            message: format!(
+                "Preview row index {} is outside the existing layout range 0..{}",
+                row,
+                layout.row_count()
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn validate_preview_col_index(
+    stores: &EngineStores,
+    sheet_id: &SheetId,
+    col: u32,
+) -> Result<(), ComputeError> {
+    let Some(layout) = stores.layout_indexes.get(sheet_id) else {
+        return Err(ComputeError::SheetNotFound {
+            sheet_id: sheet_id.to_uuid_string(),
+        });
+    };
+    if col as usize >= layout.col_count() {
+        return Err(ComputeError::InvalidInput {
+            message: format!(
+                "Preview column index {} is outside the existing layout range 0..{}",
+                col,
+                layout.col_count()
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Set a row height in the session-local preview overlay.
+pub(in crate::storage::engine) fn preview_set_row_height(
+    stores: &mut EngineStores,
+    sheet_id: &SheetId,
+    row: u32,
+    height_px: Pixels,
+) -> Result<MutationResult, ComputeError> {
+    validate_preview_row_index(stores, sheet_id, row)?;
+    stores
+        .layout_indexes
+        .get_mut(sheet_id)
+        .expect("preview row layout was validated")
+        .set_row_height(row as usize, height_px);
+    stores
+        .dimension_preview
+        .set_row_height(sheet_id, row, height_px);
+
+    let mut result = MutationResult::empty();
+    result
+        .dimension_changes
+        .push(crate::snapshot::DimensionChange {
+            sheet_id: id_to_hex(sheet_id.as_u128()).into(),
+            axis: crate::snapshot::Axis::Row,
+            index: row,
+            kind: ChangeKind::Set,
+            size: Some(value_types::FiniteF64::must(height_px.0)),
+        });
+    result.floating_object_changes = recompute_floating_object_bounds(stores, sheet_id);
+    Ok(result)
+}
+
+/// Set a column width in the session-local preview overlay.
+pub(in crate::storage::engine) fn preview_set_col_width(
+    stores: &mut EngineStores,
+    sheet_id: &SheetId,
+    col: u32,
+    width_px: Pixels,
+) -> Result<MutationResult, ComputeError> {
+    validate_preview_col_index(stores, sheet_id, col)?;
+    stores
+        .layout_indexes
+        .get_mut(sheet_id)
+        .expect("preview column layout was validated")
+        .set_col_width(col as usize, width_px);
+    stores
+        .dimension_preview
+        .set_col_width(sheet_id, col, width_px);
+
+    let mut result = MutationResult::empty();
+    result
+        .dimension_changes
+        .push(crate::snapshot::DimensionChange {
+            sheet_id: id_to_hex(sheet_id.as_u128()).into(),
+            axis: crate::snapshot::Axis::Col,
+            index: col,
+            kind: ChangeKind::Set,
+            size: Some(value_types::FiniteF64::must(width_px.0)),
+        });
+    result.floating_object_changes = recompute_floating_object_bounds(stores, sheet_id);
+    Ok(result)
+}
+
+/// Set multiple row heights in the session-local preview overlay.
+pub(in crate::storage::engine) fn preview_set_row_heights(
+    stores: &mut EngineStores,
+    sheet_id: &SheetId,
+    heights: &[(u32, Pixels)],
+) -> Result<MutationResult, ComputeError> {
+    for (row, _) in heights {
+        validate_preview_row_index(stores, sheet_id, *row)?;
+    }
+
+    let mut result = MutationResult::empty();
+    for (row, height_px) in heights {
+        stores
+            .layout_indexes
+            .get_mut(sheet_id)
+            .expect("preview row layout was validated")
+            .set_row_height(*row as usize, *height_px);
+        stores
+            .dimension_preview
+            .set_row_height(sheet_id, *row, *height_px);
+        result
+            .dimension_changes
+            .push(crate::snapshot::DimensionChange {
+                sheet_id: id_to_hex(sheet_id.as_u128()).into(),
+                axis: crate::snapshot::Axis::Row,
+                index: *row,
+                kind: ChangeKind::Set,
+                size: Some(value_types::FiniteF64::must(height_px.0)),
+            });
+    }
+    result.floating_object_changes = recompute_floating_object_bounds(stores, sheet_id);
+    Ok(result)
+}
+
+/// Set multiple column widths in the session-local preview overlay.
+pub(in crate::storage::engine) fn preview_set_col_widths(
+    stores: &mut EngineStores,
+    sheet_id: &SheetId,
+    widths: &[(u32, Pixels)],
+) -> Result<MutationResult, ComputeError> {
+    for (col, _) in widths {
+        validate_preview_col_index(stores, sheet_id, *col)?;
+    }
+
+    let mut result = MutationResult::empty();
+    for (col, width_px) in widths {
+        stores
+            .layout_indexes
+            .get_mut(sheet_id)
+            .expect("preview column layout was validated")
+            .set_col_width(*col as usize, *width_px);
+        stores
+            .dimension_preview
+            .set_col_width(sheet_id, *col, *width_px);
+        result
+            .dimension_changes
+            .push(crate::snapshot::DimensionChange {
+                sheet_id: id_to_hex(sheet_id.as_u128()).into(),
+                axis: crate::snapshot::Axis::Col,
+                index: *col,
+                kind: ChangeKind::Set,
+                size: Some(value_types::FiniteF64::must(width_px.0)),
+            });
+    }
+    result.floating_object_changes = recompute_floating_object_bounds(stores, sheet_id);
+    Ok(result)
+}
+
 /// Set row height.
 ///
 /// `height_px` is in pixels (from the UI). Converted to points for Yrs storage;
@@ -112,6 +286,7 @@ pub(in crate::storage::engine) fn set_row_height(
     if let Some(li) = stores.layout_indexes.get_mut(sheet_id) {
         li.set_row_height(row as usize, height_px);
     }
+    stores.dimension_preview.clear_row_height(sheet_id, row);
     let mut result = MutationResult::empty();
     result
         .dimension_changes
@@ -154,6 +329,7 @@ pub(in crate::storage::engine) fn set_col_width(
     if let Some(li) = stores.layout_indexes.get_mut(sheet_id) {
         li.set_col_width(col as usize, width_px);
     }
+    stores.dimension_preview.clear_col_width(sheet_id, col);
     let mut result = MutationResult::empty();
     result
         .dimension_changes
@@ -199,6 +375,7 @@ pub(in crate::storage::engine) fn set_col_widths(
         if let Some(li) = stores.layout_indexes.get_mut(sheet_id) {
             li.set_col_width(*col as usize, *width_px);
         }
+        stores.dimension_preview.clear_col_width(sheet_id, *col);
         result
             .dimension_changes
             .push(crate::snapshot::DimensionChange {
@@ -236,6 +413,7 @@ pub(in crate::storage::engine) fn set_col_width_chars(
     if let Some(li) = stores.layout_indexes.get_mut(sheet_id) {
         li.set_col_width(col as usize, width_px);
     }
+    stores.dimension_preview.clear_col_width(sheet_id, col);
     let mut result = MutationResult::empty();
     result
         .dimension_changes
@@ -275,6 +453,7 @@ pub(in crate::storage::engine) fn set_col_widths_chars(
         if let Some(li) = stores.layout_indexes.get_mut(sheet_id) {
             li.set_col_width(*col as usize, width_px);
         }
+        stores.dimension_preview.clear_col_width(sheet_id, *col);
         result
             .dimension_changes
             .push(crate::snapshot::DimensionChange {

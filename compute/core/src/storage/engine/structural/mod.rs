@@ -133,6 +133,56 @@ impl YrsComputeEngine {
         self.apply_set_col_widths(sheet_id, widths)
     }
 
+    /// Set a row height in the session-local read-only preview overlay.
+    ///
+    /// This command is intentionally omitted from the generated TypeScript
+    /// bridge. The handwritten view-mutation path calls it without public
+    /// materialization admission or the document WriteGate.
+    #[bridge::skip(ts_bridge)]
+    #[bridge::write(scope = "sheet")]
+    pub fn preview_set_row_height(
+        &mut self,
+        sheet_id: &SheetId,
+        row: u32,
+        height_px: f64,
+    ) -> Result<(Vec<u8>, MutationResult), ComputeError> {
+        self.apply_preview_set_row_height(sheet_id, row, height_px)
+    }
+
+    /// Set multiple row heights in the session-local read-only preview overlay.
+    #[bridge::skip(ts_bridge)]
+    #[bridge::write(scope = "sheet")]
+    pub fn preview_set_row_heights(
+        &mut self,
+        sheet_id: &SheetId,
+        heights: &[(u32, f64)],
+    ) -> Result<(Vec<u8>, MutationResult), ComputeError> {
+        self.apply_preview_set_row_heights(sheet_id, heights)
+    }
+
+    /// Set a column width in the session-local read-only preview overlay.
+    #[bridge::skip(ts_bridge)]
+    #[bridge::write(scope = "sheet")]
+    pub fn preview_set_col_width(
+        &mut self,
+        sheet_id: &SheetId,
+        col: u32,
+        width_px: f64,
+    ) -> Result<(Vec<u8>, MutationResult), ComputeError> {
+        self.apply_preview_set_col_width(sheet_id, col, width_px)
+    }
+
+    /// Set multiple column widths in the session-local read-only preview overlay.
+    #[bridge::skip(ts_bridge)]
+    #[bridge::write(scope = "sheet")]
+    pub fn preview_set_col_widths(
+        &mut self,
+        sheet_id: &SheetId,
+        widths: &[(u32, f64)],
+    ) -> Result<(Vec<u8>, MutationResult), ComputeError> {
+        self.apply_preview_set_col_widths(sheet_id, widths)
+    }
+
     /// Set column width in character-width units (OOXML-native).
     #[bridge::write(scope = "sheet")]
     pub fn set_col_width_chars(

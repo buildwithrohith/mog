@@ -486,3 +486,53 @@ fn batch_column_width_setters_update_queries_and_dimension_changes() {
         vec![(6, 10.0), (7, 11.0)]
     );
 }
+
+#[test]
+fn preview_column_width_updates_layout_and_query_without_persisting_or_exporting() {
+    let snap = simple_snapshot();
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(snap).unwrap();
+    let sid = sheet_id();
+
+    let yrs_before = compute_collab::encode_full_state(engine.storage().doc());
+    let export_before = engine
+        .export_to_parse_output()
+        .expect("export before preview")
+        .parse_output;
+
+    let (_, result) = engine
+        .preview_set_col_width(&sid, 1, 123.0)
+        .expect("preview_set_col_width");
+
+    assert_eq!(result.dimension_changes.len(), 1);
+    assert_eq!(result.dimension_changes[0].index, 1);
+    assert_eq!(
+        result.dimension_changes[0]
+            .size
+            .expect("preview size")
+            .get(),
+        123.0
+    );
+    assert_eq!(
+        engine
+            .layout_index(&sid)
+            .expect("layout index")
+            .get_col_width(1)
+            .0,
+        123.0
+    );
+    assert_eq!(engine.get_col_width_query(&sid, 1), 123.0);
+
+    assert_eq!(
+        compute_collab::encode_full_state(engine.storage().doc()),
+        yrs_before,
+        "preview resize must not write the Yrs document"
+    );
+    assert_eq!(
+        engine
+            .export_to_parse_output()
+            .expect("export after preview")
+            .parse_output,
+        export_before,
+        "preview resize must not affect canonical export"
+    );
+}

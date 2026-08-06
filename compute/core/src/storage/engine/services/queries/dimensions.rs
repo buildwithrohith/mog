@@ -163,6 +163,9 @@ pub(in crate::storage::engine) fn get_row_height_query(
     sheet_id: &SheetId,
     row: u32,
 ) -> Pixels {
+    if let Some(height_px) = stores.dimension_preview.row_height(sheet_id, row) {
+        return height_px;
+    }
     let height_pt = sheet_dimensions::get_row_height(
         stores.storage.doc(),
         stores.storage.sheets(),
@@ -184,6 +187,9 @@ pub(in crate::storage::engine) fn get_col_width_query(
     sheet_id: &SheetId,
     col: u32,
 ) -> Pixels {
+    if let Some(width_px) = stores.dimension_preview.col_width(sheet_id, col) {
+        return width_px;
+    }
     let width_cw = sheet_dimensions::get_col_width(
         stores.storage.doc(),
         stores.storage.sheets(),
@@ -227,6 +233,9 @@ pub(in crate::storage::engine) fn get_row_heights_batch(
 ) -> Vec<(u32, Pixels)> {
     (start_row..=end_row)
         .map(|row| {
+            if let Some(height_px) = stores.dimension_preview.row_height(sheet_id, row) {
+                return (row, height_px);
+            }
             let pt = sheet_dimensions::get_row_height(
                 stores.storage.doc(),
                 stores.storage.sheets(),
@@ -253,6 +262,12 @@ pub(in crate::storage::engine) fn get_col_width_chars_query(
     sheet_id: &SheetId,
     col: u32,
 ) -> CharWidth {
+    if let Some(width_px) = stores.dimension_preview.col_width(sheet_id, col) {
+        return domain_types::units::pixels_to_char_width(
+            width_px,
+            stores.layout_metrics.column_width_mdw,
+        );
+    }
     sheet_dimensions::get_col_width(
         stores.storage.doc(),
         stores.storage.sheets(),
@@ -271,6 +286,13 @@ pub(in crate::storage::engine) fn get_col_widths_batch_chars(
 ) -> Vec<(u32, CharWidth)> {
     (start_col..=end_col)
         .map(|col| {
+            if let Some(width_px) = stores.dimension_preview.col_width(sheet_id, col) {
+                let width_cw = domain_types::units::pixels_to_char_width(
+                    width_px,
+                    stores.layout_metrics.column_width_mdw,
+                );
+                return (col, width_cw);
+            }
             let cw = sheet_dimensions::get_col_width(
                 stores.storage.doc(),
                 stores.storage.sheets(),
@@ -293,6 +315,9 @@ pub(in crate::storage::engine) fn get_col_widths_batch(
     let mdw = stores.layout_metrics.column_width_mdw;
     (start_col..=end_col)
         .map(|col| {
+            if let Some(width_px) = stores.dimension_preview.col_width(sheet_id, col) {
+                return (col, width_px);
+            }
             let cw = sheet_dimensions::get_col_width(
                 stores.storage.doc(),
                 stores.storage.sheets(),

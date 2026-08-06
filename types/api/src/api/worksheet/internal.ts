@@ -34,6 +34,21 @@ export interface WorksheetInternalChart extends Chart {
 /** Internal worksheet operations — not part of the public Worksheet API. */
 export interface WorksheetInternal {
   /**
+   * Set a transient column width for a read-only header-resize preview.
+   * The override is session-local and is never persisted or exported.
+   */
+  setPreviewColumnWidth(col: number, widthPx: number): Promise<void>;
+
+  /** Set multiple transient column widths for a read-only preview. */
+  setPreviewColumnWidths(widths: [number, number][]): Promise<void>;
+
+  /** Set a transient row height for a read-only header-resize preview. */
+  setPreviewRowHeight(row: number, heightPx: number): Promise<void>;
+
+  /** Set multiple transient row heights for a read-only preview. */
+  setPreviewRowHeights(heights: [number, number][]): Promise<void>;
+
+  /**
    * Get the cell ID at a given position, or null if no cell exists there.
    *
    * @param row - Row index (0-based)

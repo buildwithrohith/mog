@@ -292,6 +292,7 @@ fn assemble_engine_inner(
             layout_metrics,
             grid_indexes,
             layout_indexes,
+            dimension_preview: Default::default(),
             merge_indexes,
             compute,
             cf_cache: FxHashMap::default(),
@@ -423,6 +424,7 @@ pub(in crate::storage::engine) fn rebuild_engine_from_snapshot(
         &engine.stores.grid_indexes,
         engine.stores.layout_metrics,
     )?;
+    engine.stores.dimension_preview.clear_all();
 
     // unified reference model — re-seed mirror's row/col reverse index after the rebuild.
     engine.mirror.install_row_col_indexes(

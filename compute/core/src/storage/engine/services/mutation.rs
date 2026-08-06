@@ -291,29 +291,32 @@ pub(in crate::storage::engine) fn apply_dimension_changes_to_layout(
     // Row heights — Yrs stores points, LayoutIndex needs pixels
     for dch in &changes.row_heights {
         let row_pos = resolve_hex_id_to_position(stores, &dch.sheet_id, &dch.key, true);
-        if let Some(row) = row_pos
-            && let Some(li) = stores.layout_indexes.get_mut(&dch.sheet_id)
-        {
-            match dch.kind {
-                CellChangeKind::Modified => {
-                    // Read canonical value (points) and convert to pixels
-                    let height_pt = dimensions::get_row_height(
-                        stores.storage.doc(),
-                        stores.storage.sheets(),
-                        &dch.sheet_id,
-                        row,
-                        stores.grid_indexes.get(&dch.sheet_id),
-                    );
-                    // get_row_height returns 0 for hidden rows — keep that
-                    let height_px = if height_pt.0 == 0.0 {
-                        domain_types::units::Pixels(0.0)
-                    } else {
-                        domain_types::units::points_to_pixels(height_pt)
-                    };
-                    li.set_row_height(row as usize, height_px);
-                }
-                CellChangeKind::Removed => {
-                    li.set_row_height(row as usize, stores.layout_metrics.default_row_height());
+        if let Some(row) = row_pos {
+            stores
+                .dimension_preview
+                .clear_row_height(&dch.sheet_id, row);
+            if let Some(li) = stores.layout_indexes.get_mut(&dch.sheet_id) {
+                match dch.kind {
+                    CellChangeKind::Modified => {
+                        // Read canonical value (points) and convert to pixels
+                        let height_pt = dimensions::get_row_height(
+                            stores.storage.doc(),
+                            stores.storage.sheets(),
+                            &dch.sheet_id,
+                            row,
+                            stores.grid_indexes.get(&dch.sheet_id),
+                        );
+                        // get_row_height returns 0 for hidden rows — keep that
+                        let height_px = if height_pt.0 == 0.0 {
+                            domain_types::units::Pixels(0.0)
+                        } else {
+                            domain_types::units::points_to_pixels(height_pt)
+                        };
+                        li.set_row_height(row as usize, height_px);
+                    }
+                    CellChangeKind::Removed => {
+                        li.set_row_height(row as usize, stores.layout_metrics.default_row_height());
+                    }
                 }
             }
         }
@@ -323,36 +326,37 @@ pub(in crate::storage::engine) fn apply_dimension_changes_to_layout(
     let mdw = stores.layout_metrics.column_width_mdw;
     for dch in &changes.col_widths {
         let col_pos = resolve_hex_id_to_position(stores, &dch.sheet_id, &dch.key, false);
-        if let Some(col) = col_pos
-            && let Some(li) = stores.layout_indexes.get_mut(&dch.sheet_id)
-        {
-            match dch.kind {
-                CellChangeKind::Modified => {
-                    // Read canonical value (char-width) and convert to pixels
-                    let width_cw = dimensions::get_col_width(
-                        stores.storage.doc(),
-                        stores.storage.sheets(),
-                        &dch.sheet_id,
-                        col,
-                        stores.grid_indexes.get(&dch.sheet_id),
-                    );
-                    // get_col_width returns 0 for hidden cols — keep that
-                    let width_px = if width_cw.0 == 0.0 {
-                        domain_types::units::Pixels(0.0)
-                    } else {
-                        domain_types::units::char_width_to_pixels(width_cw, mdw)
-                    };
-                    li.set_col_width(col as usize, width_px);
-                }
-                CellChangeKind::Removed => {
-                    // Revert to the sheet's default (respects metadata).
-                    let default_cw = dimensions::get_sheet_default_col_width(
-                        stores.storage.doc(),
-                        stores.storage.sheets(),
-                        &dch.sheet_id,
-                    );
-                    let default_px = domain_types::units::char_width_to_pixels(default_cw, mdw);
-                    li.set_col_width(col as usize, default_px);
+        if let Some(col) = col_pos {
+            stores.dimension_preview.clear_col_width(&dch.sheet_id, col);
+            if let Some(li) = stores.layout_indexes.get_mut(&dch.sheet_id) {
+                match dch.kind {
+                    CellChangeKind::Modified => {
+                        // Read canonical value (char-width) and convert to pixels
+                        let width_cw = dimensions::get_col_width(
+                            stores.storage.doc(),
+                            stores.storage.sheets(),
+                            &dch.sheet_id,
+                            col,
+                            stores.grid_indexes.get(&dch.sheet_id),
+                        );
+                        // get_col_width returns 0 for hidden cols — keep that
+                        let width_px = if width_cw.0 == 0.0 {
+                            domain_types::units::Pixels(0.0)
+                        } else {
+                            domain_types::units::char_width_to_pixels(width_cw, mdw)
+                        };
+                        li.set_col_width(col as usize, width_px);
+                    }
+                    CellChangeKind::Removed => {
+                        // Revert to the sheet's default (respects metadata).
+                        let default_cw = dimensions::get_sheet_default_col_width(
+                            stores.storage.doc(),
+                            stores.storage.sheets(),
+                            &dch.sheet_id,
+                        );
+                        let default_px = domain_types::units::char_width_to_pixels(default_cw, mdw);
+                        li.set_col_width(col as usize, default_px);
+                    }
                 }
             }
         }

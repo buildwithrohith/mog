@@ -46,6 +46,22 @@ export class WorksheetInternalImpl implements WorksheetInternal {
     private readonly sheetId: SheetId,
   ) {}
 
+  async setPreviewColumnWidth(col: number, widthPx: number): Promise<void> {
+    await this.ctx.computeBridge.previewSetColWidth(this.sheetId, col, widthPx);
+  }
+
+  async setPreviewColumnWidths(widths: [number, number][]): Promise<void> {
+    await this.ctx.computeBridge.previewSetColWidths(this.sheetId, widths);
+  }
+
+  async setPreviewRowHeight(row: number, heightPx: number): Promise<void> {
+    await this.ctx.computeBridge.previewSetRowHeight(this.sheetId, row, heightPx);
+  }
+
+  async setPreviewRowHeights(heights: [number, number][]): Promise<void> {
+    await this.ctx.computeBridge.previewSetRowHeights(this.sheetId, heights);
+  }
+
   private async ensureTargetRangeEditable(
     targetSheetId: SheetId,
     startRow: number,

@@ -40,6 +40,7 @@ pub use cell_semantics::CellInfo;
 mod cf_cache;
 mod data_table_formula;
 mod delegations;
+mod dimension_preview;
 mod export;
 mod features;
 mod filter_import_diagnostics;

@@ -273,7 +273,8 @@ export class ComputeCore {
    * drain Rust's update_v1 buffer immediately after every mutation.
    * Called at the end of `mutateCore()` — every mutation path (forward,
    * undo, redo, syncApply) triggers a drain, eliminating the need for
-   * a polling loop.
+   * a polling loop. Ephemeral view mutations explicitly skip this hook
+   * because they must not cross the provider-persistence boundary.
    */
   private afterMutationHook: (() => Promise<void>) | null = null;
   private undoGroupDepth = 0;
@@ -879,12 +880,16 @@ export class ComputeCore {
     options?: MutationAdmissionOptions,
     captureMutation = false,
     source: MutationSource = 'user',
+    bypassWriteGate = false,
+    skipAfterMutationHook = false,
   ): Promise<MutationResult> {
     // Write gate check: if a gate is installed, verify the mutation is
     // allowed before executing. The gate throws WriteGateRejectionError
     // if the document is in a read-only, closing, or closed mode.
     // System operations running inside a bypass scope pass through.
-    this._writeGate?.assertWritable(operation);
+    if (!bypassWriteGate) {
+      this._writeGate?.assertWritable(operation);
+    }
 
     const [viewportPatchesBinary, result] = await promise;
     if (captureMutation) {
@@ -1012,7 +1017,7 @@ export class ComputeCore {
     // redo, syncApply) can produce Yrs updates.  Draining here eliminates
     // the need for a polling loop and ensures subscribers see updates
     // synchronously with the mutation that caused them.
-    if (this.afterMutationHook) {
+    if (this.afterMutationHook && !skipAfterMutationHook) {
       await this.afterMutationHook();
     }
 
@@ -1123,6 +1128,39 @@ export class ComputeCore {
     const source = mutationSourceForSystemOperation(operation);
     const run = () => this.mutate(call(), directEdits, operation, options, captureMutation, source);
     return runSystemMutation(this.ctx, this._writeGate, operation, run, options);
+  }
+
+  /**
+   * View-only system mutation for ephemeral render state.
+   *
+   * Preview dimensions intentionally bypass both public materialization
+   * admission and the WriteGate: a genuinely read-only document may have a
+   * closed gate, while this operation never writes Yrs or provider state.
+   * It still uses mutateCore so viewport patches, MutationResult events,
+   * and geometry refresh follow the normal pipeline. It skips the provider
+   * drain hook because the preview must not cross the persistence boundary.
+   * Unlike mutateSystem, it does not notify the undo service.
+   */
+  async mutateSystemView(
+    operation: string,
+    call: () => Promise<MutationTuple>,
+    options?: MutationAdmissionOptions,
+  ): Promise<MutationResult> {
+    observeMutationAdmission(this.ctx, operation, {
+      invocation: 'system-mutation',
+      ...options,
+    });
+    this.ensureInitialized();
+    return this.mutateCore(
+      call(),
+      undefined,
+      operation,
+      options,
+      false,
+      'system',
+      true,
+      true,
+    );
   }
 
   /**

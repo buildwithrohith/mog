@@ -18,7 +18,7 @@
  *
  */
 
-import type { Workbook } from '@mog-sdk/contracts/api';
+import type { WorkbookInternal } from '@mog-sdk/contracts/api';
 import type { SheetId } from '@mog-sdk/contracts/core';
 
 import type { SelectionActor, SelectionState } from '../../../shared/actor-types';
@@ -41,7 +41,9 @@ export interface ResizeCoordinatorDependencies {
   /** Selection machine actor */
   selectionActor: SelectionActor;
   /** Workbook for unified API access */
-  workbook: Workbook;
+  workbook: WorkbookInternal;
+  /** Route header drags through the transient bridge when the workbook is read-only. */
+  readOnly?: boolean;
   /** Active sheet ID getter */
   getActiveSheetId: () => SheetId;
   /** Callback when dimensions change (for renderer invalidation) */
@@ -191,15 +193,23 @@ export class ResizeCoordinator {
   ): Promise<void> {
     if (!this.deps) return;
 
-    const { workbook, getActiveSheetId, selectionActor, onDimensionsChanged } = this.deps;
+    const { workbook, getActiveSheetId, selectionActor, onDimensionsChanged, readOnly } = this.deps;
     const sheetId = getActiveSheetId();
     const ws = workbook.getSheetById(sheetId);
 
     try {
       if (resizeType === 'column') {
-        await ws.layout.setColumnWidth(resizeIndex, newSize);
+        if (readOnly) {
+          await ws._internal.setPreviewColumnWidth(resizeIndex, newSize);
+        } else {
+          await ws.layout.setColumnWidth(resizeIndex, newSize);
+        }
       } else {
-        await ws.layout.setRowHeight(resizeIndex, newSize);
+        if (readOnly) {
+          await ws._internal.setPreviewRowHeight(resizeIndex, newSize);
+        } else {
+          await ws.layout.setRowHeight(resizeIndex, newSize);
+        }
       }
       onDimensionsChanged?.(sheetId);
     } catch (error) {
@@ -230,12 +240,13 @@ export class ResizeCoordinator {
   ): Promise<void> {
     if (!this.deps) return;
 
-    const { workbook, getActiveSheetId, selectionActor, onDimensionsChanged } = this.deps;
+    const { workbook, getActiveSheetId, selectionActor, onDimensionsChanged, readOnly } = this.deps;
     const sheetId = getActiveSheetId();
     const ws = workbook.getSheetById(sheetId);
 
     const writes: Array<[number, number]> = [];
-    const rowWrites: Array<Promise<void>> = [];
+    const rowWrites: Array<[number, number]> = [];
+    const durableRowWrites: Array<Promise<void>> = [];
     for (const index of indexes) {
       const startSize = startSizes.get(index);
       if (startSize === undefined) continue;
@@ -247,7 +258,10 @@ export class ResizeCoordinator {
       if (resizeType === 'column') {
         writes.push([index, newSize]);
       } else {
-        rowWrites.push(ws.layout.setRowHeight(index, newSize));
+        rowWrites.push([index, newSize]);
+        if (!readOnly) {
+          durableRowWrites.push(ws.layout.setRowHeight(index, newSize));
+        }
       }
     }
 
@@ -257,9 +271,17 @@ export class ResizeCoordinator {
           return;
         }
         if (resizeType === 'column') {
-          await ws.layout.setColumnWidths(writes);
+          if (readOnly) {
+            await ws._internal.setPreviewColumnWidths(writes);
+          } else {
+            await ws.layout.setColumnWidths(writes);
+          }
         } else {
-          await Promise.all(rowWrites);
+          if (readOnly) {
+            await ws._internal.setPreviewRowHeights(rowWrites);
+          } else {
+            await Promise.all(durableRowWrites);
+          }
         }
         onDimensionsChanged?.(sheetId);
       } catch (error) {

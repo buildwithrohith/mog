@@ -13,7 +13,8 @@ mod range_virtual_cells;
 mod structure_change;
 
 pub(in crate::storage::engine) use self::dimensions::{
-    hide_columns, hide_rows, set_col_width, set_col_width_chars, set_col_widths,
+    hide_columns, hide_rows, preview_set_col_width, preview_set_col_widths, preview_set_row_height,
+    preview_set_row_heights, set_col_width, set_col_width_chars, set_col_widths,
     set_col_widths_chars, set_row_height, unhide_columns, unhide_rows,
 };
 pub(in crate::storage::engine) use self::floating_bounds::recompute_floating_object_bounds;

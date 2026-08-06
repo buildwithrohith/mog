@@ -20,6 +20,7 @@ use crate::range_manager::RangeSpatialIndex;
 use crate::scheduler::ComputeCore;
 use crate::storage::YrsStorage;
 
+use super::dimension_preview::DimensionPreviewOverlay;
 use super::merge_index::MergeSpatialItem;
 
 /// Per-sheet cache of conditional formatting evaluation results.
@@ -62,6 +63,10 @@ pub(crate) struct EngineStores {
     /// hidden rows/cols) during construction. Updated incrementally
     /// on dimension mutations. Enables O(log k) position lookups.
     pub(super) layout_indexes: FxHashMap<SheetId, LayoutIndex>,
+
+    /// Session-local pixel overrides used by read-only header resize previews.
+    /// This is never serialized, observed, persisted, or exported.
+    pub(super) dimension_preview: DimensionPreviewOverlay,
 
     /// Per-sheet spatial index for efficient merge region lookups.
     ///

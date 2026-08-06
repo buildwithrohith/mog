@@ -223,6 +223,7 @@ pub(in crate::storage::engine) fn import_sheets_from_xlsx(
             engine.stores.layout_metrics,
         );
         engine.stores.layout_indexes.insert(hs.sheet_id, layout);
+        engine.stores.dimension_preview.clear_sheet(&hs.sheet_id);
 
         // 5d. ComputeCore — build SheetSnapshot and add
         let snap_cells: Vec<crate::snapshot::CellData> = hs
