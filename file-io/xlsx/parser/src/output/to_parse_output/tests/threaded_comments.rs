@@ -1,4 +1,4 @@
-use super::super::{convert_sheet, merge_threaded_comments, threaded_candidate_ids};
+use super::super::{convert_sheet, merge_threaded_comments, threaded_candidate_ids, StrInternPool};
 use super::helpers::{comment_run, rich_run, threaded_comments_xml, threading_result};
 use crate::infra::opc::REL_THREADED_COMMENT;
 use crate::output::results::{CommentOutput, FullParsedSheet};
@@ -21,9 +21,11 @@ fn legacy_tc_author_without_threaded_relationship_stays_note() {
         ..Default::default()
     };
 
+    let mut string_pool = StrInternPool::default();
     let sheet_data = convert_sheet(
         &sheet,
         &[],
+        &mut string_pool,
         &[],
         &[],
         &[],

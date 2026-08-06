@@ -1,5 +1,6 @@
 use super::super::{
     compute_dimensions, compute_sheet_extent, convert_sheet, extend_sheet_data_extent, non_empty,
+    StrInternPool,
 };
 use super::helpers::{empty_style_cell, extent_test_cell};
 use crate::output::results::{CommentOutput, FullParsedSheet, HyperlinkOutput};
@@ -73,9 +74,11 @@ fn full_width_column_style_does_not_inflate_extent_or_dense_col_styles() {
 
     assert_eq!(compute_sheet_extent(&sheet), (0, 0));
 
+    let mut string_pool = StrInternPool::default();
     let sheet_data = convert_sheet(
         &sheet,
         &[],
+        &mut string_pool,
         &[],
         &[],
         &[],
@@ -108,9 +111,11 @@ fn style_only_cells_convert_to_authored_runs_not_sparse_cells() {
         ..Default::default()
     };
 
+    let mut string_pool = StrInternPool::default();
     let sheet_data = convert_sheet(
         &sheet,
         &[],
+        &mut string_pool,
         &[],
         &[],
         &[],

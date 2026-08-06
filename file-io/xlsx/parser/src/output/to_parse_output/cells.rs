@@ -1,6 +1,6 @@
 //! Cell conversion: projection classification, cell value resolution, and helpers.
 
-use std::sync::Arc;
+use super::StrInternPool;
 
 use domain_types::{
     CellData, FormulaCacheProvenance, FormulaCacheState, FormulaCachedValuePresence,
@@ -176,18 +176,26 @@ fn cell_metadata_is_dynamic_array(
 /// Convert a single `FullCellData` to `CellData`.
 #[cfg(test)]
 pub(super) fn convert_cell(cell: &FullCellData, shared_strings: &[String]) -> CellData {
-    convert_cell_with_projection_role(cell, shared_strings, ImportedCellProjectionRole::Normal)
+    let mut string_pool = StrInternPool::default();
+    convert_cell_with_projection_role(
+        cell,
+        shared_strings,
+        &mut string_pool,
+        ImportedCellProjectionRole::Normal,
+    )
 }
 
 #[cfg(test)]
 pub(super) fn convert_cell_with_projection_role(
     cell: &FullCellData,
     shared_strings: &[String],
+    string_pool: &mut StrInternPool,
     projection_role: ImportedCellProjectionRole,
 ) -> CellData {
     convert_cell_with_projection_role_and_provenance(
         cell,
         shared_strings,
+        string_pool,
         &[],
         &[],
         projection_role,
@@ -200,6 +208,7 @@ pub(super) fn convert_cell_with_projection_role(
 pub(super) fn convert_cell_with_projection_role_and_provenance(
     cell: &FullCellData,
     shared_strings: &[String],
+    string_pool: &mut StrInternPool,
     shared_strings_rich_runs: &[Option<Vec<domain_types::RichTextRun>>],
     shared_strings_phonetic_xml: &[Option<Vec<u8>>],
     projection_role: ImportedCellProjectionRole,
@@ -207,7 +216,7 @@ pub(super) fn convert_cell_with_projection_role_and_provenance(
     compact_numeric_provenance: bool,
     compact_non_formula_cached_type: bool,
 ) -> CellData {
-    let value = resolve_cell_value(cell, shared_strings);
+    let value = resolve_cell_value(cell, string_pool);
     let is_formula = cell.cell_type == CELL_TYPE_FORMULA;
     // Propagate the formula text whenever the parser populated it. Earlier
     // versions gated propagation on `cell.cell_type == CELL_TYPE_FORMULA`
@@ -396,9 +405,9 @@ fn format_number_like_writer(n: f64) -> String {
 }
 
 /// Resolve a FullCellData's value to CellValue.
-pub(super) fn resolve_cell_value(cell: &FullCellData, _shared_strings: &[String]) -> CellValue {
+pub(super) fn resolve_cell_value(cell: &FullCellData, string_pool: &mut StrInternPool) -> CellValue {
     if cell.cell_type == CELL_TYPE_FORMULA {
-        return resolve_formula_cached_value(cell);
+        return resolve_formula_cached_value(cell, string_pool);
     }
 
     match cell.cell_type {
@@ -412,19 +421,19 @@ pub(super) fn resolve_cell_value(cell: &FullCellData, _shared_strings: &[String]
                 None => cell
                     .value
                     .as_ref()
-                    .map(|v| CellValue::Text(Arc::from(v.as_str())))
+                    .map(|v| CellValue::Text(string_pool.intern(v)))
                     .unwrap_or(CellValue::Null),
             }
         }
         CELL_TYPE_STRING => cell
             .value
             .as_ref()
-            .map(|v| CellValue::Text(Arc::from(v.as_str())))
-            .unwrap_or(CellValue::Text(Arc::from(""))),
+            .map(|v| CellValue::Text(string_pool.intern(v)))
+            .unwrap_or_else(|| CellValue::Text(string_pool.intern(""))),
         CELL_TYPE_DATE => cell
             .value
             .as_ref()
-            .map(|v| CellValue::Text(Arc::from(v.as_str())))
+            .map(|v| CellValue::Text(string_pool.intern(v)))
             .unwrap_or(CellValue::Null),
         CELL_TYPE_BOOL => {
             let b = cell
@@ -447,14 +456,17 @@ pub(super) fn resolve_cell_value(cell: &FullCellData, _shared_strings: &[String]
 }
 
 /// Resolve cached value for a formula cell.
-pub(super) fn resolve_formula_cached_value(cell: &FullCellData) -> CellValue {
+pub(super) fn resolve_formula_cached_value(
+    cell: &FullCellData,
+    string_pool: &mut StrInternPool,
+) -> CellValue {
     let value_str = match &cell.value {
         Some(v) => v,
         None => return CellValue::Null,
     };
 
     match cell.cached_value_type {
-        CACHED_VALUE_TYPE_STRING => CellValue::Text(Arc::from(value_str.as_str())),
+        CACHED_VALUE_TYPE_STRING => CellValue::Text(string_pool.intern(value_str)),
         CACHED_VALUE_TYPE_ERROR => CellValue::Error(parse_error_code(value_str), None),
         CACHED_VALUE_TYPE_BOOL => {
             CellValue::Boolean(value_str == "1" || value_str.eq_ignore_ascii_case("true"))
@@ -465,7 +477,7 @@ pub(super) fn resolve_formula_cached_value(cell: &FullCellData) -> CellValue {
             match value_str.parse::<f64>().ok() {
                 Some(n) => CellValue::number(n),
                 None if value_str.is_empty() => CellValue::Null,
-                None => CellValue::Text(Arc::from(value_str.as_str())),
+                None => CellValue::Text(string_pool.intern(value_str)),
             }
         }
     }

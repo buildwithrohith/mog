@@ -58,6 +58,7 @@ use workbook_metadata::*;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use domain_types::{
     AuthoredStyleRun,
@@ -93,6 +94,30 @@ use value_types::CellValue;
 // Parser-internal imports (no re-export indirection)
 use crate::output::results::{FullParseResult, FullParsedSheet};
 
+/// Workbook-scoped pool for text values created during parse-output conversion.
+///
+/// `CellValue::Text` stores an `Arc<str>` so repeated values can share their
+/// allocation. Keeping the canonical key in this pool makes that sharing
+/// effective for every cell in one conversion pass without retaining strings
+/// after the conversion completes.
+#[derive(Default)]
+pub(super) struct StrInternPool {
+    map: HashMap<Arc<str>, ()>,
+}
+
+impl StrInternPool {
+    #[inline]
+    pub(super) fn intern(&mut self, value: &str) -> Arc<str> {
+        if let Some((key, _)) = self.map.get_key_value(value) {
+            return Arc::clone(key);
+        }
+
+        let key: Arc<str> = Arc::from(value);
+        self.map.insert(Arc::clone(&key), ());
+        key
+    }
+}
+
 // =============================================================================
 // Public entry point
 // =============================================================================
@@ -113,6 +138,7 @@ pub fn full_parse_result_to_parse_output(
     let mut sheet_data_vec = Vec::with_capacity(result.sheets.len());
     let mut all_parsed_pivots = Vec::new();
     let mut all_data_table_regions = Vec::new();
+    let mut string_pool = StrInternPool::default();
 
     // Extract DXF table and theme colors for CF style resolution
     let dxfs = result
@@ -127,6 +153,7 @@ pub fn full_parse_result_to_parse_output(
         let mut sd = convert_sheet(
             sheet,
             &result.shared_strings,
+            &mut string_pool,
             &result.shared_strings_rich_runs,
             &result.shared_strings_phonetic_xml,
             dxfs,
