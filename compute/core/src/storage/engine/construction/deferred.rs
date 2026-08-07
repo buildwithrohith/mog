@@ -475,9 +475,11 @@ fn materialize_deferred_sheet_inner(
         }
 
         let cumulative_snap =
-            crate::import::parse_output_to_snapshot::parse_output_to_workbook_snapshot(
+            crate::import::parse_output_to_snapshot::parse_output_to_workbook_snapshot_incremental(
                 &cumulative_parse,
-                Some(&id_map),
+                sheet_index,
+                &id_map,
+                &deferred.workbook_snap,
                 &mut allocator,
             );
 
