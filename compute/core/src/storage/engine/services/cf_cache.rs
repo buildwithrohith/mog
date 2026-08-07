@@ -86,44 +86,22 @@ pub(in crate::storage::engine) fn refresh_cf_caches_after_recalc(
     let mut cf_only_changes: FxHashMap<SheetId, Vec<(u32, u32)>> = FxHashMap::default();
 
     for sheet_id in &affected_sheets {
-        // Snapshot the old CF results before the refresh so we can diff them.
+        // Take ownership of the old map before refresh rebuilds the cache.
+        // This avoids cloning every CellCFResult while also releasing the
+        // mutable cache borrow before the evaluator runs.
         let old_results: FxHashMap<(u32, u32), crate::cf::types::CellCFResult> = stores
             .cf_cache
-            .get(sheet_id)
-            .map(|e| e.results.clone())
+            .get_mut(sheet_id)
+            .map(|e| std::mem::take(&mut e.results))
             .unwrap_or_default();
 
         refresh_cf_cache(stores, mirror, theme_palette, sheet_id);
 
-        // Snapshot new results (clone to avoid borrow overlap).
-        let new_results: FxHashMap<(u32, u32), crate::cf::types::CellCFResult> = stores
-            .cf_cache
-            .get(sheet_id)
-            .map(|e| e.results.clone())
-            .unwrap_or_default();
+        // Borrow the rebuilt map for comparison; the old map is owned above,
+        // so there is no borrow overlap to work around with a clone.
+        let new_results = stores.cf_cache.get(sheet_id).map(|e| &e.results);
 
-        let mut changed: Vec<(u32, u32)> = Vec::new();
-
-        // Cells that were in old CF but their result changed or they left CF.
-        for (&pos, old_result) in &old_results {
-            if already_changed.contains(&(*sheet_id, pos.0, pos.1)) {
-                continue;
-            }
-            match new_results.get(&pos) {
-                Some(new_result) if new_result == old_result => {} // unchanged
-                _ => changed.push(pos),                            // lost or changed
-            }
-        }
-
-        // Cells that are newly in the CF results (gained CF coloring).
-        for &pos in new_results.keys() {
-            if already_changed.contains(&(*sheet_id, pos.0, pos.1)) {
-                continue;
-            }
-            if !old_results.contains_key(&pos) {
-                changed.push(pos);
-            }
-        }
+        let changed = diff_cf_results(sheet_id, &old_results, new_results, &already_changed);
 
         if !changed.is_empty() {
             cf_only_changes.insert(*sheet_id, changed);
@@ -131,6 +109,92 @@ pub(in crate::storage::engine) fn refresh_cf_caches_after_recalc(
     }
 
     cf_only_changes
+}
+
+/// Return CF-result positions whose rendered result changed, disappeared, or
+/// appeared, excluding positions already covered by the value recalc.
+///
+/// The old map is owned by the caller and the new map is borrowed from the
+/// rebuilt cache. Keeping this comparison separate makes the ownership change
+/// easy to test without constructing a full engine or evaluator.
+fn diff_cf_results(
+    sheet_id: &SheetId,
+    old_results: &FxHashMap<(u32, u32), crate::cf::types::CellCFResult>,
+    new_results: Option<&FxHashMap<(u32, u32), crate::cf::types::CellCFResult>>,
+    already_changed: &FxHashSet<(SheetId, u32, u32)>,
+) -> Vec<(u32, u32)> {
+    let mut changed = Vec::new();
+
+    // Cells that were in old CF but their result changed or they left CF.
+    for (&pos, old_result) in old_results {
+        if already_changed.contains(&(*sheet_id, pos.0, pos.1)) {
+            continue;
+        }
+        match new_results.and_then(|results| results.get(&pos)) {
+            Some(new_result) if new_result == old_result => {} // unchanged
+            _ => changed.push(pos),                            // lost or changed
+        }
+    }
+
+    // Cells that are newly in the CF results (gained CF coloring).
+    for &pos in new_results.into_iter().flat_map(|results| results.keys()) {
+        if already_changed.contains(&(*sheet_id, pos.0, pos.1)) {
+            continue;
+        }
+        if !old_results.contains_key(&pos) {
+            changed.push(pos);
+        }
+    }
+
+    changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cf::types::{CellCFResult, CfRenderStyle};
+
+    fn result(row: u32, col: u32, bold: Option<bool>) -> CellCFResult {
+        CellCFResult {
+            row,
+            col,
+            style: bold.map(|bold| CfRenderStyle {
+                bold: Some(bold),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn diff_cf_results_covers_changed_left_and_entered_cells() {
+        let sheet_id =
+            SheetId::from_uuid_str("71000000-0000-4000-8000-000000000001").expect("valid sheet id");
+        let mut old_results = FxHashMap::default();
+        old_results.insert((0, 0), result(0, 0, Some(true)));
+        old_results.insert((0, 1), result(0, 1, Some(false)));
+        old_results.insert((0, 2), result(0, 2, Some(true)));
+        old_results.insert((0, 4), result(0, 4, Some(false)));
+
+        let mut new_results = FxHashMap::default();
+        new_results.insert((0, 0), result(0, 0, Some(true))); // unchanged
+        new_results.insert((0, 1), result(0, 1, Some(true))); // changed
+        new_results.insert((0, 3), result(0, 3, Some(true))); // entered
+        new_results.insert((0, 4), result(0, 4, Some(true))); // value-changed cell
+
+        let mut already_changed = FxHashSet::default();
+        already_changed.insert((sheet_id, 0, 4));
+
+        let mut changed = diff_cf_results(
+            &sheet_id,
+            &old_results,
+            Some(&new_results),
+            &already_changed,
+        );
+        changed.sort_unstable();
+
+        assert_eq!(changed, vec![(0, 1), (0, 2), (0, 3)]);
+    }
 }
 
 /// Re-evaluate all conditional formatting rules for a sheet and update the cache.
