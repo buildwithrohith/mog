@@ -737,15 +737,17 @@ fn hydrate_deferred_sheet_inner(
         }
     }
 
-    let rebuilt_snapshot = {
+    let cumulative_snapshot = {
         use crate::import;
-        import::parse_output_to_snapshot::parse_output_to_workbook_snapshot(
+        import::parse_output_to_snapshot::parse_output_to_workbook_snapshot_incremental(
             &cumulative_parse,
-            Some(&id_map),
+            sheet_index,
+            &id_map,
+            &deferred.workbook_snap,
             &mut allocator,
         )
     };
-    let target_snapshot = rebuilt_snapshot
+    let target_snapshot = cumulative_snapshot
         .sheets
         .get(sheet_index)
         .cloned()
@@ -753,14 +755,6 @@ fn hydrate_deferred_sheet_inner(
             message: format!("snapshot rebuild omitted sheet index {sheet_index}"),
         })?;
     validate_deferred_sheet_snapshot(&target_snapshot, sheet_id)?;
-
-    let mut cumulative_snapshot = deferred.workbook_snap.clone();
-    if cumulative_snapshot.sheets.len() != rebuilt_snapshot.sheets.len() {
-        return Err(ComputeError::Deserialize {
-            message: "deferred snapshot inventory changed during per-sheet hydration".into(),
-        });
-    }
-    cumulative_snapshot.sheets[sheet_index] = target_snapshot.clone();
 
     let range_plan = build_deferred_critical_sheet_range_plan(
         &cumulative_parse.sheets[sheet_index],
