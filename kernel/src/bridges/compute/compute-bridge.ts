@@ -858,6 +858,14 @@ export class ComputeBridge extends GeneratedBridgeBase {
     return this.core.forceRefreshAllViewports();
   }
 
+  /**
+   * Force-refresh registered viewport buffers for one sheet from Rust.
+   * Delegates to ComputeCore.forceRefreshSheetViewports().
+   */
+  forceRefreshSheetViewports(sheetId: SheetId): Promise<void> {
+    return this.core.forceRefreshSheetViewports(sheetId);
+  }
+
   registerViewportRegion(
     viewportId: string,
     sheetId: SheetId,

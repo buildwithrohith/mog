@@ -1246,6 +1246,16 @@ export class ComputeCore {
   }
 
   /**
+   * Force-refresh registered viewport buffers for one sheet from Rust.
+   *
+   * Used when a sheet-scoped mutation has completed and unrelated sheets
+   * should not be refetched.
+   */
+  async forceRefreshSheetViewports(sheetId: SheetId): Promise<void> {
+    await this.fetchManager?.forceRefreshSheetViewports(sheetId);
+  }
+
+  /**
    * After a cell mutation, re-read the viewport for any sheet that has CF rules
    * so that CF "sibling" cells — cells whose CF display changed because a peer
    * cell's value changed (e.g. Duplicate-Values partner, displaced Top-N entry)

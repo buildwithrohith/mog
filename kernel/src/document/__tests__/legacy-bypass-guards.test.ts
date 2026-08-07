@@ -59,6 +59,7 @@ function stubBridge(): CreateEngineOutput['computeBridge'] {
     createDefaultSheet: async () => {},
     settleForMirror: async () => {},
     destroy: async () => {},
+    forceRefreshSheetViewports: async () => {},
     core: { forceRefreshAllViewports: async () => {} },
   } as unknown as CreateEngineOutput['computeBridge'];
 }
@@ -553,6 +554,7 @@ describe('Legacy bypass guards', () => {
           getAllSheetIds: jest.fn(async () => ['sheet-1']),
           createDefaultSheet: jest.fn(),
           settleForMirror: jest.fn(),
+          forceRefreshSheetViewports: jest.fn(),
           core: { forceRefreshAllViewports: jest.fn() },
         } as unknown as AttachProvidersInput['computeBridge'];
         const rustDocument = {

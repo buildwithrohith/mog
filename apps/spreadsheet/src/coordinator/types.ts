@@ -293,6 +293,8 @@ export interface SheetSwitchDependencies {
   uiStoreApi: import('zustand').StoreApi<import('../ui-store').UIState>;
   /** Import durability gate for host-backed XLSX documents. */
   importDurability?: SheetSwitchImportDurabilityGate;
+  /** Releases the previous sheet's viewport registrations and format palette. */
+  resetPreviousSheetViewports?: (sheetId: SheetId) => Promise<unknown>;
 }
 
 export interface SheetSwitchImportDurabilityGate {

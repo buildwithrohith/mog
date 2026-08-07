@@ -101,9 +101,18 @@ pub(in crate::storage::engine::viewport) fn reset_sheet_viewports(
     viewport: &ViewportService,
     sheet_id: &SheetId,
 ) -> Result<MutationResult, ComputeError> {
+    reset_viewport_state_inner(viewport, sheet_id)
+}
+
+/// Reset the viewport registrations and palette for a given sheet.
+fn reset_viewport_state_inner(
+    viewport: &ViewportService,
+    sheet_id: &SheetId,
+) -> Result<MutationResult, ComputeError> {
     viewport
         .registered_viewports_mut()
         .retain(|_, reg| reg.sheet_id != *sheet_id);
+    viewport.remove_sheet_palette(sheet_id);
     Ok(MutationResult::empty())
 }
 
@@ -112,8 +121,5 @@ pub(in crate::storage::engine::viewport) fn reset_viewport_state(
     viewport: &ViewportService,
     sheet_id: &SheetId,
 ) -> Result<MutationResult, ComputeError> {
-    viewport
-        .registered_viewports_mut()
-        .retain(|_, reg| reg.sheet_id != *sheet_id);
-    Ok(MutationResult::empty())
+    reset_viewport_state_inner(viewport, sheet_id)
 }
