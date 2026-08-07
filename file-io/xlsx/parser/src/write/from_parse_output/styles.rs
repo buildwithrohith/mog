@@ -367,7 +367,7 @@ fn convert_fill(fill: &FillFormat) -> FillDef {
         PatternType::None => FillDef::None,
         // DocumentFormat uses `backgroundColor` for a cell's visible solid
         // color. OOXML stores that same color in patternFill/fgColor.
-        PatternType::Solid => match background_color {
+        PatternType::Solid => match background_color.or(pattern_foreground_color) {
             Some(fg_color) => FillDef::Solid { fg_color },
             None => FillDef::Pattern {
                 pattern_type: Some(PatternType::Solid),
