@@ -67,6 +67,7 @@ fn authored_run_repeats_positional_default(
 pub(super) fn convert_sheet(
     sheet: &FullParsedSheet,
     shared_strings: &[String],
+    string_pool: &mut StrInternPool,
     shared_strings_rich_runs: &[Option<Vec<domain_types::RichTextRun>>],
     shared_strings_phonetic_xml: &[Option<Vec<u8>>],
     dxfs: &[crate::domain::styles::types::DxfDef],
@@ -100,6 +101,7 @@ pub(super) fn convert_sheet(
             convert_cell_with_projection_role_and_provenance(
                 c,
                 shared_strings,
+                string_pool,
                 shared_strings_rich_runs,
                 shared_strings_phonetic_xml,
                 role,

@@ -45,10 +45,10 @@ use value_types::ComputeError;
 /// allocate a JS/WASM array for the bytes.
 pub(crate) const MAX_PROVIDER_UPDATE_BYTES: usize = 64 * 1024 * 1024;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UpdateSource {
     UserMutation,
+    #[allow(dead_code)]
     UndoRedo,
     ImportBootstrap,
     FullHydration,
@@ -202,10 +202,11 @@ impl UpdateBuffer {
 pub(crate) fn install_observer(
     doc: &yrs::Doc,
     buffer: &Arc<UpdateBuffer>,
+    source: UpdateSource,
 ) -> compute_collab::UpdateSubscriptionHandle {
     let buffer = Arc::clone(buffer);
     compute_collab::subscribe_update_v1(doc, move |bytes| {
-        buffer.push(bytes.to_vec());
+        buffer.push_with_source(source, bytes.to_vec());
     })
 }
 

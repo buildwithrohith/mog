@@ -1,5 +1,6 @@
 use super::super::{
-    convert_cell, full_parse_result_to_parse_output, parse_error_code, resolve_cell_value,
+    StrInternPool, convert_cell, full_parse_result_to_parse_output, parse_error_code,
+    resolve_cell_value,
 };
 use super::helpers::{test_cell, threading_result};
 use crate::output::results::{
@@ -12,6 +13,7 @@ use crate::output::results::{
 };
 use crate::output::results::{FullCellData, FullParsedSheet};
 use domain_types::ImportedCellProjectionRole;
+use std::sync::Arc;
 use value_types::{CellError, CellValue};
 
 #[test]
@@ -50,7 +52,8 @@ fn test_resolve_cell_value_number() {
         sst_index: None,
         has_explicit_style: false,
     };
-    match resolve_cell_value(&cell, &[]) {
+    let mut string_pool = StrInternPool::default();
+    match resolve_cell_value(&cell, &mut string_pool) {
         CellValue::Number(n) => assert_eq!(n.get(), 42.5),
         other => panic!("Expected Number, got {:?}", other),
     }
@@ -139,10 +142,67 @@ fn test_resolve_cell_value_string() {
         sst_index: None,
         has_explicit_style: false,
     };
-    match resolve_cell_value(&cell, &[]) {
+    let mut string_pool = StrInternPool::default();
+    match resolve_cell_value(&cell, &mut string_pool) {
         CellValue::Text(s) => assert_eq!(&*s, "hello"),
         other => panic!("Expected Text, got {:?}", other),
     }
+}
+
+#[test]
+fn parse_output_interns_repeated_cell_text_allocations() {
+    let string_cell = |row, col, value: &str| FullCellData {
+        row,
+        col,
+        cell_type: CELL_TYPE_STRING,
+        style_idx: 0,
+        value: Some(value.to_string()),
+        formula: None,
+        force_recalc: false,
+        array_ref: None,
+        cell_metadata_index: None,
+        vm: None,
+        phonetic: false,
+        date_lexical_value: None,
+        cached_value_type: 0,
+        cell_formula: None,
+        preserve_space_formula: false,
+        preserve_space_value: false,
+        sst_index: None,
+        has_explicit_style: false,
+    };
+    let result = threading_result(
+        FullParsedSheet {
+            cells: vec![
+                string_cell(0, 0, "Repeated label"),
+                string_cell(0, 1, "Repeated label"),
+                string_cell(0, 2, "Distinct label"),
+            ],
+            ..FullParsedSheet::default()
+        },
+        None,
+        Vec::new(),
+    );
+
+    let (output, _diagnostics) = full_parse_result_to_parse_output(&result);
+    let cells = &output.sheets[0].cells;
+    assert_eq!(cells.len(), 3);
+
+    let repeated_first = match &cells[0].value {
+        CellValue::Text(text) => text,
+        other => panic!("expected repeated text, got {other:?}"),
+    };
+    let repeated_second = match &cells[1].value {
+        CellValue::Text(text) => text,
+        other => panic!("expected repeated text, got {other:?}"),
+    };
+    let distinct = match &cells[2].value {
+        CellValue::Text(text) => text,
+        other => panic!("expected distinct text, got {other:?}"),
+    };
+
+    assert!(Arc::ptr_eq(repeated_first, repeated_second));
+    assert!(!Arc::ptr_eq(repeated_first, distinct));
 }
 
 #[test]
@@ -167,7 +227,8 @@ fn test_resolve_cell_value_bool() {
         sst_index: None,
         has_explicit_style: false,
     };
-    match resolve_cell_value(&cell, &[]) {
+    let mut string_pool = StrInternPool::default();
+    match resolve_cell_value(&cell, &mut string_pool) {
         CellValue::Boolean(b) => assert!(b),
         other => panic!("Expected Boolean(true), got {:?}", other),
     }
@@ -195,7 +256,8 @@ fn test_resolve_cell_value_empty() {
         sst_index: None,
         has_explicit_style: false,
     };
-    assert_eq!(resolve_cell_value(&cell, &[]), CellValue::Null);
+    let mut string_pool = StrInternPool::default();
+    assert_eq!(resolve_cell_value(&cell, &mut string_pool), CellValue::Null);
 }
 
 #[test]

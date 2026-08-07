@@ -50,6 +50,51 @@ const TRAP_MESSAGES: ReadonlySet<string> = new Set([
   'undefined element',
 ]);
 
+const WASM_MEMORY_LOG_COMMAND_INTERVAL = 250;
+const WASM_MEMORY_LOG_GROWTH_BYTES = 256 * 1024 * 1024;
+
+let wasmCommandCount = 0;
+let lastLoggedWasmLinearMemoryBytes: number | null = null;
+
+/** Return the current WebAssembly linear-memory size, when the loader exposed it. */
+export function wasmLinearMemoryBytes(): number | null {
+  const mem = (globalThis as any).__sapiexWasmMemory;
+  return mem?.buffer?.byteLength ?? null;
+}
+
+/** Pure cadence/threshold check kept exportable for focused transport tests. */
+export function shouldLogWasmMemory(
+  commandCount: number,
+  bytes: number | null,
+  lastLoggedBytes: number | null,
+): boolean {
+  if (bytes === null) {
+    return false;
+  }
+
+  return (
+    commandCount % WASM_MEMORY_LOG_COMMAND_INTERVAL === 0 ||
+    (lastLoggedBytes !== null && bytes - lastLoggedBytes >= WASM_MEMORY_LOG_GROWTH_BYTES)
+  );
+}
+
+function sampleWasmMemory(command: string): void {
+  wasmCommandCount += 1;
+  const bytes = wasmLinearMemoryBytes();
+  if (
+    bytes === null ||
+    !shouldLogWasmMemory(wasmCommandCount, bytes, lastLoggedWasmLinearMemoryBytes)
+  ) {
+    return;
+  }
+
+  const deltaBytes =
+    lastLoggedWasmLinearMemoryBytes === null ? 0 : bytes - lastLoggedWasmLinearMemoryBytes;
+  // eslint-disable-next-line no-console
+  console.info('[mog-wasm] linear memory', { bytes, deltaBytes, command });
+  lastLoggedWasmLinearMemoryBytes = bytes;
+}
+
 /**
  * Classify a thrown error as a WASM trap.
  *
@@ -109,6 +154,8 @@ export function createWasmTransport(getModule: () => WasmModule): BridgeTranspor
           throw new TrapError(command, err.message, { cause: err });
         }
         throw TransportError.fromCommand(err, command);
+      } finally {
+        sampleWasmMemory(command);
       }
     },
   };
