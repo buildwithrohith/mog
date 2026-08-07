@@ -116,6 +116,8 @@ export interface GeneratedBridgeMethods {
   applySyncUpdate(update: Uint8Array, syncContext: SyncApplyOperationContextWire, admissionOptions?: MutationAdmissionOptions): Promise<MutationResult>;
   encodeStateVector(): Promise<Uint8Array>;
   currentStateVector(): Promise<Uint8Array>;
+  inspectStorageSchemaVersion(update: Uint8Array): Promise<[number, number]>;
+  prepareStorageSchemaBaseline(admissionOptions?: MutationAdmissionOptions): Promise<MutationResult>;
   encodeDiff(remoteSv: Uint8Array): Promise<Uint8Array>;
   drainPendingUpdates(): Promise<Uint8Array[]>;
   flushUndoCapture(admissionOptions?: MutationAdmissionOptions): Promise<MutationResult>;
@@ -1094,6 +1096,14 @@ export class GeneratedBridgeBase implements GeneratedBridgeMethods {
 
   currentStateVector(): Promise<Uint8Array> {
     return this.core.query(this.core.transport.call<Uint8Array>('compute_current_state_vector', { docId: this.core.docId }));
+  }
+
+  inspectStorageSchemaVersion(update: Uint8Array): Promise<[number, number]> {
+    return this.core.query(this.core.transport.call<[number, number]>('compute_inspect_storage_schema_version', { docId: this.core.docId, update }));
+  }
+
+  prepareStorageSchemaBaseline(admissionOptions?: MutationAdmissionOptions): Promise<MutationResult> {
+    return this.core.mutatePublic('compute_prepare_storage_schema_baseline', () => this.core.transport.call<[Uint8Array, MutationResult]>('compute_prepare_storage_schema_baseline', { docId: this.core.docId }), undefined, admissionOptions);
   }
 
   encodeDiff(remoteSv: Uint8Array): Promise<Uint8Array> {

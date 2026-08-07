@@ -305,6 +305,52 @@ export interface ProviderDoc {
    * + `applyUpdate` gives convergence between two replicas.
    */
   currentStateVector(): Promise<Uint8Array>;
+
+  /**
+   * Decode a candidate persisted update in a detached Rust/Yrs document and
+   * report both its authoritative document stamp and Rust's current stamp.
+   * The candidate MUST NOT mutate the live document.
+   */
+  inspectStorageSchemaVersion?(update: Uint8Array): Promise<{
+    readonly incomingSchemaVersion: number;
+    readonly currentSchemaVersion: number;
+  }>;
+
+  /** Stamp an unstamped live document before persisting a replacement baseline. */
+  prepareStorageSchemaBaseline?(): Promise<void>;
+}
+
+export function inspectProviderDocStorageSchemaVersion(
+  doc: ProviderDoc,
+  update: Uint8Array,
+): Promise<{ readonly incomingSchemaVersion: number; readonly currentSchemaVersion: number }> {
+  if (!doc.inspectStorageSchemaVersion) {
+    throw new Error(
+      'ProviderDoc does not support detached document-schema inspection; persisted bytes were not attached',
+    );
+  }
+  return doc.inspectStorageSchemaVersion(update);
+}
+
+export async function prepareProviderDocStorageSchemaBaseline(doc: ProviderDoc): Promise<{
+  readonly fullState: Uint8Array;
+  readonly schemaVersion: number;
+}> {
+  if (!doc.prepareStorageSchemaBaseline) {
+    throw new Error(
+      'ProviderDoc cannot prepare a current-schema replacement baseline; persisted bytes were not replaced',
+    );
+  }
+  await doc.prepareStorageSchemaBaseline();
+  const fullState = await doc.encodeDiff(new Uint8Array([0]));
+  const { incomingSchemaVersion, currentSchemaVersion } =
+    await inspectProviderDocStorageSchemaVersion(doc, fullState);
+  if (incomingSchemaVersion !== currentSchemaVersion) {
+    throw new Error(
+      `Prepared provider baseline stamped schema ${incomingSchemaVersion}, expected ${currentSchemaVersion}`,
+    );
+  }
+  return { fullState, schemaVersion: currentSchemaVersion };
 }
 
 /**

@@ -39,8 +39,8 @@ use cell_types::{CellId, SheetId};
 use compute_document::cell_serde::{cell_value_to_any, yrs_any_to_cell_value};
 use compute_document::hex::id_to_hex;
 use compute_document::schema::{
-    KEY_CELL_PROPERTIES, KEY_CELLS, KEY_COMMENTS, KEY_FORMULA, KEY_GRID_ID_TO_POS, KEY_GRID_INDEX,
-    KEY_GRID_POS_TO_ID, KEY_VALUE,
+    KEY_CELL_PROPERTIES, KEY_CELLS, KEY_COMMENTS, KEY_FORMULA, KEY_GRID_INDEX, KEY_GRID_POS_TO_ID,
+    KEY_VALUE,
 };
 use compute_formats::FormatType;
 use compute_parser::FormulaSource;
@@ -48,12 +48,10 @@ use domain_types::yrs_schema::comment as comment_schema;
 use value_types::CellValue;
 
 // ---------------------------------------------------------------------------
-// yrs-side identity sub-map writes (gridIndex/{posToId, idToPos})
+// yrs-side identity writes (`gridIndex/posToId`)
 // ---------------------------------------------------------------------------
 //
-// `gridIndex/posToId` is the authoritative persisted identity store. Schema
-// v19 still requires the inverse `idToPos` dual-write until the v20 cutover,
-// but no runtime consumer may use that inverse to discover a position. The value-write paths
+// `gridIndex/posToId` is the sole persisted identity store in schema v20. The value-write paths
 // (`set_cell_value`, `set_cell_values`, `import_values`, `set_cell`) were
 // only writing identity into the in-memory `GridIndex`. Undo/redo (and
 // structural-rebuild via `build_sheet_snapshot_from_yrs`) need to recover
@@ -63,8 +61,7 @@ use value_types::CellValue;
 // `storage/infra/hydration/{snapshot,sheet}.rs` so every cell write into
 // yrs also carries its position mapping.
 
-/// Write `(cell_hex → "rowHex:colHex")` into `gridIndex/idToPos` and the
-/// reverse mapping into `gridIndex/posToId` for a single cell.
+/// Write the authoritative position-to-cell mapping into `gridIndex/posToId`.
 ///
 /// No-op if the sheet map or the gridIndex sub-map is missing (the schema
 /// guarantees they exist on every well-formed doc, but defensive callers
@@ -93,18 +90,9 @@ pub(crate) fn write_cell_position_to_yrs(
             pos_to_id.insert(txn, pos_key.as_str(), Any::String(Arc::from(cell_hex)));
         }
     }
-    if let Some(Out::YMap(id_to_pos)) = gi_map.get(txn, KEY_GRID_ID_TO_POS) {
-        let already_current = matches!(
-            id_to_pos.get(txn, cell_hex),
-            Some(Out::Any(Any::String(existing))) if existing.as_ref() == pos_key
-        );
-        if !already_current {
-            id_to_pos.insert(txn, cell_hex, Any::String(Arc::from(pos_key.as_str())));
-        }
-    }
 }
 
-/// Remove the identity mapping for a cell from `gridIndex/{posToId, idToPos}`.
+/// Remove the authoritative identity mapping from `gridIndex/posToId`.
 pub(crate) fn remove_cell_position_from_yrs(
     txn: &mut yrs::TransactionMut<'_>,
     sheets: &MapRef,
@@ -125,14 +113,6 @@ pub(crate) fn remove_cell_position_from_yrs(
         )
     {
         pos_to_id.remove(txn, pos_key);
-    }
-    if let Some(Out::YMap(id_to_pos)) = gi_map.get(txn, KEY_GRID_ID_TO_POS)
-        && matches!(
-            id_to_pos.get(txn, cell_hex),
-            Some(Out::Any(Any::String(existing))) if existing.as_ref() == pos_key
-        )
-    {
-        id_to_pos.remove(txn, cell_hex);
     }
 }
 

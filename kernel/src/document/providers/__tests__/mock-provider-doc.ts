@@ -75,7 +75,10 @@ function encodeStateVector(fingerprints: Set<bigint>): Uint8Array {
  */
 function decodeStateVector(sv: Uint8Array): Set<bigint> {
   const out = new Set<bigint>();
-  if (sv.length === 0) return out;
+  // Real Yrs v1 encodes the empty state vector as one varint zero byte.
+  // Accept both that production form and the mock's historical zero-length
+  // shorthand so provider tests exercise the same call shape as Rust.
+  if (sv.length === 0 || (sv.length === 1 && sv[0] === 0)) return out;
   if (sv.length % 16 !== 0) {
     throw new Error(
       `MockProviderDoc.decodeStateVector: invalid length ${sv.length}, expected multiple of 16`,
@@ -224,6 +227,15 @@ export class MockProviderDoc {
   async currentStateVector(): Promise<Uint8Array> {
     return encodeStateVector(new Set(this.applied.keys()));
   }
+
+  async inspectStorageSchemaVersion(): Promise<{
+    incomingSchemaVersion: number;
+    currentSchemaVersion: number;
+  }> {
+    return { incomingSchemaVersion: 20, currentSchemaVersion: 20 };
+  }
+
+  async prepareStorageSchemaBaseline(): Promise<void> {}
 
   /**
    * Test helper: number of distinct updates currently applied.

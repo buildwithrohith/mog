@@ -11,7 +11,6 @@ use crate::storage::infra::hydration::helpers::PositionMap;
 pub(crate) fn mirror_pos_map_into_grid_index(
     txn: &mut yrs::TransactionMut,
     pos_to_id: &MapRef,
-    id_to_pos: &MapRef,
     pos_map: &PositionMap,
     row_id_hexes: &[SmallHex],
     col_id_hexes: &[SmallHex],
@@ -36,11 +35,6 @@ pub(crate) fn mirror_pos_map_into_grid_index(
             txn,
             yrs_pos_key.as_str(),
             Any::String(Arc::from(cell_hex.as_str())),
-        );
-        id_to_pos.insert(
-            txn,
-            cell_hex.as_str(),
-            Any::String(Arc::from(yrs_pos_key.as_str())),
         );
     }
     Ok(())

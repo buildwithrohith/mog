@@ -64,6 +64,7 @@ pub(in crate::storage::engine) fn from_yrs_state_with_layout_metrics(
         let txn = storage.doc().transact();
         compute_document::schema::guard_schema_version(&txn, storage.workbook_map())?;
     }
+    let storage = crate::storage::schema_compaction::compact_to_current_schema_if_needed(storage)?;
 
     crate::storage::workbook::imported_pivots::normalize_imported_pivot_associations(
         storage.doc(),

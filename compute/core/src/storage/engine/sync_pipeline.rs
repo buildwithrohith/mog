@@ -512,7 +512,7 @@ impl YrsComputeEngine {
             apply_grid_index_changes(&mut self.stores, &doc_changes.grid_index)?;
 
             // For cells that changed position in the yrs gridIndex (undo/redo of
-            // same-sheet relocate_cells writes updated posToId/idToPos entries),
+            // same-sheet relocate_cells writes updated posToId entries),
             // update the mirror so apply_cell_changes can resolve the correct
             // position when the cell fires as Modified.
             //
@@ -726,7 +726,7 @@ impl YrsComputeEngine {
     /// detected via the observer (undo/redo/sync of insert/delete rows/cols).
     ///
     /// The yrs CRDT is the source of truth. Structural operations only modify
-    /// `meta.rows`/`meta.cols` in yrs — the yrs grid index (`idToPos`) is
+    /// `meta.rows`/`meta.cols` in yrs — the yrs grid index (`posToId`) is
     /// never touched by structural ops, so after undo it naturally contains
     /// the correct pre-structural positions.
     ///

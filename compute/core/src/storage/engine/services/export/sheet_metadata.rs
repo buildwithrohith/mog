@@ -57,7 +57,7 @@ pub(super) fn resolve_cell_position_from_grid_index(
 ///
 /// Imported comments store `cell_ref` as a CellId hex string. The authoritative
 /// path for turning that identity back into A1 is the GridIndex hydrated from
-/// Yrs `gridIndex/{posToId,idToPos}`.
+/// Yrs `gridIndex/posToId`.
 pub(super) fn resolve_hydrated_comment_position(
     stores: &EngineStores,
     sheet_id: &SheetId,

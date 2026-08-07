@@ -1014,7 +1014,7 @@ fn test_remove_hyperlink_deletes_marker_cell_with_stale_range_metadata() {
 }
 
 #[test]
-fn test_set_hyperlink_marker_cell_mirrors_identity_to_yrs_grid_index() {
+fn test_set_hyperlink_marker_cell_persists_only_authoritative_position_identity() {
     let (storage, sheet_id, mut grid) = storage_with_sheet();
 
     set_hyperlink(
@@ -1046,17 +1046,9 @@ fn test_set_hyperlink_marker_cell_mirrors_identity_to_yrs_grid_index() {
         Some(Out::YMap(m)) => m,
         _ => panic!("posToId should exist"),
     };
-    let id_to_pos = match grid_index.get(&txn, "idToPos") {
-        Some(Out::YMap(m)) => m,
-        _ => panic!("idToPos should exist"),
-    };
-
     assert!(matches!(
         pos_to_id.get(&txn, pos_key.as_str()),
         Some(Out::Any(Any::String(s))) if s.as_ref() == cell_hex.as_str()
     ));
-    assert!(matches!(
-        id_to_pos.get(&txn, &cell_hex),
-        Some(Out::Any(Any::String(s))) if s.as_ref() == pos_key.as_str()
-    ));
+    assert!(grid_index.get(&txn, "idToPos").is_none());
 }

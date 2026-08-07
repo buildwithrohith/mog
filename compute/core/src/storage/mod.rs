@@ -27,10 +27,10 @@
 //!     +-- {sheetId}: Y.Map
 //!         +-- cells: Y.Map<CellId, Y.Map { v, f, ft, fr, fda, fv }>
 //!         +-- properties: Y.Map<CellId, Y.Map>
-//!         +-- gridIndex: Y.Map { posToId, idToPos }
+//!         +-- gridIndex: Y.Map { posToId }
 //!             // cellGrid / cellPos retired in GridIndex migration;
-//!             // gridIndex/{posToId,idToPos} is the authoritative
-//!             // yrs-side identity store.
+//!             // gridIndex/posToId is the authoritative persisted
+//!             // identity store; the inverse is transient.
 //!         +-- rowHeights: Y.Map<RowId, number>
 //!         +-- colWidths: Y.Map<ColId, number>
 //!         +-- meta: Y.Map { name, rows, cols }
@@ -62,6 +62,7 @@
 // ---------------------------------------------------------------------------
 pub mod engine;
 pub mod properties;
+pub mod schema_compaction;
 pub mod security_cache;
 pub mod security_state;
 

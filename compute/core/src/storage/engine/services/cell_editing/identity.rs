@@ -186,8 +186,7 @@ fn yrs_axes_cover_position(
 }
 
 /// Persist identity mappings for every cell referenced by an [`IdentityFormula`]
-/// into the in-memory `GridIndex` and the Yrs `gridIndex/{posToId, idToPos}`
-/// sub-maps.
+/// into the in-memory `GridIndex` and the Yrs `gridIndex/posToId` map.
 ///
 /// ## Why this exists
 ///
@@ -281,7 +280,7 @@ pub(in crate::storage::engine) fn persist_identity_formula_cell_identities(
         return;
     }
 
-    // 4. Batch all posToId/idToPos writes into a single Yrs transaction so
+    // 4. Batch all posToId writes into a single Yrs transaction so
     //    remote peers receive them as one update, ordered before the named-
     //    range JSON write the caller is about to perform.
     let sheets_map = stores.storage.doc().get_or_insert_map("sheets");

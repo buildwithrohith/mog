@@ -289,7 +289,7 @@ pub(in crate::storage::engine) fn add_comment_by_position(
     comment_type: CommentType,
 ) -> Result<(MutationResult, CellId), ComputeError> {
     // Resolve existing CellId or mint a new one (mirroring into the yrs
-    // `gridIndex/{posToId, idToPos}` sub-maps so remote peers can resolve
+    // `gridIndex/posToId` map so remote peers can resolve
     // this cell's position after CRDT sync).
     let Some(cell_id) = cell_editing::ensure_cell_id_mirrored(stores, mirror, sheet_id, row, col)
     else {

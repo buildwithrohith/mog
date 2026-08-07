@@ -28,13 +28,15 @@ import type {
   MogSdkProviderDoc,
   MogSdkProviderCheckpointResult,
 } from '@mog-sdk/contracts/sdk';
-import type {
-  Provider,
-  ProviderAttachReturn,
-  ProviderCheckpointReturn,
-  ProviderCheckpointMode,
-  ProviderAttachMode,
-  ProviderDoc,
+import {
+  inspectProviderDocStorageSchemaVersion,
+  prepareProviderDocStorageSchemaBaseline,
+  type Provider,
+  type ProviderAttachReturn,
+  type ProviderCheckpointReturn,
+  type ProviderCheckpointMode,
+  type ProviderAttachMode,
+  type ProviderDoc,
 } from './provider';
 
 /**
@@ -78,7 +80,7 @@ export function createSdkStorageAdapter(sdk: MogSdkStorageProvider): Provider {
     // Encode the full state (diff against empty state vector = full update)
     const [sv, fullState] = await Promise.all([
       internalDoc.currentStateVector(),
-      internalDoc.encodeDiff(new Uint8Array(0)),
+      internalDoc.encodeDiff(new Uint8Array([0])),
     ]);
     cachedStateVector = sv;
     cachedStateUpdate = fullState;
@@ -112,14 +114,58 @@ export function createSdkStorageAdapter(sdk: MogSdkStorageProvider): Provider {
           message: result.error ?? `SDK provider "${sdk.name}" attach failed`,
         };
       }
+      attached = true;
 
       // If the SDK provider returned an initial update (e.g. from its own
       // persisted state), replay it into the internal doc.
       if (result.initialUpdate && result.initialUpdate.byteLength > 0) {
-        await doc.applyUpdate(result.initialUpdate);
+        try {
+          const inspection = await inspectProviderDocStorageSchemaVersion(
+            doc,
+            result.initialUpdate,
+          );
+          if (inspection.incomingSchemaVersion > inspection.currentSchemaVersion) {
+            return {
+              status: 'blocked',
+              mode: _mode?.kind ?? 'normal',
+              reason: 'unavailable',
+              message: `SDK provider "${sdk.name}" returned future storage schema ${inspection.incomingSchemaVersion}; this client supports ${inspection.currentSchemaVersion}`,
+            };
+          }
+          if (inspection.incomingSchemaVersion < inspection.currentSchemaVersion) {
+            // A baseline from another schema lineage cannot be replayed safely.
+            // The SDK attach result is the provider's sole inbound replay surface,
+            // so discard it wholesale and replace the provider checkpoint with
+            // freshly stamped current-schema state without applying old bytes.
+            await prepareProviderDocStorageSchemaBaseline(doc);
+            await refreshStateCache(doc);
+            const checkpoint: MogSdkProviderCheckpointResult = await sdk.checkpoint(sdkDoc);
+            if (!checkpoint.ok) {
+              return {
+                status: 'blocked',
+                mode: _mode?.kind ?? 'normal',
+                reason: 'unavailable',
+                message:
+                  checkpoint.error ??
+                  `SDK provider "${sdk.name}" schema replacement checkpoint returned not-ok`,
+              };
+            }
+          } else {
+            await doc.applyUpdate(result.initialUpdate);
+          }
+        } catch (err) {
+          return {
+            status: 'blocked',
+            mode: _mode?.kind ?? 'normal',
+            reason: 'unavailable',
+            message:
+              err instanceof Error
+                ? err.message
+                : `SDK provider "${sdk.name}" initial state validation failed`,
+          };
+        }
       }
 
-      attached = true;
       return {
         status: 'ready',
         mode: _mode?.kind ?? 'normal',

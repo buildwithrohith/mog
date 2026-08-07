@@ -129,16 +129,14 @@ pub(crate) fn hydrate_sheet(
     let cells_prelim = MapPrelim::from([] as [(&str, Any); 0]);
     let cells_map: MapRef = sheet_map.insert(txn, KEY_CELLS, cells_prelim);
 
-    // 5. Grid index (posToId / idToPos) — authoritative yrs-side identity
-    // store post-R51. Populated after `hydrate_cells` below so that the
+    // 5. Grid index (`posToId`) — authoritative yrs-side identity store.
+    // Populated after `hydrate_cells` below so that the
     // yrs doc carries position info for CRDT sync and for
     // `build_sheet_snapshot_from_yrs` bootstrap.
     let gi_prelim = MapPrelim::from([] as [(&str, Any); 0]);
     let gi_map: MapRef = sheet_map.insert(txn, KEY_GRID_INDEX, gi_prelim);
     let p2i_prelim = MapPrelim::from([] as [(&str, Any); 0]);
     let pos_to_id: MapRef = gi_map.insert(txn, "posToId", p2i_prelim);
-    let i2p_prelim = MapPrelim::from([] as [(&str, Any); 0]);
-    let id_to_pos: MapRef = gi_map.insert(txn, "idToPos", i2p_prelim);
 
     // 6. Row/Col order YArrays (eagerly populated with IDs for all rows/columns)
     //    Uses insert_range for O(n) bulk insertion instead of O(n²) push_back loop.
@@ -190,7 +188,7 @@ pub(crate) fn hydrate_sheet(
 
     // 7. Populate cells. `pos_map` is keyed "row:col" -> cell_hex.
     // Phantom entries (merges/comments/hyperlinks) are added below; we mirror
-    // `pos_map` into `gridIndex/{posToId,idToPos}` at the very end of this
+    // `pos_map` into `gridIndex/posToId` at the very end of this
     // function so all phantom entries are captured.
     let (cell_ids, mut pos_map) = hydrate_cells(txn, &cells_map, &sheet.cells, allocator);
 
@@ -469,8 +467,8 @@ pub(crate) fn hydrate_sheet(
 
     // Mirror the final `pos_map` (data cells + physical phantoms +
     // identity-only anchors) into the yrs-side
-    // `gridIndex/{posToId,idToPos}` sub-maps — the authoritative yrs-side
-    // identity store post-R51. Enables `build_sheet_snapshot_from_yrs` to
+    // `gridIndex/posToId` — the authoritative persisted identity store.
+    // Enables `build_sheet_snapshot_from_yrs` to
     // bootstrap positions without a pre-existing in-memory `GridIndex`.
     //
     // Key format: "rowHex:colHex" (not "row:col"). Row/col hexes are stable
@@ -483,7 +481,6 @@ pub(crate) fn hydrate_sheet(
     mirror_pos_map_into_grid_index(
         txn,
         &pos_to_id,
-        &id_to_pos,
         &pos_map,
         &row_id_hexes,
         &col_id_hexes,
@@ -676,8 +673,6 @@ fn hydrate_sheet_with_allocation_inner(
     let gi_map: MapRef = sheet_map.insert(txn, KEY_GRID_INDEX, gi_prelim);
     let p2i_prelim = MapPrelim::from([] as [(&str, Any); 0]);
     let pos_to_id: MapRef = gi_map.insert(txn, "posToId", p2i_prelim);
-    let i2p_prelim = MapPrelim::from([] as [(&str, Any); 0]);
-    let id_to_pos: MapRef = gi_map.insert(txn, "idToPos", i2p_prelim);
 
     // Row/Col order YArrays — bulk insert from pre-allocated IDs
     let row_order: ArrayRef = sheet_map.insert(txn, KEY_ROW_ORDER, ArrayPrelim::default());
@@ -955,7 +950,6 @@ fn hydrate_sheet_with_allocation_inner(
     mirror_pos_map_into_grid_index(
         txn,
         &pos_to_id,
-        &id_to_pos,
         &pos_map,
         row_id_hexes,
         col_id_hexes,

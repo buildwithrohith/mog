@@ -363,7 +363,7 @@ impl YrsComputeEngine {
     /// Update a cell's position in the Yrs document grid index.
     ///
     /// Moves the cell from its current position to (new_row, new_col) in the
-    /// Yrs CRDT's posToId/idToPos maps. Also updates the in-memory GridIndex.
+    /// Yrs CRDT's posToId map. Also updates the in-memory GridIndex.
     /// The caller is responsible for ensuring the target position is available.
     #[bridge::write(scope = "sheet")]
     pub fn update_cell_position(

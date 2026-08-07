@@ -16,8 +16,8 @@ use formula_types::IdentityFormula;
 /// Write a cell value to the yrs Doc with ORIGIN_USER_EDIT.
 ///
 /// Writes the cell data to the "cells" sub-map and mirrors the position
-/// into `gridIndex/{posToId, idToPos}` (the authoritative yrs-side
-/// identity store post-GridIndex migration) so that observer consumers —
+/// into `gridIndex/posToId` (the authoritative persisted identity store) so
+/// that observer consumers —
 /// undo/redo and `build_sheet_snapshot_from_yrs` structural rebuild —
 /// can resolve `(row, col)` after the in-memory `GridIndex` has been
 /// cleared.
@@ -56,7 +56,7 @@ pub(in crate::storage::engine) fn write_cell_to_yrs(
         .doc()
         .transact_mut_with(Origin::from(ORIGIN_USER_EDIT));
 
-    // Mirror the position into gridIndex/{posToId, idToPos} so
+    // Mirror the position into gridIndex/posToId so
     // observer-driven paths (undo/redo, structural rebuild) can resolve
     // (row, col) from yrs when the in-memory GridIndex is stale/cleared.
     if let (Some(rh), Some(ch)) = (row_hex.as_ref(), col_hex.as_ref()) {

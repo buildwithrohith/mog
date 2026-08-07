@@ -485,9 +485,8 @@ pub(super) fn observe_sheets_events(
                     // in-memory `GridIndex` — otherwise metadata-only
                     // writes (comments, formats, hyperlinks on an
                     // empty cell) leave the peer unable to resolve
-                    // the new cell's position. `idToPos` is the
-                    // inverse map; we observe only `posToId` to
-                    // avoid double-counting.
+                    // the new cell's position. Schema v20 persists only
+                    // `posToId`; legacy `idToPos` changes are ignored.
                     "gridIndex" => {
                         if path.len() == 3
                             && let Some(PathSegment::Key(sub)) = path.get(2)
@@ -523,8 +522,8 @@ pub(super) fn observe_sheets_events(
                                 });
                             }
                         }
-                        // `idToPos` and the `gridIndex` sub-map
-                        // entry itself: no events emitted.
+                        // Legacy `idToPos` and the `gridIndex` sub-map entry
+                        // itself: no events emitted.
                     }
 
                     // --- Structural YArray changes: rowOrder/colOrder ---

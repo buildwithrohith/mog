@@ -15,8 +15,8 @@ pub(super) type PositionMap = HashMap<(u32, u32), String>;
 /// Get or create a CellId hex for a grid position during hydration.
 ///
 /// Checks posToId first; if not found, allocates a new CellId via the
-/// IdAllocator, inserts into both posToId and idToPos, and creates a
-/// placeholder cell.
+/// IdAllocator, records it in the pending position map, and creates a
+/// placeholder cell. The caller later persists that map into `posToId`.
 pub(super) fn get_or_create_cell_id_for_pos(
     cells_map: &MapRef,
     pos_map: &mut PositionMap,

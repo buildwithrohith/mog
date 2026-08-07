@@ -16,7 +16,7 @@
 //! no `meta.rows` / `meta.cols` counters are maintained.
 //!
 //! Cell positions are tracked in the authoritative in-memory `GridIndex`
-//! (mirrored into the yrs `gridIndex/posToId/idToPos` sub-maps), so insert
+//! (mirrored into the yrs `gridIndex/posToId` map), so insert
 //! operations require no shifting of per-cell CRDT entries.
 //!
 //! `StructuralOps` methods take explicit references to the components they

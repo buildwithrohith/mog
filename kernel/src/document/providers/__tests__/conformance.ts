@@ -406,6 +406,9 @@ export function runProviderConformance(opts: ConformanceOptions): void {
         async currentStateVector() {
           return new Uint8Array();
         },
+        async inspectStorageSchemaVersion() {
+          return { incomingSchemaVersion: 20, currentSchemaVersion: 20 };
+        },
       };
       const session2 = opts.factory();
       await session2.attach(recordingDoc);

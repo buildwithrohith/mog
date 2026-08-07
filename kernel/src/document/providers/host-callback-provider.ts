@@ -29,6 +29,13 @@ import type { ProviderFactory, ProviderInstance } from './factory';
 /**
  * Callbacks the host registers to handle persistence. All async; the Provider
  * awaits them at the appropriate lifecycle boundary.
+ *
+ * IMPORTANT: retained update logs are valid only for the document storage
+ * schema version that produced their checkpoint. Any document
+ * `storageSchemaVersion` change invalidates the checkpoint and every log
+ * entry derived from it; hosts MUST clear/replace them before the next
+ * attach. This callback contract does not carry checkpoint identity, so the
+ * host owns that coordination boundary.
  */
 export interface HostCallbackRegistry {
   /**

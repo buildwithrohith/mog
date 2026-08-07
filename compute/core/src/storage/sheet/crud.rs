@@ -173,9 +173,8 @@ fn write_cells_remapped(
 
 /// Write the `gridIndex` sub-map with CellId-hex remapping.
 ///
-/// `posToId` keeps its keys and remaps values. While schema v19 still
-/// dual-writes, the copied `idToPos` is freshly derived from those remapped
-/// authoritative entries; source inverse entries are never consulted.
+/// `posToId` keeps its keys and remaps values. Legacy `idToPos` entries from
+/// a source sheet are ignored; schema v20 never persists the inverse map.
 fn write_grid_index_remapped(
     new_sheet: &MapRef,
     txn: &mut yrs::TransactionMut,
@@ -190,7 +189,6 @@ fn write_grid_index_remapped(
         match (sub_key.as_str(), sub_val) {
             (KEY_GRID_POS_TO_ID, YValue::Map(pos_entries)) => {
                 let new_pos: MapRef = new_gi.insert(txn, KEY_GRID_POS_TO_ID, MapPrelim::default());
-                let new_id: MapRef = new_gi.insert(txn, KEY_GRID_ID_TO_POS, MapPrelim::default());
                 for (pos, v) in pos_entries {
                     if let YValue::Any(Any::String(old_hex)) = v {
                         let new_val = remap
@@ -198,7 +196,6 @@ fn write_grid_index_remapped(
                             .cloned()
                             .unwrap_or_else(|| old_hex.to_string());
                         new_pos.insert(txn, pos.as_str(), Any::String(Arc::from(new_val.as_str())));
-                        new_id.insert(txn, new_val, Any::String(Arc::from(pos.as_str())));
                     } else {
                         write_y_value_into_map(&new_pos, txn, pos, v);
                     }
@@ -692,12 +689,10 @@ impl YrsStorage {
                 .collect();
             col_order.insert_range(&mut txn, 0, col_hexes);
 
-            // Grid index (posToId / idToPos) — authoritative yrs-side identity
-            // store post-R51. `cellGrid` / `cellPos` retired.
+            // Grid index (`posToId`) — sole persisted identity ownership map.
             let empty_map = || MapPrelim::from([] as [(&str, Any); 0]);
             let gi_map: MapRef = sheet_map.insert(&mut txn, KEY_GRID_INDEX, empty_map());
             gi_map.insert(&mut txn, "posToId", empty_map());
-            gi_map.insert(&mut txn, "idToPos", empty_map());
 
             // All per-sheet sub-maps
             for key in [

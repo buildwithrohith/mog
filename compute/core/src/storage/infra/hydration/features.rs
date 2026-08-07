@@ -40,7 +40,7 @@ pub(super) use comments::hydrate_comments;
 /// Returns `(cell_ids, pos_map)` where `pos_map` is an in-memory position index
 /// (`(row, col)` -> cell_hex) used by downstream hydration functions (merges, comments,
 /// hyperlinks, styles, filters) and mirrored by the caller into the canonical
-/// Yrs `gridIndex/{posToId,idToPos}` store before the import transaction commits.
+/// Yrs `gridIndex/posToId` store before the import transaction commits.
 pub(super) fn hydrate_cells(
     txn: &mut yrs::TransactionMut,
     cells_map: &MapRef,

@@ -34,7 +34,7 @@ pub(in crate::storage::engine) fn set_array_formula(
         });
     }
     // Resolve / mint a CellId for the anchor in both the in-memory
-    // grid index and the Yrs `gridIndex/{posToId, idToPos}` mirror.
+    // grid index and the Yrs `gridIndex/posToId` authority map.
     // Same path used by metadata writes on empty positions.
     let Some(anchor_id) = ensure_cell_id_mirrored(stores, mirror, sheet_id, top_row, left_col)
     else {

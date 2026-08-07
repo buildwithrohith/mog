@@ -31,6 +31,7 @@ import { FailingIndexedDBProvider } from './failing-indexeddb-provider';
 import { buildMockProviderDoc } from './mock-provider-doc';
 import {
   IndexedDBProvider,
+  DOCUMENT_SCHEMA_META_PREFIX,
   hasPersistedSnapshot,
   createIndexedDbProviderFactory,
 } from '../indexeddb-provider';
@@ -148,6 +149,147 @@ describe('IndexedDBProvider — IDB-specific scenarios', () => {
 
     db1.close();
     db2.close();
+  });
+
+  it('discards a v19-schema snapshot and log, then atomically checkpoints fresh v20 state', async () => {
+    const docId = 'schema-v19-cache';
+    const staleSnapshot = new Uint8Array([0x19, 0xa1]);
+    const staleUpdate = new Uint8Array([0x19, 0xb2]);
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([SNAPSHOTS_STORE, UPDATES_STORE, META_STORE], 'readwrite');
+      tx.objectStore(SNAPSHOTS_STORE).put(staleSnapshot, docId);
+      tx.objectStore(UPDATES_STORE).put(staleUpdate, [docId, 0]);
+      // Deliberately lie in the side marker: the snapshot's own v19 stamp is
+      // authoritative and must still force replacement.
+      tx.objectStore(META_STORE).put(20, `${DOCUMENT_SCHEMA_META_PREFIX}${docId}`);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+    db.close();
+
+    const doc = buildMockProviderDoc(docId);
+    const applySpy = jest.spyOn(doc, 'applyUpdate');
+    jest.spyOn(doc, 'inspectStorageSchemaVersion').mockImplementation(async (update) => ({
+      incomingSchemaVersion: update[0] === 0x19 ? 19 : 20,
+      currentSchemaVersion: 20,
+    }));
+    const freshV20 = await doc.encodeDiff(new Uint8Array([0]));
+    const provider = new IndexedDBProvider(docId, {
+      enableCompaction: false,
+      enableEviction: false,
+    });
+
+    const result = await provider.attach(doc);
+    expect(result).toEqual(expect.objectContaining({ status: 'ready', readOnly: false }));
+    expect(applySpy).not.toHaveBeenCalled();
+
+    const after = await openDb();
+    const persisted = await new Promise<{
+      snapshot: Uint8Array;
+      updates: unknown[];
+      schemaVersion: number;
+    }>((resolve, reject) => {
+      const tx = after.transaction([SNAPSHOTS_STORE, UPDATES_STORE, META_STORE], 'readonly');
+      const snapshotReq = tx.objectStore(SNAPSHOTS_STORE).get(docId);
+      const updatesReq = tx
+        .objectStore(UPDATES_STORE)
+        .getAll(IDBKeyRange.bound([docId, -Infinity], [docId, Infinity]));
+      const markerReq = tx.objectStore(META_STORE).get(`${DOCUMENT_SCHEMA_META_PREFIX}${docId}`);
+      tx.oncomplete = () =>
+        resolve({
+          snapshot:
+            snapshotReq.result instanceof Uint8Array
+              ? snapshotReq.result
+              : new Uint8Array(snapshotReq.result as ArrayBuffer),
+          updates: updatesReq.result,
+          schemaVersion: markerReq.result as number,
+        });
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+    after.close();
+
+    expect(Array.from(persisted.snapshot)).toEqual(Array.from(freshV20));
+    expect(persisted.updates).toEqual([]);
+    expect(persisted.schemaVersion).toBe(20);
+    await provider.detach();
+  });
+
+  it('refuses a future-schema cache without applying or overwriting it', async () => {
+    const docId = 'schema-v21-cache';
+    const futureSnapshot = new Uint8Array([0x21, 0xa1]);
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([SNAPSHOTS_STORE, META_STORE], 'readwrite');
+      tx.objectStore(SNAPSHOTS_STORE).put(futureSnapshot, docId);
+      tx.objectStore(META_STORE).put(21, `${DOCUMENT_SCHEMA_META_PREFIX}${docId}`);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+    db.close();
+
+    const doc = buildMockProviderDoc(docId);
+    const applySpy = jest.spyOn(doc, 'applyUpdate');
+    jest.spyOn(doc, 'inspectStorageSchemaVersion').mockImplementation(async (update) => ({
+      incomingSchemaVersion: update[0] === 0x21 ? 21 : 20,
+      currentSchemaVersion: 20,
+    }));
+    const provider = new IndexedDBProvider(docId, {
+      enableCompaction: false,
+      enableEviction: false,
+    });
+
+    const result = await provider.attach(doc);
+    expect(result).toEqual(expect.objectContaining({ status: 'blocked', reason: 'unavailable' }));
+    expect(applySpy).not.toHaveBeenCalled();
+
+    const after = await openDb();
+    const persisted = await new Promise<{ snapshot: Uint8Array; schemaVersion: number }>(
+      (resolve, reject) => {
+        const tx = after.transaction([SNAPSHOTS_STORE, META_STORE], 'readonly');
+        const snapshotReq = tx.objectStore(SNAPSHOTS_STORE).get(docId);
+        const markerReq = tx.objectStore(META_STORE).get(`${DOCUMENT_SCHEMA_META_PREFIX}${docId}`);
+        tx.oncomplete = () =>
+          resolve({ snapshot: snapshotReq.result, schemaVersion: markerReq.result as number });
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      },
+    );
+    after.close();
+    expect(Array.from(persisted.snapshot)).toEqual(Array.from(futureSnapshot));
+    expect(persisted.schemaVersion).toBe(21);
+  });
+
+  it('rejects a malformed cached snapshot without hanging or retaining the Web Lock', async () => {
+    const docId = 'malformed-schema-cache';
+    const malformedSnapshot = new Uint8Array([0xde, 0xad]);
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([SNAPSHOTS_STORE, META_STORE], 'readwrite');
+      tx.objectStore(SNAPSHOTS_STORE).put(malformedSnapshot, docId);
+      tx.objectStore(META_STORE).put(20, `${DOCUMENT_SCHEMA_META_PREFIX}${docId}`);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+    db.close();
+    installAvailableWebLock();
+
+    const doc = buildMockProviderDoc(docId);
+    jest.spyOn(doc, 'inspectStorageSchemaVersion').mockImplementation(async (update) => {
+      if (update[0] === 0xde) throw new Error('malformed cached yrs update');
+      return { incomingSchemaVersion: 20, currentSchemaVersion: 20 };
+    });
+    const provider = new IndexedDBProvider(docId, {
+      enableCompaction: false,
+      enableEviction: false,
+    });
+
+    await expect(provider.attach(doc)).rejects.toThrow('malformed cached yrs update');
+    expect(provider._devtoolsDb).toBeNull();
   });
 
   // -------------------------------------------------------------------------
@@ -582,6 +724,23 @@ function installUnavailableWebLock(): void {
         }
         return new Promise<void>(() => {});
       },
+    ),
+  };
+
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { locks },
+    configurable: true,
+  });
+}
+
+function installAvailableWebLock(): void {
+  const locks = {
+    request: jest.fn(
+      async (
+        _name: string,
+        _options: { ifAvailable?: boolean },
+        callback: (lock: unknown) => Promise<void> | void,
+      ) => callback({ name: 'available-test-lock' }),
     ),
   };
 

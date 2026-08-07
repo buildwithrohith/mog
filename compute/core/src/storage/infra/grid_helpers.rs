@@ -3,8 +3,8 @@
 //! These functions are used by multiple storage sub-modules to navigate
 //! the Yrs document's grid structure. Provides access to the YArray-based
 //! row/column ordering. The legacy `cellGrid` / `cellPos` lookup maps were
-//! retired in GridIndex migration (`gridIndex/{posToId,idToPos}` is the authoritative
-//! yrs-side identity store).
+//! retired in GridIndex migration (`gridIndex/posToId` is the authoritative
+//! persisted identity store).
 
 use yrs::{Any, Array, ArrayRef, Map, MapRef, Out};
 

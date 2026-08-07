@@ -162,6 +162,14 @@ export function createBridgeBackedProviderDoc(
     currentStateVector(): Promise<Uint8Array> {
       return bridge.currentStateVector();
     },
+    async inspectStorageSchemaVersion(update: Uint8Array) {
+      const [incomingSchemaVersion, currentSchemaVersion] =
+        await bridge.inspectStorageSchemaVersion(update);
+      return { incomingSchemaVersion, currentSchemaVersion };
+    },
+    async prepareStorageSchemaBaseline() {
+      await bridge.prepareStorageSchemaBaseline();
+    },
   };
 }
 

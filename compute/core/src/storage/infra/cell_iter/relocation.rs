@@ -245,7 +245,7 @@ pub fn relocate_cells(
             // source positions permanently empty (half-undo bug).
             //
             // We do two things per moved cell inside one transaction:
-            //  (a) Update gridIndex/{posToId, idToPos}: yrs undo reverses
+            //  (a) Update gridIndex/posToId: yrs undo reverses
             //      the position binding → GridIndexCellChange fires → the
             //      engine re-registers the cell at its original position.
             //  (b) Touch the cells map: remove + re-insert the cell entry
@@ -279,7 +279,7 @@ pub fn relocate_cells(
                         old_pos_key,
                     );
                 }
-                // Write new position: posToId[new_key] = cell_hex, idToPos[cell_hex] = new_key.
+                // Write new position: posToId[new_key] = cell_hex.
                 if let (Some(rh), Some(ch)) = (
                     source_grid.row_id_hex(new_row),
                     source_grid.col_id_hex(new_col),

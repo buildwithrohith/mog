@@ -20,7 +20,7 @@
 //!     │   ├── allocate SheetId
 //!     │   ├── create sheet map with meta, cells, grid_index
 //!     │   ├── allocate CellIds → cells map (via build_cell_prelim)
-//!     │   ├── build grid index (posToId / idToPos)
+//!     │   ├── build persisted grid index (posToId)
 //!     │   ├── allocate RowIds / ColIds (registries + indices)
 //!     │   ├── domain objects via yrs_schema modules
 //!     │   └── sheet metadata (frozen pane, view, protection, print)

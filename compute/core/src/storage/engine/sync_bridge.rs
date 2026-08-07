@@ -7,6 +7,7 @@ use crate::snapshot::MutationResult;
 use crate::snapshot::{ObjectDigest, SyncApplyMutationMetadataWire, SyncApplyOperationContextWire};
 use cell_types::SheetId;
 use value_types::ComputeError;
+use yrs::Transact;
 
 #[bridge::api(
     service = "YrsComputeEngine",
@@ -102,6 +103,56 @@ impl YrsComputeEngine {
     #[bridge::read(scope = "workbook")]
     pub fn current_state_vector(&self) -> Vec<u8> {
         sync::encode_state_vector(self.stores.storage.doc())
+    }
+
+    /// Inspect an untrusted persisted baseline in a detached Yrs document.
+    ///
+    /// The candidate update is never applied to this engine. Returning the
+    /// Rust-owned current version alongside the stamped candidate version
+    /// keeps provider gates from duplicating the schema constant in TS.
+    #[bridge::read(scope = "workbook")]
+    pub fn inspect_storage_schema_version(
+        &self,
+        update: &[u8],
+    ) -> Result<(u32, u32), ComputeError> {
+        let incoming_schema_version =
+            crate::storage::schema_compaction::inspect_yrs_state_schema_version(update)?;
+        Ok((
+            incoming_schema_version,
+            compute_document::schema::CURRENT_SCHEMA_VERSION,
+        ))
+    }
+
+    /// Start a fresh provider lineage with an authoritative current-schema
+    /// stamp after an older persisted baseline has been rejected.
+    ///
+    /// Provider replay targets intentionally begin unstamped so an accepted
+    /// remote baseline can attach without a root-map LWW conflict. This method
+    /// is therefore valid only for an unstamped target or an already-current
+    /// document; older/future live documents must go through load/refusal.
+    #[bridge::write(scope = "workbook")]
+    pub fn prepare_storage_schema_baseline(
+        &mut self,
+    ) -> Result<(Vec<u8>, MutationResult), ComputeError> {
+        let mut txn = self.stores.storage.doc().transact_mut();
+        let found =
+            compute_document::schema::read_schema_version(&txn, self.stores.storage.workbook_map());
+        let current = compute_document::schema::CURRENT_SCHEMA_VERSION;
+        if found != 0 && found != current {
+            return Err(ComputeError::InvalidInput {
+                message: format!(
+                    "cannot prepare schema-v{current} provider baseline from live schema-v{found}"
+                ),
+            });
+        }
+        if found == 0 {
+            compute_document::schema::write_schema_version(
+                &mut txn,
+                self.stores.storage.workbook_map(),
+            );
+        }
+        drop(txn);
+        Ok((Vec::new(), MutationResult::empty()))
     }
 
     #[bridge::read(scope = "workbook")]
@@ -215,5 +266,42 @@ mod tests {
             .expect("duplicate legacy sync update");
 
         assert!(target.active_sync_context.is_none());
+    }
+
+    #[test]
+    fn storage_schema_inspection_uses_scratch_doc_and_reports_rust_current() {
+        let source = empty_engine();
+        let candidate = compute_collab::encode_full_state(source.storage().doc());
+        let target = empty_engine();
+        let before = compute_collab::encode_full_state(target.storage().doc());
+
+        let (incoming, current) = target
+            .inspect_storage_schema_version(&candidate)
+            .expect("inspect detached candidate");
+
+        // Blank replay targets intentionally defer their local stamp so a
+        // foreign baseline wins without a root-map LWW conflict. The
+        // inspector must preserve that authoritative missing/0 result while
+        // still reporting Rust's current version separately.
+        assert_eq!(incoming, 0);
+        assert_eq!(current, compute_document::schema::CURRENT_SCHEMA_VERSION);
+        assert_eq!(
+            compute_collab::encode_full_state(target.storage().doc()),
+            before,
+            "scratch inspection must not attach the candidate to the live engine"
+        );
+    }
+
+    #[test]
+    fn provider_baseline_preparation_stamps_blank_live_doc_as_current() {
+        let mut engine = empty_engine();
+        let before = compute_collab::encode_full_state(engine.storage().doc());
+        assert_eq!(engine.inspect_storage_schema_version(&before).unwrap().0, 0);
+
+        engine.prepare_storage_schema_baseline().unwrap();
+        let prepared = compute_collab::encode_full_state(engine.storage().doc());
+        let (incoming, current) = engine.inspect_storage_schema_version(&prepared).unwrap();
+        assert_eq!(incoming, current);
+        assert_eq!(current, compute_document::schema::CURRENT_SCHEMA_VERSION);
     }
 }

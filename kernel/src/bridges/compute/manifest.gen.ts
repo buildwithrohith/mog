@@ -108,6 +108,8 @@ export const BRIDGE_METHOD_KIND: Readonly<Record<string, BridgeMethodKind>> = Ob
   applySyncUpdate: 'write',
   encodeStateVector: 'read',
   currentStateVector: 'read',
+  inspectStorageSchemaVersion: 'read',
+  prepareStorageSchemaBaseline: 'write',
   encodeDiff: 'read',
   drainPendingUpdates: 'read',
   flushUndoCapture: 'write',

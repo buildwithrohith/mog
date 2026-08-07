@@ -20,9 +20,9 @@ pub const KEY_SCHEMA_VERSION: &str = "schemaVersion";
 /// Current schema version written by `init_canonical_schema` and the snapshot/
 /// import hydration paths. Readers that encounter a version higher than
 /// `MAX_SUPPORTED_SCHEMA_VERSION` must refuse to load the document.
-pub const CURRENT_SCHEMA_VERSION: u32 = 19;
+pub const CURRENT_SCHEMA_VERSION: u32 = 20;
 /// Maximum schema version this binary can safely operate on.
-pub const MAX_SUPPORTED_SCHEMA_VERSION: u32 = 19;
+pub const MAX_SUPPORTED_SCHEMA_VERSION: u32 = 20;
 
 /// Per-sheet map keys
 pub const KEY_CELLS: &str = "cells";
@@ -50,8 +50,8 @@ pub const KEY_HIDDEN_COLS: &str = "hiddenCols";
 /// YArray-based row/column ordering (CRDT-safe concurrent structural ops)
 pub const KEY_ROW_ORDER: &str = "rowOrder";
 pub const KEY_COL_ORDER: &str = "colOrder";
-// `cellGrid` / `cellPos` retired in identity-grid migration; `gridIndex/{posToId,idToPos}`
-// is the authoritative yrs-side identity store.
+// `cellGrid` / `cellPos` retired in identity-grid migration; `gridIndex/posToId`
+// is the authoritative persisted identity store.
 
 /// Per-sheet feature maps
 pub const KEY_ROW_FORMATS: &str = "rowFormats";
@@ -190,11 +190,24 @@ pub fn guard_schema_version<T: ReadTxn>(
     txn: &T,
     workbook: &MapRef,
 ) -> Result<u32, value_types::ComputeError> {
+    guard_schema_version_with_max(txn, workbook, MAX_SUPPORTED_SCHEMA_VERSION)
+}
+
+/// Guard against a caller-supplied maximum schema version.
+///
+/// Production callers use [`guard_schema_version`]. This parameterized form
+/// keeps the older-binary refusal contract directly testable after a schema
+/// bump without building a second binary.
+pub fn guard_schema_version_with_max<T: ReadTxn>(
+    txn: &T,
+    workbook: &MapRef,
+    max_supported: u32,
+) -> Result<u32, value_types::ComputeError> {
     let version = read_schema_version(txn, workbook);
-    if version > MAX_SUPPORTED_SCHEMA_VERSION {
+    if version > max_supported {
         Err(value_types::ComputeError::UnsupportedSchemaVersion {
             found: version,
-            max_supported: MAX_SUPPORTED_SCHEMA_VERSION,
+            max_supported,
         })
     } else {
         Ok(version)
@@ -375,11 +388,10 @@ pub fn init_canonical_schema(doc: &Doc) -> (MapRef, MapRef, crate::hex::SmallHex
         .collect();
     col_order.insert_range(&mut txn, 0, col_hexes);
 
-    // Grid index (posToId / idToPos) — authoritative yrs-side identity store
-    // post-R51. `cellGrid` / `cellPos` retired.
+    // Grid index. `posToId` is the sole persisted identity ownership map in
+    // schema v20; the reverse direction is rebuilt transiently at load.
     let gi_map: MapRef = sheet_map.insert(&mut txn, KEY_GRID_INDEX, empty());
     gi_map.insert(&mut txn, KEY_GRID_POS_TO_ID, empty());
-    gi_map.insert(&mut txn, KEY_GRID_ID_TO_POS, empty());
 
     sheet_map.insert(&mut txn, KEY_ROW_HEIGHTS, empty());
     sheet_map.insert(&mut txn, KEY_COL_WIDTHS, empty());
@@ -464,11 +476,30 @@ mod tests {
     }
 
     #[test]
+    fn schema_v20_is_refused_by_a_simulated_v19_binary() {
+        let doc = Doc::new();
+        let workbook = doc.get_or_insert_map(KEY_WORKBOOK);
+        let mut txn = doc.transact_mut();
+        workbook.insert(&mut txn, KEY_SCHEMA_VERSION, Any::BigInt(20));
+
+        let err = guard_schema_version_with_max(&txn, &workbook, 19)
+            .expect_err("a v19 binary must refuse a v20 document");
+        assert!(matches!(
+            err,
+            value_types::ComputeError::UnsupportedSchemaVersion {
+                found: 20,
+                max_supported: 19
+            }
+        ));
+    }
+
+    #[test]
     fn init_canonical_schema_writes_schema_version() {
         let doc = Doc::new();
         init_canonical_schema(&doc);
         let workbook = doc.get_or_insert_map("workbook");
         let txn = doc.transact();
+        assert_eq!(CURRENT_SCHEMA_VERSION, 20);
         assert_eq!(read_schema_version(&txn, &workbook), CURRENT_SCHEMA_VERSION);
     }
 
@@ -630,10 +661,7 @@ mod tests {
             grid_index.get(&txn, KEY_GRID_POS_TO_ID),
             Some(Out::YMap(_))
         ));
-        assert!(matches!(
-            grid_index.get(&txn, KEY_GRID_ID_TO_POS),
-            Some(Out::YMap(_))
-        ));
+        assert!(grid_index.get(&txn, KEY_GRID_ID_TO_POS).is_none());
         assert!(
             grid_index.get(&txn, KEY_GRID_ROW_AXIS).is_none(),
             "rowAxis is optional; absence preserves legacy rowOrder readers",

@@ -32,13 +32,15 @@
  *
  */
 
-import type {
-  Provider,
-  ProviderAttachMode,
-  ProviderAttachResult,
-  ProviderCheckpointMode,
-  ProviderCheckpointResult,
-  ProviderDoc,
+import {
+  inspectProviderDocStorageSchemaVersion,
+  prepareProviderDocStorageSchemaBaseline,
+  type Provider,
+  type ProviderAttachMode,
+  type ProviderAttachResult,
+  type ProviderCheckpointMode,
+  type ProviderCheckpointResult,
+  type ProviderDoc,
 } from './provider';
 import type { StorageProviderCapabilities } from '@mog-sdk/types-document/storage/provider-capabilities';
 import type { StorageProviderIdentity } from '@mog-sdk/types-document/storage/provider-identity';
@@ -68,6 +70,13 @@ const EVICT_MAX_RECENT_DOCS = 50;
  * days).  `lastActiveDocId` is exempt regardless of age.
  */
 const EVICT_SOFT_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** Per-document authoritative document-schema marker in the shared meta store. */
+export const DOCUMENT_SCHEMA_META_PREFIX = 'documentSchemaVersion:';
+
+function documentSchemaMetaKey(docId: string): string {
+  return `${DOCUMENT_SCHEMA_META_PREFIX}${docId}`;
+}
 
 // =============================================================================
 // Internal types
@@ -134,6 +143,12 @@ export class IndexedDBProvider implements Provider {
    * Flips to `false` when the primary tab closes and this tab is promoted.
    */
   private _readOnly = false;
+
+  /** A persisted lineage was suppressed and attach must return blocked. */
+  private schemaAttachBlock: {
+    readonly reason: 'readOnly' | 'unavailable';
+    readonly message: string;
+  } | null = null;
 
   /**
    * Resolves the "hold lock" promise inside the Web Lock callback, releasing
@@ -269,7 +284,21 @@ export class IndexedDBProvider implements Provider {
         ? (navigator as unknown as { locks?: LockManager }).locks
         : undefined;
     if (!locks) {
-      await this.doAttach(doc, mode);
+      try {
+        await this.doAttach(doc, mode);
+      } catch (error) {
+        this.attached = false;
+        this.db?.close();
+        this.db = null;
+        throw error;
+      }
+      if (this.schemaAttachBlock) {
+        const block = this.schemaAttachBlock;
+        this.attached = false;
+        this.db?.close();
+        this.db = null;
+        return { status: 'blocked', mode: mode.kind, ...block };
+      }
       return {
         status: 'ready',
         mode: mode.kind,
@@ -279,31 +308,50 @@ export class IndexedDBProvider implements Provider {
 
     const lockName = `mog:doc:${this.docId}`;
 
-    await new Promise<void>((resolveAttach) => {
-      void locks.request(lockName, { ifAvailable: true }, async (lock) => {
-        if (lock === null) {
-          // Another tab owns the write lock — enter read-only mode.
-          this._readOnly = true;
-          if (mode.kind === 'importInitialize' || mode.kind === 'createFresh') {
+    try {
+      await new Promise<void>((resolveAttach, rejectAttach) => {
+        void locks
+          .request(lockName, { ifAvailable: true }, async (lock) => {
+            if (lock === null) {
+              // Another tab owns the write lock — enter read-only mode.
+              this._readOnly = true;
+              if (mode.kind === 'importInitialize' || mode.kind === 'createFresh') {
+                resolveAttach();
+                return;
+              }
+              // Still replay IDB state so the doc content is visible.
+              await this.doAttach(doc, mode);
+              resolveAttach();
+              if (this.schemaAttachBlock) return;
+              // Queue for promotion: fires once the primary tab releases.
+              this.schedulePromotion(lockName, locks);
+              return;
+            }
+            // Lock acquired — full read-write mode.
+            await this.doAttach(doc, mode);
             resolveAttach();
-            return;
-          }
-          // Still replay IDB state so the doc content is visible.
-          await this.doAttach(doc, mode);
-          resolveAttach();
-          // Queue for promotion: fires once the primary tab releases.
-          this.schedulePromotion(lockName, locks);
-          return;
-        }
-        // Lock acquired — full read-write mode.
-        await this.doAttach(doc, mode);
-        resolveAttach();
-        // Hold lock until detach() resolves this promise.
-        await new Promise<void>((holdResolve) => {
-          this._lockRelease = holdResolve;
-        });
+            if (this.schemaAttachBlock) return;
+            // Hold lock until detach() resolves this promise.
+            await new Promise<void>((holdResolve) => {
+              this._lockRelease = holdResolve;
+            });
+          })
+          .catch(rejectAttach);
       });
-    });
+    } catch (error) {
+      this.attached = false;
+      this.db?.close();
+      this.db = null;
+      throw error;
+    }
+
+    if (this.schemaAttachBlock) {
+      const block = this.schemaAttachBlock;
+      this.attached = false;
+      this.db?.close();
+      this.db = null;
+      return { status: 'blocked', mode: mode.kind, ...block };
+    }
 
     if ((mode.kind === 'importInitialize' || mode.kind === 'createFresh') && this._readOnly) {
       return {
@@ -330,6 +378,7 @@ export class IndexedDBProvider implements Provider {
     doc: ProviderDoc,
     mode: ProviderAttachMode = { kind: 'normal' },
   ): Promise<void> {
+    this.schemaAttachBlock = null;
     if (mode.kind === 'importInitialize') {
       this.seqCounter = 0;
       this.logCount = 0;
@@ -347,9 +396,9 @@ export class IndexedDBProvider implements Provider {
       this.pendingDrain = null;
       if (!this._readOnly) {
         try {
-          const fullState = await doc.encodeDiff(new Uint8Array([0]));
+          const { fullState, schemaVersion } = await prepareProviderDocStorageSchemaBaseline(doc);
           if (fullState.length > 0) {
-            await this.writeSnapshot(this.db!, this.docId, fullState);
+            await this.writeSchemaBaseline(this.db!, this.docId, fullState, schemaVersion);
           }
         } catch (err) {
           console.warn('[IndexedDBProvider] Failed to write fresh-create snapshot:', err);
@@ -366,27 +415,78 @@ export class IndexedDBProvider implements Provider {
       return;
     }
 
-    // 1) Replay snapshot.
+    const currentFullState = await doc.encodeDiff(new Uint8Array([0]));
+    const { currentSchemaVersion } = await inspectProviderDocStorageSchemaVersion(
+      doc,
+      currentFullState,
+    );
+
+    // 1) Gate the complete cached lineage before replaying any of it. A
+    // missing marker is stale when bytes already exist (including migrated
+    // v1/v2 caches), because their document schema cannot be established.
     const snapshot = await this.readSnapshot(this.db!, this.docId);
+    const persistedLogCount = await this.countLog(this.db!, this.docId);
+    const persistedSchemaVersion = await this.readDocumentSchemaMarker(this.db!, this.docId);
+    const hasPersistedState = snapshot !== null || persistedLogCount > 0;
+    const snapshotSchemaVersion = snapshot
+      ? (await inspectProviderDocStorageSchemaVersion(doc, snapshot)).incomingSchemaVersion
+      : null;
+    const futureSchemaVersion = [persistedSchemaVersion, snapshotSchemaVersion]
+      .filter((version): version is number => version !== null)
+      .find((version) => version > currentSchemaVersion);
+    if (futureSchemaVersion !== undefined) {
+      this.seqCounter = 0;
+      this.logCount = 0;
+      this.schemaAttachBlock = {
+        reason: 'unavailable',
+        message: `IndexedDBProvider cache for ${this.docId} uses future storage schema ${futureSchemaVersion}; this client supports ${currentSchemaVersion}`,
+      };
+      this.attached = true;
+      return;
+    }
+    const persistedLineageIsCurrent =
+      snapshot !== null &&
+      persistedSchemaVersion === currentSchemaVersion &&
+      snapshotSchemaVersion === currentSchemaVersion;
+    if (hasPersistedState && !persistedLineageIsCurrent) {
+      if (this._readOnly) {
+        this.seqCounter = 0;
+        this.logCount = 0;
+        this.schemaAttachBlock = {
+          reason: 'readOnly',
+          message: `IndexedDBProvider suppressed a stale-schema cache for ${this.docId}; replacement requires the write lock`,
+        };
+        this.attached = true;
+        return;
+      }
+      const { fullState, schemaVersion } = await prepareProviderDocStorageSchemaBaseline(doc);
+      await this.writeSchemaBaseline(this.db!, this.docId, fullState, schemaVersion);
+      this.seqCounter = 0;
+      this.logCount = 0;
+      this.attached = true;
+      return;
+    }
+
+    // 2) Replay only a schema-compatible snapshot and log.
     if (snapshot) {
       await doc.applyUpdate(snapshot);
     }
 
-    // 2) Replay updates in seq order; track max seq.
+    // 3) Replay updates in seq order; track max seq.
     const replayed = await this.replayUpdates(this.db!, this.docId, doc);
     this.seqCounter = replayed.maxSeqExclusive;
     this.logCount = replayed.count;
 
-    // 3) Initial-snapshot guarantee: if IDB was completely empty (no snapshot
+    // 4) Initial-snapshot guarantee: if IDB was completely empty (no snapshot
     //    and no update log — e.g. first attach after XLSX import), encode the
     //    current in-memory doc state and persist it now. Without this, imported
     //    sheet content only ever lives in memory and a page refresh loses
     //    everything the user imported.
     if (!this._readOnly && !snapshot && replayed.count === 0) {
       try {
-        const fullState = await doc.encodeDiff(new Uint8Array([0]));
+        const { fullState, schemaVersion } = await prepareProviderDocStorageSchemaBaseline(doc);
         if (fullState.length > 0) {
-          await this.writeSnapshot(this.db!, this.docId, fullState);
+          await this.writeSchemaBaseline(this.db!, this.docId, fullState, schemaVersion);
         }
       } catch (err) {
         // Best-effort — a failed initial snapshot is a degraded experience
@@ -397,7 +497,7 @@ export class IndexedDBProvider implements Provider {
 
     this.attached = true;
 
-    // 4) Eviction sweep — best-effort, errors logged. Current spec: every
+    // 5) Eviction sweep — best-effort, errors logged. Current spec: every
     //    `attach` runs the sweep; the currently-attaching doc is exempt.
     if (this.options.enableEviction) {
       try {
@@ -509,9 +609,9 @@ export class IndexedDBProvider implements Provider {
     }
     const watermark =
       mode.kind === 'importInitialize' ? Number.POSITIVE_INFINITY : this.seqCounter - 1;
-    const fullState = await doc.encodeDiff(new Uint8Array([0]));
+    const { fullState, schemaVersion } = await prepareProviderDocStorageSchemaBaseline(doc);
 
-    await this.writeFullStateCheckpoint(this.db, this.docId, fullState, watermark);
+    await this.writeFullStateCheckpoint(this.db, this.docId, fullState, watermark, schemaVersion);
     this.logCount = await this.countLog(this.db, this.docId);
 
     // Appends that arrived while the full state was being encoded may or
@@ -825,13 +925,31 @@ export class IndexedDBProvider implements Provider {
   // Read paths (attach replay)
   // ---------------------------------------------------------------------------
 
-  private async writeSnapshot(db: IDBDatabase, docId: string, snapshot: Uint8Array): Promise<void> {
+  private async writeSchemaBaseline(
+    db: IDBDatabase,
+    docId: string,
+    snapshot: Uint8Array,
+    schemaVersion: number,
+  ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(SNAPSHOTS_STORE, 'readwrite');
+      const tx = db.transaction([SNAPSHOTS_STORE, UPDATES_STORE, META_STORE], 'readwrite');
       tx.objectStore(SNAPSHOTS_STORE).put(snapshot, docId);
+      tx.objectStore(UPDATES_STORE).delete(
+        IDBKeyRange.bound([docId, -Infinity], [docId, Infinity]),
+      );
+      tx.objectStore(META_STORE).put(schemaVersion, documentSchemaMetaKey(docId));
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error ?? new Error('snapshot write failed'));
       tx.onabort = () => reject(tx.error ?? new Error('snapshot write aborted'));
+    });
+  }
+
+  private async readDocumentSchemaMarker(db: IDBDatabase, docId: string): Promise<number | null> {
+    return new Promise<number | null>((resolve, reject) => {
+      const tx = db.transaction(META_STORE, 'readonly');
+      const req = tx.objectStore(META_STORE).get(documentSchemaMetaKey(docId));
+      req.onsuccess = () => resolve(typeof req.result === 'number' ? req.result : null);
+      req.onerror = () => reject(req.error ?? new Error('document schema marker read failed'));
     });
   }
 
@@ -856,11 +974,12 @@ export class IndexedDBProvider implements Provider {
 
   private async clearPersistedState(db: IDBDatabase, docId: string): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      const tx = db.transaction([SNAPSHOTS_STORE, UPDATES_STORE], 'readwrite');
+      const tx = db.transaction([SNAPSHOTS_STORE, UPDATES_STORE, META_STORE], 'readwrite');
       tx.objectStore(SNAPSHOTS_STORE).delete(docId);
       tx.objectStore(UPDATES_STORE).delete(
         IDBKeyRange.bound([docId, -Infinity], [docId, Infinity]),
       );
+      tx.objectStore(META_STORE).delete(documentSchemaMetaKey(docId));
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error ?? new Error('clear persisted state failed'));
       tx.onabort = () => reject(tx.error ?? new Error('clear persisted state aborted'));
@@ -1003,11 +1122,12 @@ export class IndexedDBProvider implements Provider {
       // the byte sequence `compute_collab::encode_state_vector` produces
       // for a fresh `Doc`, so the round-trip is symmetric with the
       // production replay path.
-      const newSnapshot = await transient.encodeDiff(new Uint8Array([0]));
+      const { fullState: newSnapshot, schemaVersion } =
+        await prepareProviderDocStorageSchemaBaseline(transient);
 
       // Step 4: atomic write — new snapshot in, log entries up to
       // watermark out. One tx covers both stores.
-      await this.writeCompactionResult(this.db, this.docId, newSnapshot, watermark);
+      await this.writeCompactionResult(this.db, this.docId, newSnapshot, watermark, schemaVersion);
       // Update local logCount: we deleted (watermark+1) entries that
       // existed at compaction-read time. Appends since then are still in
       // logCount; we recompute from the current log state for safety.
@@ -1091,13 +1211,15 @@ export class IndexedDBProvider implements Provider {
     docId: string,
     newSnapshot: Uint8Array,
     watermark: number,
+    schemaVersion: number,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
-      const tx = db.transaction([SNAPSHOTS_STORE, UPDATES_STORE], 'readwrite');
+      const tx = db.transaction([SNAPSHOTS_STORE, UPDATES_STORE, META_STORE], 'readwrite');
       const snapshotStore = tx.objectStore(SNAPSHOTS_STORE);
       const updatesStore = tx.objectStore(UPDATES_STORE);
 
       snapshotStore.put(newSnapshot, docId);
+      tx.objectStore(META_STORE).put(schemaVersion, documentSchemaMetaKey(docId));
 
       // Delete only seqs ≤ watermark. Concurrent appends with seqs > watermark
       // survive.
@@ -1115,13 +1237,15 @@ export class IndexedDBProvider implements Provider {
     docId: string,
     snapshot: Uint8Array,
     watermark: number,
+    schemaVersion: number,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
-      const tx = db.transaction([SNAPSHOTS_STORE, UPDATES_STORE], 'readwrite');
+      const tx = db.transaction([SNAPSHOTS_STORE, UPDATES_STORE, META_STORE], 'readwrite');
       const snapshotStore = tx.objectStore(SNAPSHOTS_STORE);
       const updatesStore = tx.objectStore(UPDATES_STORE);
 
       snapshotStore.put(snapshot, docId);
+      tx.objectStore(META_STORE).put(schemaVersion, documentSchemaMetaKey(docId));
       if (watermark === Number.POSITIVE_INFINITY) {
         updatesStore.delete(IDBKeyRange.bound([docId, -Infinity], [docId, Infinity]));
       } else if (watermark >= 0) {
@@ -1190,10 +1314,12 @@ export class IndexedDBProvider implements Provider {
       const tx = db.transaction([SNAPSHOTS_STORE, UPDATES_STORE, META_STORE], 'readwrite');
       const snapshots = tx.objectStore(SNAPSHOTS_STORE);
       const updates = tx.objectStore(UPDATES_STORE);
+      const metaStore = tx.objectStore(META_STORE);
 
       for (const evictId of toEvict) {
         snapshots.delete(evictId);
         updates.delete(IDBKeyRange.bound([evictId, -Infinity], [evictId, Infinity]));
+        metaStore.delete(documentSchemaMetaKey(evictId));
       }
 
       writeMetaWithinTx(tx, {

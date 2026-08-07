@@ -107,8 +107,8 @@ impl YrsStorage {
                     .map(|h| Any::String(Arc::from(h.as_str()))),
             );
 
-            // Grid index (posToId / idToPos) — authoritative yrs-side identity
-            // store post-R51. Populated below as each cell is written so that
+            // Grid index (`posToId`) — authoritative yrs-side identity store.
+            // Populated below as each cell is written so that
             // the yrs doc carries position info for CRDT sync and for
             // `build_sheet_snapshot_from_yrs` bootstrap (e.g. `from_yrs_state`).
             let gi_map: MapRef = sheet_map.insert(
@@ -118,8 +118,6 @@ impl YrsStorage {
             );
             let pos_to_id: MapRef =
                 gi_map.insert(&mut txn, "posToId", MapPrelim::from([] as [(&str, Any); 0]));
-            let id_to_pos: MapRef =
-                gi_map.insert(&mut txn, "idToPos", MapPrelim::from([] as [(&str, Any); 0]));
 
             // Cells
             let cells_prelim = MapPrelim::from([] as [(&str, Any); 0]);
@@ -141,9 +139,8 @@ impl YrsStorage {
                     })?;
                 }
 
-                // Write position into gridIndex/{posToId,idToPos}. Key format:
-                //   posToId: "rowHex:colHex" -> cell hex
-                //   idToPos: cell hex        -> "rowHex:colHex"
+                // Write position into gridIndex/posToId. Key format:
+                //   "rowHex:colHex" -> cell hex
                 // Row/col ids are stable across structural ops; position
                 // indices are derived via rowOrder/colOrder at read time.
                 if let (Some(rh), Some(ch)) = (
@@ -155,11 +152,6 @@ impl YrsStorage {
                         &mut txn,
                         &*pos_key,
                         Any::String(Arc::from(cell_hex.as_str())),
-                    );
-                    id_to_pos.insert(
-                        &mut txn,
-                        &*cell_hex,
-                        Any::String(Arc::from(pos_key.as_str())),
                     );
                 }
             }

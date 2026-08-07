@@ -187,7 +187,7 @@ pub(in crate::storage::engine) fn build_workbook_snapshot(
 ///
 /// Used during structural undo/redo/sync when the in-memory GridIndex and
 /// CellMirror are stale. Reads cell positions from the yrs grid index
-/// (`idToPos`) and cell data from the yrs cells map. The yrs grid index
+/// (`posToId`) and cell data from the yrs cells map. The yrs grid index
 /// is never modified by structural operations, so after undo it naturally
 /// contains the correct pre-structural positions.
 pub(in crate::storage::engine) fn build_sheet_snapshot_from_yrs(
@@ -216,10 +216,9 @@ pub(in crate::storage::engine) fn build_sheet_snapshot_from_yrs(
     });
 
     // Walk `gridIndex/posToId` — the CRDT winner map for position ownership.
-    // `idToPos` is only an inverse mirror and can contain losing CellIds after
-    // concurrent empty-position writes. Hydrating from it would resurrect cells
-    // that lost the position LWW race and make peers disagree based on YMap
-    // iteration order.
+    // Legacy `idToPos` was only an inverse mirror and could contain losing
+    // CellIds after concurrent empty-position writes. `posToId` remains the
+    // CRDT winner map for position ownership.
     let mut cells = Vec::new();
     {
         let txn = storage.doc().transact();
