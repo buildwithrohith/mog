@@ -131,18 +131,18 @@ impl CellMirror {
     /// Remove a cell by CellId (across all sheets).
     pub fn remove_cell(&mut self, cell_id: &CellId) {
         let mut invalidate_info: Option<(SheetId, u32)> = None;
-        for (sheet_id, sheet) in self.sheets.iter_mut() {
-            if sheet.cells.remove(cell_id).is_some() {
-                if let Some(pos) = sheet.id_to_pos.remove(cell_id) {
-                    sheet.pos_to_id.remove(&pos);
-                    clear_col_value(sheet, pos);
-                    // If this column has Range-backed data, rebuild col_data so
-                    // the payload value is restored instead of leaving Null.
-                    // For non-Range columns this returns early (no-op).
-                    sheet.rebuild_col_data(pos.col());
-                    invalidate_info = Some((*sheet_id, pos.col()));
-                }
-                break;
+        if let Some(sheet_id) = self.cell_to_sheet.get(cell_id).copied()
+            && let Some(sheet) = self.sheets.get_mut(&sheet_id)
+            && sheet.cells.remove(cell_id).is_some()
+        {
+            if let Some(pos) = sheet.id_to_pos.remove(cell_id) {
+                sheet.pos_to_id.remove(&pos);
+                clear_col_value(sheet, pos);
+                // If this column has Range-backed data, rebuild col_data so
+                // the payload value is restored instead of leaving Null.
+                // For non-Range columns this returns early (no-op).
+                sheet.rebuild_col_data(pos.col());
+                invalidate_info = Some((sheet_id, pos.col()));
             }
         }
         self.cell_to_sheet.remove(cell_id);
