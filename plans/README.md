@@ -45,6 +45,9 @@ NOT commit this directory).
 | 020 | Incremental snapshot lowering (last per-click O(cumulative) cost) | P1 | L | 017 | N (opt/incremental-lowering) | DONE (incremental target-sheet lowering for preview and durable hydration; counter regression [1,2,2]; workspace check clean; compute-core 3,024 + deferred 52 passed; xlsx-parser 3,381 unit tests plus integration/doc tests passed; commits d4d2c89a, bc04efbc, 167e603b, 2bf88a42) |
 | 021 | Round-4 small wins (padding bound, style-run diagnostics, batched #REF!) | P2 | M | — | O (opt/round4-small-wins) | DONE (compute-core 3,024 passed; xlsx-parser 3,382 unit tests plus integration/doctests passed; bridge generation and compute-core queries 38 passed; kernel typecheck blocked by missing workspace declarations; commits 38ee3008, 0745fb06, 12ff2567, 724ded91) |
 | 022 | Dependency-closure hydration (008 §5 row 4, ARCH riskiest step) | P1 | L | 015 | M (opt/dependency-closure, sol) | DONE (`263707bf`, `2dc59095`, `f80fdf63`; compute-core 3033/3033) |
+| 023 | Remove persisted `idToPos` via schema-v20 compacting cutover | P1 | L | 008 | P (opt/schema-v20-cutover) | DONE (`f2655d5c`, `ed7a5928`; lookup-before-mint identity fix; compute-core 3052/3052; compute-document 277/277 + 8/8; provider 35/35; 1,000-cell `encode_full_state` 275,061 → 167,030 bytes, -39.28%) |
+| 024 | Mirror positional-map merge (lazy reverse index) | P2 | M-L | — | Q (opt/mirror-bimap) | DONE (accessor-routing and representation commits `52e4dfd8`, `cd3f1e85`; compute-core 3,036/3,036 and mirror 181/181) |
+| 025 | Binary wire format for bulk range reads | P2 | L | — | R (opt/binary-wire) | DONE (WASM bytes-tuple STOP passed; pure-numeric 10k 260,047/899,407 = 28.91%, 71.09% reduction; mixed 10k 438,950/1,568,291 = 27.99%; commits `0971128f`, `09c9e42d`, `203e5439`, `7a2d5fa7`) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) |
 REJECTED (one-line rationale).

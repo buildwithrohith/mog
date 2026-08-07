@@ -95,6 +95,29 @@ session's worktree `.claude/worktrees/merge-wave` with unpushed model-registry
 commits — NEVER branch from local develop; branch from origin/develop and
 cherry-pick, delete stale .next if typecheck fails on phantom routes).
 
+## Round 5 (IN PROGRESS at last update)
+- Lanes: P=term_6859becb (sol, plan 023 schema-v20 cutover; STOPped 3× — provider
+  scope expanded, host-provider risk RULED accepted with scratch-doc baseline
+  inspection, identity-divergence ruled fix-at-source: normalization mints a
+  duplicate CellId instead of lookup, test_workbook_settings.rs:356);
+  Q=term_4ac0c6c7 (plan 024 bimap merge: DONE, ACCEPTED — lazy reverse cache,
+  epoch invalidation, 3,036/0, commits 52e4dfd8+cd3f1e85 in mog-opt-q);
+  R=term_b11ae8de (plan 025 binary wire: size gate 29.26% vs 25% numeric bar —
+  ruled one codec-tightening iteration: rect header + RLE type stream).
+- SERVER NATIVE ADOPTION SHIPPED: Sapiex PR #2727 MERGED, Railway staging
+  deploy SUCCESS (image provably contains fork linux binary via frozen-lockfile
+  + vendor/ COPY; first staging Excel session is the live dlopen proof).
+  Fork TLS fix commit 3e791703 (jemalloc disable_initial_exec_tls — REQUIRED
+  for any dlopen'd linux build). Linux build recipe that works: docker
+  linux/arm64 rust:1-trixie + apt gcc-x86-64-linux-gnu, CARGO_TARGET_DIR=
+  target-linux, thin LTO + codegen-units=16 + -j2 (Docker VM 7.75GB: fat LTO
+  and cu=1 both OOM; zig drops jemalloc C lib; napi-cross ships linux-hosted
+  gcc, unusable on macOS). Smoke: 19/19 in amd64 container.
+- BIG_PARSE_CONCURRENCY raise: now justifiable (staging runs fork binary);
+  still not applied — do after staging Excel session confirms.
+- WATCH: mog repo git identity got reset to Vishhvak mid-session (culprit
+  unknown); re-verify `git config user.name` before EVERY fork commit/push.
+
 ## Round 5+ backlog (documented, not planned)
 - idToPos schema-v20 cutover (008-DESIGN-OUTPUT §6; after dependency-closure
   lands; 40-50% per-cell Yrs cost).
