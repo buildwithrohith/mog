@@ -7,25 +7,19 @@ use super::{ParseError, ParsedSheet, SheetMetadata};
 
 pub(super) fn parse_materialized_cells(
     worksheet_xml: &[u8],
-    sheet_num: usize,
     metadata: &SheetMetadata,
     shared_string_refs: &[String],
 ) -> Result<ParsedSheet, ParseError> {
-    ensure_lazy_limit(
-        "worksheet cell",
-        count_worksheet_cell_elements(worksheet_xml),
-        MAX_WORKSHEET_CELLS,
-    )?;
+    let cell_capacity = count_worksheet_cell_elements(worksheet_xml);
+    ensure_lazy_limit("worksheet cell", cell_capacity, MAX_WORKSHEET_CELLS)?;
 
-    let estimated_cells = estimated_cells(metadata);
     let estimated_strings = estimated_strings(metadata);
-    let mut parsed = ParsedSheet::with_capacity(estimated_cells, estimated_strings);
+    let mut parsed = ParsedSheet::with_capacity(cell_capacity, estimated_strings);
 
     fill_materialized_cells(
         &mut parsed,
         worksheet_xml,
-        sheet_num,
-        estimated_cells,
+        cell_capacity,
         shared_string_refs,
     )?;
 
@@ -45,15 +39,13 @@ pub(super) fn estimated_strings(metadata: &SheetMetadata) -> usize {
 pub(super) fn fill_materialized_cells(
     parsed: &mut ParsedSheet,
     worksheet_xml: &[u8],
-    sheet_num: usize,
-    estimated_cells: usize,
+    cell_capacity: usize,
     shared_string_refs: &[String],
 ) -> Result<(), ParseError> {
-    let mut buffer_size = estimated_cells;
-    parsed.cells.resize(buffer_size, CellData::default());
+    parsed.cells.resize(cell_capacity, CellData::default());
 
     let mut row_heights_buf: Vec<RowHeight> = Vec::new();
-    let mut cell_count = parse_worksheet_fast_with_owned_strings(
+    let cell_count = parse_worksheet_fast_with_owned_strings(
         worksheet_xml,
         shared_string_refs,
         &mut parsed.cells,
@@ -61,28 +53,6 @@ pub(super) fn fill_materialized_cells(
         &mut row_heights_buf,
         &[],
     );
-
-    while cell_count == buffer_size {
-        if buffer_size >= MAX_WORKSHEET_CELLS {
-            return Err(ParseError::ParseFailed(format!(
-                "worksheet {} has more than {} cells",
-                sheet_num, MAX_WORKSHEET_CELLS
-            )));
-        }
-        buffer_size = buffer_size.saturating_mul(2).min(MAX_WORKSHEET_CELLS);
-        parsed.cells.resize(buffer_size, CellData::default());
-        parsed.strings.clear();
-        row_heights_buf.clear();
-
-        cell_count = parse_worksheet_fast_with_owned_strings(
-            worksheet_xml,
-            shared_string_refs,
-            &mut parsed.cells,
-            &mut parsed.strings,
-            &mut row_heights_buf,
-            &[],
-        );
-    }
 
     parsed.cells.truncate(cell_count);
     parsed.cell_count = cell_count;

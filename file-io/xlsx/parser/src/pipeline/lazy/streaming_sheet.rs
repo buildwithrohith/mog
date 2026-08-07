@@ -44,7 +44,7 @@ where
         ParsedSheet::with_capacity(estimated_cells(metadata), estimated_strings(metadata));
 
     if compressed_entry.is_stored() {
-        parse_stored_entry(workbook, sheet_num, metadata, &mut parsed, &mut on_progress)?;
+        parse_stored_entry(workbook, sheet_num, &mut parsed, &mut on_progress)?;
     } else if compressed_entry.is_deflate() {
         parse_deflated_entry(
             compressed_entry,
@@ -80,7 +80,6 @@ where
 fn parse_stored_entry<F>(
     workbook: &LazyWorkbook<'_>,
     sheet_num: usize,
-    metadata: &super::SheetMetadata,
     parsed: &mut ParsedSheet,
     on_progress: &mut F,
 ) -> Result<(), ParseError>
@@ -91,18 +90,14 @@ where
         .archive
         .get_worksheet(sheet_num)
         .map_err(|e| ParseError::ParseFailed(e.to_string()))?;
-    ensure_lazy_limit(
-        "worksheet cell",
-        count_worksheet_cell_elements(&stored_xml),
-        MAX_WORKSHEET_CELLS,
-    )?;
+    let cell_capacity = count_worksheet_cell_elements(&stored_xml);
+    ensure_lazy_limit("worksheet cell", cell_capacity, MAX_WORKSHEET_CELLS)?;
     on_progress(stored_xml.len(), stored_xml.len());
 
     fill_materialized_cells(
         parsed,
         &stored_xml,
-        sheet_num,
-        estimated_cells(metadata),
+        cell_capacity,
         &workbook.shared_string_refs,
     )
 }
