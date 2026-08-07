@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn test_display_key_image_fallback_display() {
-        let image = CellValue::Image(CellImage::new(
+        let image = CellValue::image(CellImage::new(
             "https://example.test/image.png",
             Some(Arc::from("Alt Text")),
             CellImageSizing::Fit,

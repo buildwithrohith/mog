@@ -217,7 +217,7 @@ fn array_control_and_image_values_remain_opaque_blocking() {
             CellValue::array(vec![CellValue::number(1.0), CellValue::number(2.0)], 2),
         ),
         cell(2, 0, 1, CellValue::Control(CellControl::checkbox(true))),
-        cell(3, 0, 2, CellValue::Image(image)),
+        cell(3, 0, 2, CellValue::image(image)),
     ]))
     .expect("engine");
 

@@ -44,7 +44,7 @@ fn test_counta_excludes_blank_text() {
 
 #[test]
 fn test_counta_counts_controls_images_arrays() {
-    let image = CellValue::Image(CellImage::new(
+    let image = CellValue::image(CellImage::new(
         "https://example.test/image.png",
         None,
         CellImageSizing::Fit,
@@ -217,7 +217,7 @@ fn test_countunique_nan_values_excluded() {
 
 #[test]
 fn test_countunique_controls_images_arrays() {
-    let image = CellValue::Image(CellImage::new(
+    let image = CellValue::image(CellImage::new(
         "https://example.test/image.png",
         Some(Arc::from("alt")),
         CellImageSizing::Fit,

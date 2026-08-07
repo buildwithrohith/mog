@@ -220,7 +220,7 @@ impl<'de> Visitor<'de> for CellValueVisitor {
                 let Some(source) = source_field else {
                     return Ok(CellValue::Error(CellError::Calc, None));
                 };
-                Ok(CellValue::Image(crate::CellImage::new(
+                Ok(CellValue::image(crate::CellImage::new(
                     source,
                     alt_text_field.map(Arc::<str>::from),
                     sizing_field.unwrap_or(crate::CellImageSizing::Fit),
@@ -241,6 +241,7 @@ impl<'de> Visitor<'de> for CellValueVisitor {
 mod tests {
     use super::*;
     use crate::cell_value::cv_number as n;
+    use crate::{CellImage, CellImageSizing};
 
     #[test]
     fn serde_roundtrip_number() {
@@ -297,6 +298,24 @@ mod tests {
         ]);
         let json = serde_json::to_string(&v).unwrap();
         assert_eq!(json, r#"[[42.5,"text"],[null,true]]"#);
+        let v2: CellValue = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, v2);
+    }
+
+    #[test]
+    fn serde_image_wire_format_is_stable() {
+        let v = CellValue::image(CellImage::new(
+            "https://example.test/image.png",
+            Some(Arc::from("Example image")),
+            CellImageSizing::Custom,
+            Some(120),
+            Some(240),
+        ));
+        let json = serde_json::to_string(&v).unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"image","source":"https://example.test/image.png","altText":"Example image","sizing":"custom","height":120,"width":240}"#
+        );
         let v2: CellValue = serde_json::from_str(&json).unwrap();
         assert_eq!(v, v2);
     }

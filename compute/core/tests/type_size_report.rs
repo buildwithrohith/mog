@@ -35,6 +35,11 @@ fn report_fixed_cell_type_sizes() {
             4096,
         ),
         ("value_types::CellValue", size_of::<CellValue>(), 4096),
+        (
+            "value_types::Option<CellValue>",
+            size_of::<Option<CellValue>>(),
+            4096,
+        ),
         ("cell_types::CellId", size_of::<CellId>(), 4096),
     ];
 
@@ -48,6 +53,22 @@ fn report_fixed_cell_type_sizes() {
             "unexpectedly large fixed type {name}: {bytes} bytes (ceiling {ceiling})"
         );
     }
+
+    let cell_value_size = size_of::<CellValue>();
+    let cell_entry_size = size_of::<CellEntry>();
+    let option_cell_value_size = size_of::<Option<CellValue>>();
+    assert!(
+        cell_value_size <= 32,
+        "CellValue layout regression: {cell_value_size} bytes (expected <= 32)"
+    );
+    assert!(
+        cell_entry_size <= 40,
+        "CellEntry layout regression: {cell_entry_size} bytes (expected <= 40)"
+    );
+    assert!(
+        option_cell_value_size <= 32,
+        "Option<CellValue> layout regression: {option_cell_value_size} bytes (expected <= 32)"
+    );
 
     const CADENCE_CELL_COUNT: usize = 1_407_921;
     let fixed_parse_bytes = size_of::<CellData>() * CADENCE_CELL_COUNT;

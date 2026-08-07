@@ -294,7 +294,7 @@ mod format_value_types {
             None,
             None,
         );
-        let val = value_types::CellValue::Image(image);
+        let val = value_types::CellValue::image(image);
         let r = format_value(&val, "$#,##0", &locale_us());
         assert_eq!(r.text, "Quarterly chart");
         assert!(!r.is_error);
