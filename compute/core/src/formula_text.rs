@@ -1,5 +1,6 @@
 use cell_types::{CellId, SheetId, SheetPos};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::sync::Arc;
 
 use crate::mirror::{CellMirror, MirrorPositionLookup};
 
@@ -16,14 +17,14 @@ pub enum FormulaTextLookup {
 
 #[derive(Clone, Copy)]
 pub struct FormulaTextProvider<'a> {
-    cell_formula_text: Option<&'a FxHashMap<CellId, String>>,
-    formula_strings: Option<&'a FxHashMap<CellId, String>>,
+    cell_formula_text: Option<&'a FxHashMap<CellId, Arc<str>>>,
+    formula_strings: Option<&'a FxHashMap<CellId, Arc<str>>>,
 }
 
 impl<'a> FormulaTextProvider<'a> {
     pub fn new(
-        cell_formula_text: &'a FxHashMap<CellId, String>,
-        formula_strings: &'a FxHashMap<CellId, String>,
+        cell_formula_text: &'a FxHashMap<CellId, Arc<str>>,
+        formula_strings: &'a FxHashMap<CellId, Arc<str>>,
     ) -> Self {
         Self {
             cell_formula_text: Some(cell_formula_text),

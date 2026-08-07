@@ -218,7 +218,7 @@ impl ComputeCore {
                             .cell_formula_text
                             .get(&cell_id)
                             .or_else(|| self.formula_strings.get(&cell_id))
-                            .is_some_and(|existing| *existing == formula_str);
+                            .is_some_and(|existing| existing.as_ref() == formula_str);
                     if !same_formula {
                         mirror.apply_edit(
                             sheet_id,
@@ -324,7 +324,7 @@ impl ComputeCore {
                         .cell_formula_text
                         .get(&cell_id)
                         .or_else(|| self.formula_strings.get(&cell_id))
-                        .is_some_and(|existing| *existing == formula_str);
+                        .is_some_and(|existing| existing.as_ref() == formula_str);
                 if !same_formula {
                     mirror.apply_edit(
                         sheet_id,
@@ -557,8 +557,7 @@ impl ComputeCore {
                         self.formula_text_deps.clear_formula(&cell_id);
                         self.ast_cache.remove(&cell_id);
                         self.cell_range_keys.remove(&cell_id);
-                        self.formula_strings.insert(cell_id, rendered_formula);
-                        self.cell_formula_text.insert(cell_id, formula);
+                        self.insert_formula_text_pair(cell_id, rendered_formula, formula);
                         return;
                     }
                 }
@@ -600,8 +599,7 @@ impl ComputeCore {
                         is_dynamic_array,
                     },
                 );
-                self.formula_strings.insert(cell_id, rendered_formula);
-                self.cell_formula_text.insert(cell_id, formula);
+                self.insert_formula_text_pair(cell_id, rendered_formula, formula);
             }
             Err(_parse_err) => {
                 // Parse failed — set cell to #NAME? error
@@ -610,8 +608,7 @@ impl ComputeCore {
                 self.formula_text_deps.clear_formula(&cell_id);
                 self.ast_cache.remove(&cell_id);
                 self.cell_range_keys.remove(&cell_id);
-                self.formula_strings.insert(cell_id, formula.clone());
-                self.cell_formula_text.insert(cell_id, formula);
+                self.insert_formula_text_pair(cell_id, formula.clone(), formula);
             }
         }
     }
@@ -651,7 +648,7 @@ impl ComputeCore {
                     old_column_name,
                     new_column_name,
                 );
-                if rewritten == *formula {
+                if rewritten == formula.as_ref() {
                     return None;
                 }
                 let sheet_id = mirror.sheet_for_cell(cell_id)?;
@@ -856,7 +853,7 @@ impl ComputeCore {
                         is_dynamic_array: false,
                     },
                 );
-                self.formula_strings.insert(cell_id, formula_str);
+                self.insert_formula_string(cell_id, formula_str);
             }
             Err(_) => {
                 // Parse failed — variable will resolve to #NAME? at eval time.

@@ -756,7 +756,7 @@ impl ComputeCore {
                 for (cell_id, entry) in sheet.cells_iter() {
                     if let Some(formula) = &entry.formula {
                         let a1 = compute_parser::to_a1_string(formula, &lookup);
-                        self.formula_strings.insert(*cell_id, a1);
+                        self.insert_formula_string(*cell_id, a1);
                     }
                 }
             }
@@ -773,7 +773,6 @@ impl ComputeCore {
     /// rather than collapsing to `=A2`.
     pub(crate) fn regenerate_formula_strings_and_cell_formula_text(&mut self, mirror: &CellMirror) {
         let previous_formula_strings = std::mem::take(&mut self.formula_strings);
-        let mut formula_text_updates: Vec<(CellId, String)> = Vec::new();
         let sheet_ids: Vec<SheetId> = mirror.sheet_ids().copied().collect();
         for sheet_id in sheet_ids {
             if let Some(sheet) = mirror.get_sheet(&sheet_id) {
@@ -783,29 +782,29 @@ impl ComputeCore {
                         let rendered = compute_parser::to_a1_string(formula, &lookup);
                         let rendered_changed = previous_formula_strings
                             .get(cell_id)
-                            .map_or(true, |previous| previous != &rendered);
-                        self.formula_strings.insert(*cell_id, rendered.clone());
-
-                        if rendered_changed || !self.cell_formula_text.contains_key(cell_id) {
-                            let rewritten = self
-                                .cell_formula_text
-                                .get(cell_id)
-                                .and_then(|previous_text| {
-                                    render_formula_text_with_previous_qualifiers(
-                                        formula,
-                                        &lookup,
-                                        previous_text,
-                                    )
-                                })
-                                .unwrap_or(rendered);
-                            formula_text_updates.push((*cell_id, rewritten));
-                        }
+                            .map_or(true, |previous| previous.as_ref() != rendered);
+                        let authored =
+                            if rendered_changed || !self.cell_formula_text.contains_key(cell_id) {
+                                self.cell_formula_text
+                                    .get(cell_id)
+                                    .and_then(|previous_text| {
+                                        render_formula_text_with_previous_qualifiers(
+                                            formula,
+                                            &lookup,
+                                            previous_text,
+                                        )
+                                    })
+                                    .unwrap_or_else(|| rendered.clone())
+                            } else {
+                                self.cell_formula_text
+                                    .get(cell_id)
+                                    .map(|formula| formula.to_string())
+                                    .unwrap_or_else(|| rendered.clone())
+                            };
+                        self.insert_formula_text_pair(*cell_id, rendered, authored);
                     }
                 }
             }
-        }
-        for (cell_id, formula_text) in formula_text_updates {
-            self.cell_formula_text.insert(cell_id, formula_text);
         }
     }
 
@@ -819,7 +818,6 @@ impl ComputeCore {
         deleted_sheet_id: &SheetId,
     ) {
         let previous_formula_strings = std::mem::take(&mut self.formula_strings);
-        let mut formula_text_updates: Vec<(CellId, String)> = Vec::new();
         let sheet_ids: Vec<SheetId> = mirror.sheet_ids().copied().collect();
         for sheet_id in sheet_ids {
             if sheet_id == *deleted_sheet_id {
@@ -832,29 +830,29 @@ impl ComputeCore {
                         let rendered = compute_parser::to_a1_string(formula, &lookup);
                         let rendered_changed = previous_formula_strings
                             .get(cell_id)
-                            .map_or(true, |previous| previous != &rendered);
-                        self.formula_strings.insert(*cell_id, rendered.clone());
-
-                        if rendered_changed || !self.cell_formula_text.contains_key(cell_id) {
-                            let rewritten = self
-                                .cell_formula_text
-                                .get(cell_id)
-                                .and_then(|previous_text| {
-                                    render_formula_text_with_previous_qualifiers(
-                                        formula,
-                                        &lookup,
-                                        previous_text,
-                                    )
-                                })
-                                .unwrap_or(rendered);
-                            formula_text_updates.push((*cell_id, rewritten));
-                        }
+                            .map_or(true, |previous| previous.as_ref() != rendered);
+                        let authored =
+                            if rendered_changed || !self.cell_formula_text.contains_key(cell_id) {
+                                self.cell_formula_text
+                                    .get(cell_id)
+                                    .and_then(|previous_text| {
+                                        render_formula_text_with_previous_qualifiers(
+                                            formula,
+                                            &lookup,
+                                            previous_text,
+                                        )
+                                    })
+                                    .unwrap_or_else(|| rendered.clone())
+                            } else {
+                                self.cell_formula_text
+                                    .get(cell_id)
+                                    .map(|formula| formula.to_string())
+                                    .unwrap_or_else(|| rendered.clone())
+                            };
+                        self.insert_formula_text_pair(*cell_id, rendered, authored);
                     }
                 }
             }
-        }
-        for (cell_id, formula_text) in formula_text_updates {
-            self.cell_formula_text.insert(cell_id, formula_text);
         }
     }
 

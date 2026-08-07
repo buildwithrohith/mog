@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::Arc;
 
 // -----------------------------------------------------------------------
 // Init from snapshot with formulas
@@ -30,6 +31,39 @@ fn test_init_from_snapshot_formula_stored() {
 
     let c1_id = cid(0x12);
     assert_eq!(core.get_formula(&c1_id), Some("=A1+B1"));
+}
+
+#[test]
+fn test_formula_text_caches_share_allocation_after_init_and_structure_change() {
+    let mut core = ComputeCore::new();
+    let mut mirror = CellMirror::new();
+    let c1_id = cid(0x12);
+
+    core.init_from_snapshot(&mut mirror, basic_snapshot())
+        .unwrap();
+
+    let assert_shared = |core: &ComputeCore| {
+        let rendered = core
+            .formula_strings
+            .get(&c1_id)
+            .expect("rendered formula cache should contain C1");
+        let authored = core
+            .cell_formula_text
+            .get(&c1_id)
+            .expect("authored formula cache should contain C1");
+        assert!(
+            Arc::ptr_eq(rendered, authored),
+            "identical rendered/authored formula text should share one allocation"
+        );
+    };
+
+    assert_shared(&core);
+
+    // The observer-style structural rebuild runs the same regeneration path
+    // used after row/column edits, so the sharing contract is checked again
+    // after both caches are rebuilt.
+    core.structure_change(&mut mirror, None).unwrap();
+    assert_shared(&core);
 }
 
 #[test]
