@@ -2,8 +2,10 @@ use crate::domain::cells::{
     CELL_TYPE_BOOL, CELL_TYPE_ERROR, CELL_TYPE_FORMULA_STRING, CELL_TYPE_NUMBER, CELL_TYPE_STRING,
     CellData, FastParseDiagnosticCode, FastParseDiagnostics, ParseExtras,
     VALUE_TYPE_CACHED_FORMULA, VALUE_TYPE_FORMULA, VALUE_TYPE_INLINE, VALUE_TYPE_SHARED_STRING,
-    parse_worksheet_fast, parse_worksheet_fast_with_extras,
+    apply_parse_extras_with_arcs, convert_cell_data, parse_worksheet_fast,
+    parse_worksheet_fast_with_extras,
 };
+use std::sync::Arc;
 
 fn value_bytes<'a>(cell: &CellData, strings: &'a [u8]) -> &'a [u8] {
     let start = cell.get_value_offset() as usize;
@@ -138,12 +140,14 @@ fn clean_fast_parse_keeps_diagnostics_empty() {
     );
 
     assert_eq!(count, baseline_count);
-    assert_eq!(strings, baseline_strings);
-    for (actual, baseline) in cells[..count].iter().zip(&baseline_cells[..baseline_count]) {
-        assert_eq!(cell_fixture(actual), cell_fixture(baseline));
-    }
+    // The legacy path resolves SST text into the byte buffer; the extras path
+    // intentionally DEFERS SST resolution (records the index in extras, empty
+    // buffer entry) so apply_parse_extras_with_arcs can share one Arc per
+    // string. Assert each contract explicitly instead of buffer parity.
+    assert_eq!(value_bytes(&baseline_cells[1], &baseline_strings), b"clean");
     assert_eq!(value_bytes(&cells[0], &strings), b"1");
-    assert_eq!(value_bytes(&cells[1], &strings), b"clean");
+    assert_eq!(value_bytes(&cells[1], &strings), b"");
+    assert_eq!(extras.sst_indices, vec![(1, 0)]);
     assert_eq!(diagnostics.total_count(), 0);
     assert_eq!(diagnostics.sample_count(), 0);
 }
@@ -634,6 +638,7 @@ fn full_parse_shared_strings_resolve_from_workbook_arcs_without_sheet_copies() {
     let mut row_heights = Vec::new();
     let mut extras = ParseExtras::default();
 
+    let mut diagnostics = FastParseDiagnostics::default();
     let count = parse_worksheet_fast_with_extras(
         xml,
         &shared_strings,
@@ -641,6 +646,7 @@ fn full_parse_shared_strings_resolve_from_workbook_arcs_without_sheet_copies() {
         &mut strings,
         &mut row_heights,
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 
