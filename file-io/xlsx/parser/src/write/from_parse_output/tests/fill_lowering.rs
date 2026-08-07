@@ -69,6 +69,43 @@ fn explicit_solid_maps_domain_background_to_ooxml_foreground() {
 }
 
 #[test]
+fn solid_with_only_pattern_foreground_falls_back_to_it() {
+    let fill = lowered_fill(FillFormat {
+        pattern_type: Some("solid".to_string()),
+        pattern_foreground_color: Some("#112233".to_string()),
+        pattern_foreground_color_tint: Some(0.4),
+        ..Default::default()
+    });
+
+    assert_eq!(
+        fill,
+        FillDef::Solid {
+            fg_color: ColorDef::Rgb {
+                val: "FF112233".to_string(),
+                tint: Some("0.4".to_string()),
+            },
+        }
+    );
+}
+
+#[test]
+fn solid_with_neither_color_still_emits_colorless_pattern() {
+    let fill = lowered_fill(FillFormat {
+        pattern_type: Some("solid".to_string()),
+        ..Default::default()
+    });
+
+    assert_eq!(
+        fill,
+        FillDef::Pattern {
+            pattern_type: Some(PatternType::Solid),
+            fg_color: None,
+            bg_color: None,
+        }
+    );
+}
+
+#[test]
 fn every_non_solid_pattern_maps_foreground_and_background_roles() {
     let patterns = [
         ("mediumGray", PatternType::MediumGray),
