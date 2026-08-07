@@ -184,6 +184,17 @@ impl UpdateBuffer {
         guard.clear();
     }
 
+    /// Drop only updates emitted by a bootstrap observer scope.
+    ///
+    /// A hydration transaction is intentionally invisible to providers, but a
+    /// real user update may already be queued before that transaction starts.
+    /// Clearing by source preserves the user bytes while removing exactly the
+    /// bootstrap transaction's observer payload.
+    pub(crate) fn clear_source(&self, source: UpdateSource) {
+        let mut guard = self.inner.lock().expect("UpdateBuffer poisoned");
+        guard.retain(|pending| pending.source != source);
+    }
+
     /// Current pending count (diagnostic; races under concurrent
     /// push/drain but that's fine — this is a hint to skip a no-op
     /// bridge round-trip).

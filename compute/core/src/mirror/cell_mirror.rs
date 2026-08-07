@@ -417,6 +417,38 @@ impl CellMirror {
         }
     }
 
+    /// Replace one sheet's row/column identity maps while preserving the
+    /// workbook-level reverse maps for every other sheet.
+    pub fn replace_row_col_indexes_for_sheet(
+        &mut self,
+        sheet_id: SheetId,
+        row_ids: Vec<RowId>,
+        col_ids: Vec<ColId>,
+    ) {
+        self.row_to_sheet.retain(|_, owner| *owner != sheet_id);
+        self.col_to_sheet.retain(|_, owner| *owner != sheet_id);
+        if let Some(sheet) = self.sheets.get_mut(&sheet_id) {
+            sheet.row_to_index.clear();
+            sheet.col_to_index.clear();
+            sheet.index_to_row.clear();
+            sheet.index_to_col.clear();
+            sheet.row_to_index.reserve(row_ids.len());
+            sheet.col_to_index.reserve(col_ids.len());
+            sheet.index_to_row.reserve(row_ids.len());
+            sheet.index_to_col.reserve(col_ids.len());
+            for (i, rid) in row_ids.iter().enumerate() {
+                sheet.row_to_index.insert(*rid, i as u32);
+                sheet.index_to_row.insert(i as u32, *rid);
+                self.row_to_sheet.insert(*rid, sheet_id);
+            }
+            for (i, cid) in col_ids.iter().enumerate() {
+                sheet.col_to_index.insert(*cid, i as u32);
+                sheet.index_to_col.insert(i as u32, *cid);
+                self.col_to_sheet.insert(*cid, sheet_id);
+            }
+        }
+    }
+
     /// Increment the version counter for a column on a sheet.
     pub(crate) fn bump_col_version(&mut self, sheet: &SheetId, col: u32) {
         let entry = self.col_versions.entry((*sheet, col)).or_insert(0);
@@ -429,9 +461,6 @@ impl CellMirror {
     /// eagerly registers virtual CellIds for sub-256 Ranges, and rebuilds
     /// col_data for Range-backed columns.
     pub fn finalize_range_hydration(&mut self) {
-        use super::range_view::RangeExtent;
-        use cell_types::interval_tree::IntervalTree;
-
         let sheet_ids: Vec<SheetId> = self
             .sheets
             .iter()
@@ -439,83 +468,92 @@ impl CellMirror {
             .map(|(id, _)| *id)
             .collect();
         for sheet_id in sheet_ids {
-            let mut extents: Vec<RangeExtent> = Vec::new();
-            let mut virtual_registrations: Vec<(SheetPos, CellId)> = Vec::new();
-            let mut range_cols: rustc_hash::FxHashSet<u32> = rustc_hash::FxHashSet::default();
+            self.finalize_range_hydration_for_sheet(&sheet_id);
+        }
+    }
 
-            if let Some(sheet) = self.sheets.get(&sheet_id) {
-                for rv in sheet.range_views.values() {
-                    let extent_cells = rv.num_rows() as usize * rv.num_cols() as usize;
+    /// Complete Range hydration for one sheet without rebuilding the other
+    /// sheets' spatial or dense caches.
+    pub fn finalize_range_hydration_for_sheet(&mut self, sheet_id: &SheetId) {
+        use super::range_view::RangeExtent;
+        use cell_types::interval_tree::IntervalTree;
 
-                    // Sub-256: collect virtual CellId registrations
-                    if extent_cells > 0 && extent_cells < 256 {
-                        for &row_id in rv.row_offset_by_id.keys() {
-                            for &col_id in rv.col_offset_by_id.keys() {
-                                if let Some(&row_idx) = sheet.row_to_index.get(&row_id)
-                                    && let Some(&col_idx) = sheet.col_to_index.get(&col_id)
-                                {
-                                    let pos = SheetPos::new(row_idx, col_idx);
-                                    if !sheet.pos_to_id.contains_key(&pos) {
-                                        let vid = CellId::virtual_at(sheet_id, row_id, col_id);
-                                        virtual_registrations.push((pos, vid));
-                                    }
+        let mut extents: Vec<RangeExtent> = Vec::new();
+        let mut virtual_registrations: Vec<(SheetPos, CellId)> = Vec::new();
+        let mut range_cols: rustc_hash::FxHashSet<u32> = rustc_hash::FxHashSet::default();
+
+        if let Some(sheet) = self.sheets.get(sheet_id) {
+            for rv in sheet.range_views.values() {
+                let extent_cells = rv.num_rows() as usize * rv.num_cols() as usize;
+
+                // Sub-256: collect virtual CellId registrations
+                if extent_cells > 0 && extent_cells < 256 {
+                    for &row_id in rv.row_offset_by_id.keys() {
+                        for &col_id in rv.col_offset_by_id.keys() {
+                            if let Some(&row_idx) = sheet.row_to_index.get(&row_id)
+                                && let Some(&col_idx) = sheet.col_to_index.get(&col_id)
+                            {
+                                let pos = SheetPos::new(row_idx, col_idx);
+                                if !sheet.pos_to_id.contains_key(&pos) {
+                                    let vid = CellId::virtual_at(*sheet_id, row_id, col_id);
+                                    virtual_registrations.push((pos, vid));
                                 }
                             }
                         }
                     }
+                }
 
-                    // Build spatial extent
-                    let mut min_row = u32::MAX;
-                    let mut max_row = 0u32;
-                    let mut min_col = u32::MAX;
-                    let mut max_col = 0u32;
-                    for &row_id in rv.row_offset_by_id.keys() {
-                        if let Some(&idx) = sheet.row_to_index.get(&row_id) {
-                            min_row = min_row.min(idx);
-                            max_row = max_row.max(idx);
-                        }
+                // Build spatial extent
+                let mut min_row = u32::MAX;
+                let mut max_row = 0u32;
+                let mut min_col = u32::MAX;
+                let mut max_col = 0u32;
+                for &row_id in rv.row_offset_by_id.keys() {
+                    if let Some(&idx) = sheet.row_to_index.get(&row_id) {
+                        min_row = min_row.min(idx);
+                        max_row = max_row.max(idx);
                     }
-                    for &col_id in rv.col_offset_by_id.keys() {
-                        if let Some(&idx) = sheet.col_to_index.get(&col_id) {
-                            min_col = min_col.min(idx);
-                            max_col = max_col.max(idx);
-                        }
+                }
+                for &col_id in rv.col_offset_by_id.keys() {
+                    if let Some(&idx) = sheet.col_to_index.get(&col_id) {
+                        min_col = min_col.min(idx);
+                        max_col = max_col.max(idx);
                     }
-                    if min_row <= max_row && min_col <= max_col {
-                        extents.push(RangeExtent {
-                            range_id: rv.range_id,
-                            kind: rv.kind,
-                            start_row: min_row,
-                            end_row: max_row,
-                            start_col: min_col,
-                            end_col: max_col,
-                        });
-                    }
+                }
+                if min_row <= max_row && min_col <= max_col {
+                    extents.push(RangeExtent {
+                        range_id: rv.range_id,
+                        kind: rv.kind,
+                        start_row: min_row,
+                        end_row: max_row,
+                        start_col: min_col,
+                        end_col: max_col,
+                    });
+                }
 
-                    // Collect affected columns for col_data rebuild
-                    for col_id in rv.col_offset_by_id.keys() {
-                        if let Some(&idx) = sheet.col_to_index.get(col_id) {
-                            range_cols.insert(idx);
-                        }
+                // Collect affected columns for col_data rebuild
+                for col_id in rv.col_offset_by_id.keys() {
+                    if let Some(&idx) = sheet.col_to_index.get(col_id) {
+                        range_cols.insert(idx);
                     }
                 }
             }
+        }
 
-            // Apply virtual CellId registrations
-            if let Some(sheet) = self.sheets.get_mut(&sheet_id) {
-                for (pos, vid) in &virtual_registrations {
-                    sheet.pos_to_id.insert(*pos, *vid);
-                    sheet.id_to_pos.insert(*vid, *pos);
-                }
-                sheet.range_spatial_index = IntervalTree::build(&extents);
-                sheet.rebuild_range_columns_data(&range_cols);
+        // Apply virtual CellId registrations
+        if let Some(sheet) = self.sheets.get_mut(sheet_id) {
+            for (pos, vid) in &virtual_registrations {
+                sheet.pos_to_id.insert(*pos, *vid);
+                sheet.id_to_pos.insert(*vid, *pos);
             }
-            for (_, vid) in virtual_registrations {
-                self.cell_to_sheet.insert(vid, sheet_id);
-            }
-            for col in range_cols {
-                self.bump_col_version(&sheet_id, col);
-            }
+            sheet.range_spatial_index = IntervalTree::build(&extents);
+            sheet.rebuild_range_columns_data(&range_cols);
+        }
+        for (_, vid) in virtual_registrations {
+            self.cell_to_sheet.insert(vid, *sheet_id);
+        }
+        for col in range_cols {
+            self.bump_col_version(sheet_id, col);
         }
     }
 }

@@ -590,6 +590,292 @@ fn materialize_deferred_sheet_inner(
     result
 }
 
+/// Hydrate one existing deferred sheet into the live Yrs document.
+///
+/// This is the durable counterpart to [`materialize_deferred_sheet`]. Preview
+/// remains style-only; this path replaces exactly one existing sheet subtree,
+/// refreshes only that sheet's runtime indexes, and marks the Yrs set only
+/// after the bootstrap transaction has committed.
+pub(in crate::storage::engine) fn hydrate_deferred_sheet(
+    engine: &mut YrsComputeEngine,
+    sheet_id: SheetId,
+) -> Result<(), ComputeError> {
+    let Some(mut deferred) = engine.deferred_hydration.take() else {
+        return Ok(());
+    };
+
+    let result = hydrate_deferred_sheet_inner(engine, &mut deferred, sheet_id);
+    engine.deferred_hydration = Some(deferred);
+    result
+}
+
+fn hydrate_deferred_sheet_inner(
+    engine: &mut YrsComputeEngine,
+    deferred: &mut DeferredHydrationData,
+    sheet_id: SheetId,
+) -> Result<(), ComputeError> {
+    if deferred.sheet_is_yrs_hydrated(&sheet_id) {
+        // The durable state is monotonic. Repeating a successful request must
+        // not allocate new identities, emit another transaction, or touch the
+        // existing subtree.
+        return Ok(());
+    }
+
+    let sheet_index = deferred
+        .allocations
+        .iter()
+        .position(|allocation| allocation.sheet_id == sheet_id)
+        .ok_or_else(|| ComputeError::InvalidInput {
+            message: format!("sheet {sheet_id} is not part of the deferred XLSX import"),
+        })?;
+
+    // Parse only the requested worksheet when it has not already been loaded
+    // by the read-only preview path. Keep all cumulative state local until the
+    // Yrs transaction and target runtime replacement have succeeded.
+    let mut cumulative_parse = deferred.parse_output.clone();
+    let mut selected_import_report = None;
+    if !deferred.sheet_is_mirror_materialized(&sheet_id) {
+        let raw_bytes =
+            deferred
+                .raw_xlsx_bytes
+                .as_deref()
+                .ok_or_else(|| ComputeError::InvalidInput {
+                    message: "deferred XLSX sheet hydration requires retained source bytes".into(),
+                })?;
+        let selected = xlsx_api::parse_selected_sheets(raw_bytes, &[sheet_index]).map_err(|e| {
+            ComputeError::Deserialize {
+                message: format!("XLSX selected-sheet parse error: {e}"),
+            }
+        })?;
+        let selected_sheet = selected
+            .output
+            .sheets
+            .get(sheet_index)
+            .cloned()
+            .ok_or_else(|| ComputeError::Deserialize {
+                message: format!("selected-sheet parse omitted editable sheet index {sheet_index}"),
+            })?;
+        cumulative_parse.sheets[sheet_index] = selected_sheet;
+        selected_import_report = Some(selected.import_report);
+    }
+
+    use crate::storage::infra::hydration::{
+        HydrationIdMap, SharedIdAllocator, allocate_sheet_ids_with_previous_allocation,
+    };
+    let mut allocator = SharedIdAllocator::from_shared(engine.stores.grid_id_alloc.clone());
+    let mut allocations = deferred.allocations.clone();
+    allocations[sheet_index] = allocate_sheet_ids_with_previous_allocation(
+        &cumulative_parse.sheets[sheet_index],
+        &mut allocator,
+        deferred.allocations.get(sheet_index),
+    );
+
+    let mut id_map = HydrationIdMap::default();
+    for allocation in &allocations {
+        id_map.sheet_ids.push(allocation.sheet_id);
+        id_map
+            .cell_ids
+            .push(std::sync::Arc::clone(&allocation.cell_ids));
+        id_map
+            .row_ids
+            .push(std::sync::Arc::clone(&allocation.row_ids));
+        id_map
+            .col_ids
+            .push(std::sync::Arc::clone(&allocation.col_ids));
+        for identity in &allocation.identity_only_cells {
+            id_map.identity_only_cells.push((
+                allocation.sheet_id,
+                identity.cell_id,
+                identity.row,
+                identity.col,
+            ));
+        }
+    }
+
+    let rebuilt_snapshot = {
+        use crate::import;
+        import::parse_output_to_snapshot::parse_output_to_workbook_snapshot(
+            &cumulative_parse,
+            Some(&id_map),
+            &mut allocator,
+        )
+    };
+    let target_snapshot = rebuilt_snapshot
+        .sheets
+        .get(sheet_index)
+        .cloned()
+        .ok_or_else(|| ComputeError::Deserialize {
+            message: format!("snapshot rebuild omitted sheet index {sheet_index}"),
+        })?;
+    validate_deferred_sheet_snapshot(&target_snapshot, sheet_id)?;
+
+    let mut cumulative_snapshot = deferred.workbook_snap.clone();
+    if cumulative_snapshot.sheets.len() != rebuilt_snapshot.sheets.len() {
+        return Err(ComputeError::Deserialize {
+            message: "deferred snapshot inventory changed during per-sheet hydration".into(),
+        });
+    }
+    cumulative_snapshot.sheets[sheet_index] = target_snapshot.clone();
+
+    let range_plan = build_deferred_critical_sheet_range_plan(
+        &cumulative_parse.sheets[sheet_index],
+        &target_snapshot,
+        &allocations[sheet_index],
+        &mut allocator,
+    );
+    let shared_alloc = engine.stores.grid_id_alloc.clone();
+
+    // Build all fallible target runtime structures before replacing the live
+    // Yrs subtree. A malformed target therefore cannot leave a half-replaced
+    // sheet behind; failures leave both the old subtree and the hydration set
+    // untouched.
+    let mut target_grid_indexes = build_grid_indexes_from_allocations_range(
+        &cumulative_snapshot,
+        &allocations,
+        sheet_index..sheet_index.saturating_add(1),
+        shared_alloc.clone(),
+    )?;
+    let target_grid_for_layout = target_grid_indexes.clone();
+    let mut target_grid =
+        target_grid_indexes
+            .remove(&sheet_id)
+            .ok_or_else(|| ComputeError::Deserialize {
+                message: format!("target sheet {sheet_id} grid index was not built"),
+            })?;
+    let target_merge_indexes = build_merge_indexes_from_parse_output_range(
+        &cumulative_parse,
+        &cumulative_snapshot,
+        sheet_index..sheet_index.saturating_add(1),
+    )?;
+    let mut target_layout_indexes = build_layout_indexes_from_parse_output_range(
+        &cumulative_parse,
+        &cumulative_snapshot,
+        &target_grid_for_layout,
+        sheet_index..sheet_index.saturating_add(1),
+        engine.stores.layout_metrics,
+    )?;
+    engine
+        .stores
+        .dimension_preview
+        .replay_into(&mut target_layout_indexes);
+    let theme = cumulative_parse.theme.as_ref();
+    let indexed_colors = cumulative_parse
+        .workbook_stylesheet
+        .as_ref()
+        .and_then(|stylesheet| stylesheet.indexed_colors.as_ref());
+    let hydration_id_map = {
+        // The update observer is independent of the semantic mutation
+        // observer. Tag this one transaction separately and remove only its
+        // update payload after commit so a queued user update cannot be lost.
+        let previous_subscription = std::mem::replace(
+            &mut engine._update_subscription,
+            crate::storage::engine::update_buffer::install_observer(
+                engine.stores.storage.doc(),
+                &engine.update_buffer,
+                crate::storage::engine::update_buffer::UpdateSource::FullHydration,
+            ),
+        );
+        drop(previous_subscription);
+        let result = {
+            let _suppress = engine.mutation.suppress_guard();
+            engine.stores.storage.hydrate_existing_sheet_with_ranges(
+                &cumulative_parse.sheets[sheet_index],
+                &cumulative_parse.style_palette,
+                &cumulative_parse.persons,
+                theme,
+                indexed_colors,
+                &allocations[sheet_index],
+                &range_plan.ranged_positions,
+                &range_plan.range_style_positions,
+                &range_plan.ranges,
+                &range_plan.range_styles,
+                &mut allocator,
+            )
+        };
+        let previous_subscription = std::mem::replace(
+            &mut engine._update_subscription,
+            crate::storage::engine::update_buffer::install_observer(
+                engine.stores.storage.doc(),
+                &engine.update_buffer,
+                crate::storage::engine::update_buffer::UpdateSource::UserMutation,
+            ),
+        );
+        drop(previous_subscription);
+        engine
+            .update_buffer
+            .clear_source(crate::storage::engine::update_buffer::UpdateSource::FullHydration);
+        result
+    }?;
+
+    for (target_sheet, cell_id, row, col) in &hydration_id_map.phantom_cells {
+        if *target_sheet == sheet_id {
+            target_grid.register_cell(*cell_id, *row, *col);
+        }
+    }
+
+    // The target Yrs transaction has committed. The replacement mirror and
+    // indexes use the same prevalidated snapshot/allocations and leave every
+    // other sheet's runtime state intact.
+    engine.mirror.replace_sheet(target_snapshot.clone())?;
+    engine.mirror.replace_row_col_indexes_for_sheet(
+        sheet_id,
+        target_grid.row_ids_ordered(),
+        target_grid.col_ids_ordered(),
+    );
+    engine.mirror.finalize_range_hydration_for_sheet(&sheet_id);
+    if let Some(sheet_mirror) = engine.mirror.get_sheet_mut(&sheet_id) {
+        crate::storage::properties::hydrate_col_format_ranges(
+            &engine.stores.storage,
+            &sheet_id,
+            sheet_mirror,
+        );
+        crate::storage::properties::hydrate_format_ranges(
+            &engine.stores.storage,
+            &sheet_id,
+            sheet_mirror,
+        );
+    }
+
+    engine.stores.grid_indexes.insert(sheet_id, target_grid);
+    engine
+        .stores
+        .merge_indexes
+        .insert(sheet_id, target_merge_indexes.into_iter().next().unwrap().1);
+    engine.stores.layout_indexes.insert(
+        sheet_id,
+        target_layout_indexes.into_iter().next().unwrap().1,
+    );
+
+    if let Some(selected_import_report) = selected_import_report {
+        merge_import_reports(&mut engine.import_report, selected_import_report);
+    }
+    deferred.parse_output = cumulative_parse;
+    deferred.workbook_snap = cumulative_snapshot;
+    deferred.allocations = allocations;
+    deferred.mirror_materialized_sheets.insert(sheet_id);
+    deferred.yrs_hydrated_sheets.insert(sheet_id);
+
+    Ok(())
+}
+
+fn validate_deferred_sheet_snapshot(
+    snapshot: &SheetSnapshot,
+    expected_sheet_id: SheetId,
+) -> Result<(), ComputeError> {
+    let actual_sheet_id = SheetId::from_uuid_str(&snapshot.id)?;
+    if actual_sheet_id != expected_sheet_id {
+        return Err(ComputeError::Deserialize {
+            message: format!(
+                "deferred sheet snapshot identity changed from {expected_sheet_id} to {actual_sheet_id}"
+            ),
+        });
+    }
+    for cell in &snapshot.cells {
+        CellId::from_uuid_str(&cell.cell_id)?;
+    }
+    Ok(())
+}
+
 /// Complete the deferred Yrs CRDT hydration.
 /// Call after first viewport paint to enable mutations and persistence.
 pub(in crate::storage::engine) fn stage_deferred_hydration(

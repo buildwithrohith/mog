@@ -1,10 +1,11 @@
-use yrs::{Any, Map, MapPrelim, MapRef, Transact};
+use yrs::{Any, Map, MapPrelim, MapRef, Origin, Transact};
 
 use domain_types::ParseOutput;
 use domain_types::domain::pivot::PivotCacheSourceDef;
 
 use compute_document::hex::id_to_hex;
 use compute_document::schema::*;
+use compute_document::undo::ORIGIN_BOOTSTRAP;
 use compute_document::workbook_metadata::{
     ImportedExternalCacheRecord, ImportedExternalLinkIdentity, ImportedExternalPackageArtifact,
     PersistedLinkTarget, PersistedWorkbookLinkRecord, PersistedWorkbookLinkSourceKind,
@@ -28,7 +29,10 @@ use crate::storage::workbook::imported_pivots::{
 use super::data_tables::hydrate_data_table_regions_from_parse_output;
 use super::imported_pivot_classification::{ImportedPivotClassification, classify_imported_pivot};
 use super::print_defined_names::hydrate_workbook_print_defined_names;
-use super::sheet::{SheetIdAllocation, hydrate_sheet, hydrate_sheet_with_allocation};
+use super::sheet::{
+    SheetIdAllocation, hydrate_existing_sheet_with_allocation, hydrate_sheet,
+    hydrate_sheet_with_allocation, validate_sheet_allocation,
+};
 use super::styles::{ImportedRangeStyle, hydrate_style_palette, hydrate_workbook_stylesheet};
 use super::table_styles::hydrate_custom_table_styles_from_ooxml;
 use super::workbook::{
@@ -582,6 +586,142 @@ impl YrsStorage {
 
         write_schema_version(&mut txn, &self.workbook);
 
+        Ok(id_map)
+    }
+
+    /// Hydrate one already-present sheet subtree in place.
+    ///
+    /// This deliberately omits every workbook-level writer. The caller has
+    /// already hydrated the workbook inventory, palette, and root domains; the
+    /// only durable change here is the replacement value at `sheets/{sheet}`.
+    /// The transaction is tagged as bootstrap so the operation cannot become a
+    /// user undo item.
+    #[tracing::instrument(name = "hydrate_existing_sheet_with_ranges", skip_all)]
+    pub(crate) fn hydrate_existing_sheet_with_ranges<RangeDataSlice>(
+        &mut self,
+        sheet: &domain_types::SheetData,
+        style_palette: &[domain_types::DocumentFormat],
+        persons: &[domain_types::domain::comment::PersonInfo],
+        theme: Option<&domain_types::ThemeData>,
+        indexed_colors: Option<&ooxml_types::styles::ColorsDef>,
+        allocation: &SheetIdAllocation,
+        ranged_positions: &std::collections::HashSet<(u32, u32)>,
+        range_style_positions: &std::collections::HashSet<(u32, u32)>,
+        range_data: RangeDataSlice,
+        range_styles: &[ImportedRangeStyle],
+        allocator: &mut impl IdAllocator,
+    ) -> Result<HydrationIdMap, ComputeError>
+    where
+        RangeDataSlice: AsRef<[snapshot_types::RangeData]>,
+    {
+        // Validate all allocation lengths before opening a Yrs transaction.
+        // This keeps malformed identity input from even entering the
+        // replacement transaction and makes the failure atomic by construction.
+        validate_sheet_allocation(sheet, allocation)?;
+        let mut txn = self.doc.transact_mut_with(Origin::from(ORIGIN_BOOTSTRAP));
+        let (phantom_cells, identity_only_cells) = hydrate_existing_sheet_with_allocation(
+            &mut txn,
+            &self.sheets,
+            sheet,
+            style_palette,
+            persons,
+            theme,
+            indexed_colors,
+            allocation,
+            ranged_positions,
+            range_style_positions,
+            range_styles,
+            allocator,
+        )?;
+
+        // The common sheet hydrator creates the range maps as part of the new
+        // subtree. Write the payloads through those fresh handles rather than
+        // retaining handles from the replaced subtree.
+        let ranges = range_data.as_ref();
+        if !ranges.is_empty() {
+            let sheet_map = match self.sheets.get(&txn, allocation.sheet_hex.as_str()) {
+                Some(yrs::Out::YMap(map)) => map,
+                _ => unreachable!("existing-sheet hydration inserted its target map"),
+            };
+            let ranges_map: MapRef = match sheet_map.get(&txn, KEY_RANGES) {
+                Some(yrs::Out::YMap(map)) => map,
+                _ => sheet_map.insert(
+                    &mut txn,
+                    KEY_RANGES,
+                    MapPrelim::from([] as [(&str, Any); 0]),
+                ),
+            };
+            let payloads_map: MapRef = match sheet_map.get(&txn, KEY_RANGE_PAYLOADS) {
+                Some(yrs::Out::YMap(map)) => map,
+                _ => sheet_map.insert(
+                    &mut txn,
+                    KEY_RANGE_PAYLOADS,
+                    MapPrelim::from([] as [(&str, Any); 0]),
+                ),
+            };
+            if !matches!(
+                sheet_map.get(&txn, KEY_RANGE_FORMATS),
+                Some(yrs::Out::YMap(_))
+            ) {
+                sheet_map.insert(
+                    &mut txn,
+                    KEY_RANGE_FORMATS,
+                    MapPrelim::from([] as [(&str, Any); 0]),
+                );
+            }
+            if !matches!(
+                sheet_map.get(&txn, KEY_RANGE_BINDINGS),
+                Some(yrs::Out::YMap(_))
+            ) {
+                sheet_map.insert(
+                    &mut txn,
+                    KEY_RANGE_BINDINGS,
+                    MapPrelim::from([] as [(&str, Any); 0]),
+                );
+            }
+
+            for rd in ranges {
+                let metadata = compute_document::range::RangeMetadata {
+                    range_id: rd.range_id,
+                    kind: rd.kind,
+                    anchor: rd.anchor.clone(),
+                    encoding: rd.encoding,
+                    row_axis: rd.row_axis.clone(),
+                    col_axis: rd.col_axis.clone(),
+                    row_ids: rd.row_ids.clone(),
+                    col_ids: rd.col_ids.clone(),
+                };
+                compute_document::range::write_range_to_yrs(
+                    &mut txn,
+                    &ranges_map,
+                    &payloads_map,
+                    &metadata,
+                    &rd.payload,
+                );
+            }
+        }
+
+        let mut id_map = HydrationIdMap::default();
+        id_map.sheet_ids.push(allocation.sheet_id);
+        id_map
+            .cell_ids
+            .push(std::sync::Arc::clone(&allocation.cell_ids));
+        id_map
+            .row_ids
+            .push(std::sync::Arc::clone(&allocation.row_ids));
+        id_map
+            .col_ids
+            .push(std::sync::Arc::clone(&allocation.col_ids));
+        id_map.phantom_cells.extend(
+            phantom_cells
+                .into_iter()
+                .map(|(cell_id, row, col)| (allocation.sheet_id, cell_id, row, col)),
+        );
+        id_map.identity_only_cells.extend(
+            identity_only_cells
+                .into_iter()
+                .map(|(cell_id, row, col)| (allocation.sheet_id, cell_id, row, col)),
+        );
         Ok(id_map)
     }
 }

@@ -529,12 +529,100 @@ pub(crate) fn hydrate_sheet_with_allocation(
     imported_range_styles: &[ImportedRangeStyle],
     allocator: &mut impl IdAllocator,
 ) -> Result<(Vec<(CellId, u32, u32)>, Vec<(CellId, u32, u32)>), ComputeError> {
+    hydrate_sheet_with_allocation_inner(
+        txn,
+        sheets_map,
+        Some(order_arr),
+        sheet,
+        style_palette,
+        persons,
+        theme,
+        indexed_colors,
+        alloc,
+        ranged_positions,
+        range_style_positions,
+        imported_range_styles,
+        allocator,
+    )
+}
+
+/// Replace one existing sheet subtree using pre-allocated identities.
+///
+/// Unlike [`hydrate_sheet_with_allocation`], this helper never touches the
+/// workbook's `sheetOrder` array. The caller owns the transaction boundary so
+/// the old subtree is removed and the canonical replacement is inserted as one
+/// atomic Yrs operation.
+pub(crate) fn hydrate_existing_sheet_with_allocation(
+    txn: &mut yrs::TransactionMut,
+    sheets_map: &MapRef,
+    sheet: &SheetData,
+    style_palette: &[DocumentFormat],
+    persons: &[domain_types::domain::comment::PersonInfo],
+    theme: Option<&domain_types::ThemeData>,
+    indexed_colors: Option<&ooxml_types::styles::ColorsDef>,
+    alloc: &SheetIdAllocation,
+    ranged_positions: &std::collections::HashSet<(u32, u32)>,
+    range_style_positions: &std::collections::HashSet<(u32, u32)>,
+    imported_range_styles: &[ImportedRangeStyle],
+    allocator: &mut impl IdAllocator,
+) -> Result<(Vec<(CellId, u32, u32)>, Vec<(CellId, u32, u32)>), ComputeError> {
+    validate_sheet_allocation(sheet, alloc)?;
+
+    if !matches!(
+        sheets_map.get(txn, alloc.sheet_hex.as_str()),
+        Some(Out::YMap(_))
+    ) {
+        return Err(ComputeError::InvalidInput {
+            message: format!(
+                "cannot hydrate existing sheet {} because its Yrs subtree is missing",
+                alloc.sheet_id
+            ),
+        });
+    }
+
+    // Insert a fresh map at only this key. Yrs replaces the visible subtree in
+    // place; no workbook root map or sheet order entry is rewritten, and every
+    // other sheet remains untouched.
+    hydrate_sheet_with_allocation_inner(
+        txn,
+        sheets_map,
+        None,
+        sheet,
+        style_palette,
+        persons,
+        theme,
+        indexed_colors,
+        alloc,
+        ranged_positions,
+        range_style_positions,
+        imported_range_styles,
+        allocator,
+    )
+}
+
+fn hydrate_sheet_with_allocation_inner(
+    txn: &mut yrs::TransactionMut,
+    sheets_map: &MapRef,
+    order_arr: Option<&yrs::ArrayRef>,
+    sheet: &SheetData,
+    style_palette: &[DocumentFormat],
+    persons: &[domain_types::domain::comment::PersonInfo],
+    theme: Option<&domain_types::ThemeData>,
+    indexed_colors: Option<&ooxml_types::styles::ColorsDef>,
+    alloc: &SheetIdAllocation,
+    ranged_positions: &std::collections::HashSet<(u32, u32)>,
+    range_style_positions: &std::collections::HashSet<(u32, u32)>,
+    imported_range_styles: &[ImportedRangeStyle],
+    allocator: &mut impl IdAllocator,
+) -> Result<(Vec<(CellId, u32, u32)>, Vec<(CellId, u32, u32)>), ComputeError> {
     let sheet_hex = &alloc.sheet_hex;
     let row_id_hexes = &alloc.row_id_hexes;
     let col_id_hexes = &alloc.col_id_hexes;
 
-    // Append sheet id to order array
-    order_arr.push_back(txn, Any::String(Arc::from(sheet_hex.as_str())));
+    if let Some(order_arr) = order_arr {
+        // Append sheet id to order array for a newly-created sheet only.
+        order_arr.push_back(txn, Any::String(Arc::from(sheet_hex.as_str())));
+    }
 
     // Create per-sheet map
     let sheet_map_prelim = MapPrelim::from([] as [(&str, Any); 0]);
@@ -875,4 +963,39 @@ pub(crate) fn hydrate_sheet_with_allocation(
     )?;
 
     Ok((phantom_cells, identity_only_cells))
+}
+
+pub(crate) fn validate_sheet_allocation(
+    sheet: &SheetData,
+    alloc: &SheetIdAllocation,
+) -> Result<(), ComputeError> {
+    let (identity_rows, identity_cols) = sheet_identity_extent(sheet);
+    if alloc.row_ids.len() != identity_rows as usize
+        || alloc.row_id_hexes.len() != identity_rows as usize
+        || alloc.col_ids.len() != identity_cols as usize
+        || alloc.col_id_hexes.len() != identity_cols as usize
+        || alloc.cell_ids.len() != sheet.cells.len()
+    {
+        return Err(ComputeError::Deserialize {
+            message: format!(
+                "sheet {} allocation does not match its parsed identity extent",
+                alloc.sheet_id
+            ),
+        });
+    }
+
+    if alloc
+        .identity_only_cells
+        .iter()
+        .any(|identity| identity.row >= identity_rows || identity.col >= identity_cols)
+    {
+        return Err(ComputeError::Deserialize {
+            message: format!(
+                "sheet {} contains an anchored identity outside its allocated axes",
+                alloc.sheet_id
+            ),
+        });
+    }
+
+    Ok(())
 }
