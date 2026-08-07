@@ -127,6 +127,7 @@ pub(crate) fn scan_cell<'a>(
     let mut cm_val: Option<u32> = None;
     let mut vm_val: Option<u32> = None;
     let mut has_ph = false;
+    let mut invalid_cell_ref = false;
     let mut has_explicit_s = false;
     let mut has_explicit_t = false;
 
@@ -158,6 +159,26 @@ pub(crate) fn scan_cell<'a>(
         if b == b'/' && pos + 1 < len && xml[pos + 1] == b'>' {
             // Self-closing <c ... />
             let end = pos + 2;
+
+            if invalid_cell_ref {
+                diagnostics.record(
+                    FastParseDiagnosticCode::InvalidCellReference,
+                    cell_start,
+                    fallback_row,
+                );
+                return Some(ScanResult {
+                    cell: None,
+                    end,
+                    is_self_closing: true,
+                    cm_val,
+                    vm_val,
+                    has_ph,
+                    has_explicit_s,
+                    has_xml_space_v: false,
+                    sst_raw_idx: None,
+                    authored_style_only: None,
+                });
+            }
 
             if has_explicit_s && cm_val.is_none() && vm_val.is_none() && !has_ph && !has_explicit_t
             {
@@ -218,9 +239,12 @@ pub(crate) fn scan_cell<'a>(
 
             match b {
                 b'r' => {
-                    if let Some((r, c)) = parse_a1_reference(&xml[val_start..val_end]) {
-                        row = r;
-                        col = c;
+                    match parse_a1_reference(&xml[val_start..val_end]) {
+                        Some((r, c)) => {
+                            row = r;
+                            col = c;
+                        }
+                        None => invalid_cell_ref = true,
                     }
                 }
                 b's' => {
@@ -340,7 +364,12 @@ pub(crate) fn scan_cell<'a>(
                             if let Some(shared_str) = shared_strings.get(idx as usize) {
                                 (VALUE_TYPE_SHARED_STRING, shared_str.as_bytes())
                             } else {
-                                (VALUE_TYPE_INLINE, value_bytes)
+                                diagnostics.record(
+                                    FastParseDiagnosticCode::InvalidSharedStringIndex,
+                                    cell_start,
+                                    fallback_row,
+                                );
+                                (VALUE_TYPE_INLINE, b"#REF!")
                             }
                         } else {
                             (VALUE_TYPE_INLINE, value_bytes)
@@ -431,6 +460,26 @@ pub(crate) fn scan_cell<'a>(
         sst_raw_idx,
         authored_style_only: None,
     };
+
+    if invalid_cell_ref {
+        diagnostics.record(
+            FastParseDiagnosticCode::InvalidCellReference,
+            cell_start,
+            fallback_row,
+        );
+        return Some(ScanResult {
+            cell: None,
+            end: cell_end,
+            is_self_closing: false,
+            cm_val,
+            vm_val,
+            has_ph,
+            has_explicit_s,
+            has_xml_space_v,
+            sst_raw_idx,
+            authored_style_only: None,
+        });
+    }
 
     if value_type == VALUE_TYPE_NONE
         && has_explicit_s

@@ -91,6 +91,69 @@ fn malformed_cell_resyncs_to_later_cells_and_records_diagnostic() {
 }
 
 #[test]
+fn invalid_cell_reference_is_skipped_without_misplacing_neighbors() {
+    let xml = br#"<worksheet><sheetData><row r="1">
+      <c r="A1"><v>1</v></c>
+      <c r="not-a-cell"><v>2</v></c>
+      <c r="not-a-cell-2"/>
+      <c r="C1"><v>3</v></c>
+    </row></sheetData></worksheet>"#;
+    let shared_strings: Vec<&str> = vec![];
+    let mut cells = vec![CellData::default(); 10];
+    let mut strings = Vec::new();
+    let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
+
+    let count = parse_worksheet_fast_with_extras(
+        xml,
+        &shared_strings,
+        &mut cells,
+        &mut strings,
+        &mut Vec::new(),
+        &mut extras,
+        &mut diagnostics,
+        &[],
+    );
+
+    assert_eq!(count, 2);
+    assert_eq!(cells[0].get_col(), 0);
+    assert_eq!(cells[1].get_col(), 2);
+    assert_eq!(value_bytes(&cells[0], &strings), b"1");
+    assert_eq!(value_bytes(&cells[1], &strings), b"3");
+    assert_eq!(diagnostics.count(FastParseDiagnosticCode::InvalidCellReference), 2);
+}
+
+#[test]
+fn invalid_shared_string_index_uses_ref_placeholder_and_records_diagnostic() {
+    let xml = br#"<worksheet><sheetData><row r="1">
+      <c r="A1" t="s"><v>99</v></c>
+      <c r="B1"><v>2</v></c>
+    </row></sheetData></worksheet>"#;
+    let shared_strings = vec!["one", "two", "three"];
+    let mut cells = vec![CellData::default(); 10];
+    let mut strings = Vec::new();
+    let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
+
+    let count = parse_worksheet_fast_with_extras(
+        xml,
+        &shared_strings,
+        &mut cells,
+        &mut strings,
+        &mut Vec::new(),
+        &mut extras,
+        &mut diagnostics,
+        &[],
+    );
+
+    assert_eq!(count, 2);
+    assert_eq!(value_bytes(&cells[0], &strings), b"#REF!");
+    assert_eq!(value_bytes(&cells[1], &strings), b"2");
+    assert_eq!(cells[0].get_value_type(), VALUE_TYPE_INLINE);
+    assert_eq!(diagnostics.count(FastParseDiagnosticCode::InvalidSharedStringIndex), 1);
+}
+
+#[test]
 fn test_parse_worksheet_fast_prefixed_tags_imports_cells_values_and_row_metadata() {
     let xml = br#"<x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:sheetData>
     <x:row r="1" ht="21.5" customHeight="1">
