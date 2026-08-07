@@ -20,7 +20,7 @@ import {
   type SheetId,
   sheetId as toSheetId,
 } from '@mog-sdk/contracts/core';
-import { toCellId, type CellId } from '@mog-sdk/contracts/cell-identity';
+import type { CellId } from '@mog-sdk/contracts/cell-identity';
 import type { RawSecurityEvent } from '@mog-sdk/contracts/events';
 import type { ViewportRefreshDetails } from '@mog-sdk/contracts/api';
 import type { IKernelContext } from '@mog-sdk/contracts/kernel';
@@ -1393,15 +1393,7 @@ export class ComputeBridge extends GeneratedBridgeBase {
   private async _forceRecomputeRefErrorCells(): Promise<void> {
     const sheetIds = await this.getSheetOrder();
     for (const remainingSheetId of sheetIds) {
-      const affected = await this.findCellsByFormula(remainingSheetId, '#REF!');
-      if (affected.length === 0) continue;
-      const updates: [number, number, string][] = [];
-      for (const [row, col] of affected) {
-        const cellId = await this.getCellIdAt(remainingSheetId, row, col);
-        if (!cellId) continue;
-        const formula = await this.getFormula(toCellId(cellId));
-        if (formula != null) updates.push([row, col, formula]);
-      }
+      const updates = await this.findCellsWithFormulasByText(remainingSheetId, '#REF!');
       if (updates.length > 0) await this.setCellValuesParsed(remainingSheetId, updates);
     }
   }

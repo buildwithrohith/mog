@@ -659,6 +659,7 @@ export const BRIDGE_METHOD_KIND: Readonly<Record<string, BridgeMethodKind>> = Ob
   getValueTypes2d: 'read',
   getFormatCategories2d: 'read',
   findCellsByValue: 'read',
+  findCellsWithFormulasByText: 'read',
   findCellsByFormula: 'read',
   getAllTablesWorkbook: 'read',
   getAllCommentsWorkbook: 'read',

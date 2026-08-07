@@ -160,9 +160,13 @@ impl YrsComputeEngine {
     /// Find all cells whose formula (A1 display form) matches a regex pattern.
     ///
     /// The regex is compiled once and tested against each cell's formula string.
-    /// Cells without formulas are skipped. Returns `(row, col)` pairs.
+    /// Cells without formulas are skipped. Returns `(row, col, formula_text)` triples.
     #[bridge::read(scope = "sheet")]
-    pub fn find_cells_by_formula(&self, sheet_id: &SheetId, pattern: &str) -> Vec<(u32, u32)> {
+    pub fn find_cells_with_formulas_by_text(
+        &self,
+        sheet_id: &SheetId,
+        pattern: &str,
+    ) -> Vec<(u32, u32, String)> {
         let re = match Regex::new(pattern) {
             Ok(r) => r,
             Err(_) => return Vec::new(),
@@ -188,13 +192,26 @@ impl YrsComputeEngine {
                 if re.is_match(&a1)
                     && let Some(pos) = sheet.position_of(cell_id)
                 {
-                    results.push((pos.row(), pos.col()));
+                    results.push((pos.row(), pos.col(), a1));
                 }
             }
         }
 
         results.sort();
         results
+    }
+
+    /// Find all cells whose formula (A1 display form) matches a regex pattern.
+    ///
+    /// This preserves the position-only query contract while the sibling
+    /// `find_cells_with_formulas_by_text` query serves callers that also need
+    /// the matched formula text.
+    #[bridge::read(scope = "sheet")]
+    pub fn find_cells_by_formula(&self, sheet_id: &SheetId, pattern: &str) -> Vec<(u32, u32)> {
+        self.find_cells_with_formulas_by_text(sheet_id, pattern)
+            .into_iter()
+            .map(|(row, col, _)| (row, col))
+            .collect()
     }
 
     // -------------------------------------------------------------------

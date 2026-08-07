@@ -667,6 +667,7 @@ export interface GeneratedBridgeMethods {
   getValueTypes2d(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<string[][]>;
   getFormatCategories2d(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<string[][]>;
   findCellsByValue(sheetId: SheetId, value: string, startRow: number | null, startCol: number | null, endRow: number | null, endCol: number | null): Promise<[number, number][]>;
+  findCellsWithFormulasByText(sheetId: SheetId, pattern: string): Promise<[number, number, string][]>;
   findCellsByFormula(sheetId: SheetId, pattern: string): Promise<[number, number][]>;
   getAllTablesWorkbook(): Promise<WorkbookTable[]>;
   getAllCommentsWorkbook(): Promise<WorkbookComment[]>;
@@ -3297,6 +3298,10 @@ export class GeneratedBridgeBase implements GeneratedBridgeMethods {
 
   findCellsByValue(sheetId: SheetId, value: string, startRow: number | null, startCol: number | null, endRow: number | null, endCol: number | null): Promise<[number, number][]> {
     return this.core.query(this.core.transport.call<[number, number][]>('compute_find_cells_by_value', { docId: this.core.docId, sheetId, value, startRow, startCol, endRow, endCol }));
+  }
+
+  findCellsWithFormulasByText(sheetId: SheetId, pattern: string): Promise<[number, number, string][]> {
+    return this.core.query(this.core.transport.call<[number, number, string][]>('compute_find_cells_with_formulas_by_text', { docId: this.core.docId, sheetId, pattern }));
   }
 
   findCellsByFormula(sheetId: SheetId, pattern: string): Promise<[number, number][]> {
