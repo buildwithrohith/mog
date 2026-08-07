@@ -198,13 +198,7 @@ impl YrsComputeEngine {
 
 impl YrsComputeEngine {
     fn require_all_sheets_materialized(&self, operation: &str) -> Result<(), ComputeError> {
-        if self.deferred_hydration.is_some() {
-            return Err(ComputeError::InvalidInput {
-                message: format!(
-                    "{operation} requires deferred XLSX hydration to complete before reading all sheets"
-                ),
-            });
-        }
+        self.require_deferred_hydration_complete(operation)?;
         let mirror_sheet_count = self.mirror.sheet_count();
         if self.stores.storage.sheet_order().is_empty() && mirror_sheet_count > 0 {
             return Err(ComputeError::InvalidInput {

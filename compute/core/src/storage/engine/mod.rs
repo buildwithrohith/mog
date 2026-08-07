@@ -105,6 +105,7 @@ use settings::EngineSettings;
 use snapshot_types::SyncApplyOperationContextWire;
 pub(crate) use stores::CFCacheEntry;
 use stores::EngineStores;
+use value_types::ComputeError;
 use viewport::service::ViewportService;
 
 /// Yrs-backed compute engine: CRDT storage + identity tracking + compute scheduler.
@@ -190,6 +191,27 @@ pub struct YrsComputeEngine {
 }
 
 impl YrsComputeEngine {
+    /// Require every imported sheet to have reached the durable Yrs state.
+    ///
+    /// A deferred import retains its payload after individual preview/hydration
+    /// transitions, so `Option::is_some()` is not a sufficient completion
+    /// predicate. The explicit state sets are authoritative until the final
+    /// full-hydration commit clears the payload.
+    pub(crate) fn require_deferred_hydration_complete(
+        &self,
+        operation: &str,
+    ) -> Result<(), ComputeError> {
+        let Some(deferred) = self.deferred_hydration.as_ref() else {
+            return Ok(());
+        };
+
+        if !deferred.all_expected_sheets_yrs_hydrated() {
+            return Err(deferred.incomplete_error(operation).into_compute_error());
+        }
+
+        Ok(())
+    }
+
     // -------------------------------------------------------------------
     // CF cache initialization
     // -------------------------------------------------------------------

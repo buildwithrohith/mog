@@ -306,11 +306,25 @@ pub(in crate::storage::engine) fn import_from_xlsx_bytes_deferred(
     // Store data for deferred Yrs hydration. `complete_deferred_hydration`
     // re-parses the workbook and re-allocates cells for all sheets before it
     // commits anything to the live engine.
+    let expected_imported_sheets = allocations
+        .iter()
+        .map(|allocation| allocation.sheet_id)
+        .collect();
+    let mirror_materialized_sheets = allocations
+        .get(critical_sheet_index)
+        .map(|allocation| {
+            std::iter::once(allocation.sheet_id).collect::<std::collections::HashSet<_>>()
+        })
+        .unwrap_or_default();
+    let yrs_hydrated_sheets = mirror_materialized_sheets.clone();
     engine.deferred_hydration = Some(DeferredHydrationData {
         parse_output,
         allocations,
         workbook_snap,
         raw_xlsx_bytes: Some(xlsx_data.to_vec()),
+        expected_imported_sheets,
+        mirror_materialized_sheets,
+        yrs_hydrated_sheets,
     });
 
     Ok(RecalcResult::empty())
@@ -361,6 +375,7 @@ fn materialize_deferred_sheet_inner(
         .get(sheet_index)
         .is_some_and(|sheet| !sheet.cells.is_empty() || !sheet.ranges.is_empty())
     {
+        deferred.mirror_materialized_sheets.insert(sheet_id);
         return Ok(());
     }
 
@@ -565,6 +580,7 @@ fn materialize_deferred_sheet_inner(
         merge_import_reports(&mut engine.import_report, selected_import_report);
         deferred.allocations = allocations;
         deferred.workbook_snap = cumulative_snap;
+        deferred.mirror_materialized_sheets.insert(sheet_id);
         Ok(())
     })();
 
