@@ -4,7 +4,7 @@ import type { BridgeTransport } from '@rust-bridge/client';
 import type { ComputeCore } from './compute-core';
 import type { MutationAdmissionOptions } from './mutation-admission';
 import type { A1CellRef, A1RangeRef, AnnotationRecord, AutoExpansionResult, BatchCellInput, BatchRangeRequest, BatchRangeResponse, BridgeAutoFillPreviewResult, BridgeAutoFillRequest, BridgeFlashFillRequest, BridgeSortOptions, BorderPatchOperation, CFColorScale, CFDataBar, CFIconSetName, CFIconSetPreset, CFPresetCategory, CFRule, CacheInvalidationEventReason, Table as CanonicalTable, CellCFResult, CalculationSettings, ChartStatistics, Comment, CommentMention, CommentType, CellEdit, CellInput, CellPosition, CellPositionResult, CellInfo, CellStyleDef, CellMergeInfo, SheetPos, CellValidationResult, ColumnEdge, ColumnFilter, AdvancedFilterRequest, DynamicFilterRule, ConditionalFormat, CopyType, CreateBindingInput, CreateShapeConfig, DefaultFont, DefinedName, DefinedNameInput, DefinedNameWire, DisconnectionEventReason, DocumentProperties, FilterHeaderInfo, FilterRecordCount, FilterSortState, FilterState, FormulaReferenceDiagnosticsOptions, FormulaReferenceDiagnosticsPage, RuntimeDiagnosticsOptions, RuntimeDiagnosticsPage, FloatingObjectBounds, FlipAxis, FrozenPanes, GroupDefinition, Hyperlink, IdentityCell, ImportDiagnostic, MergeRegion, MoveTarget, MutationResult, SyncApplyMutationMetadataWire, SyncApplyOperationContextWire, NameValidationResult, NamedRangeUpdate, OutlineLevel, OutlineLevelButton, OutlineRenderData, OutlineSettingsUpdate, OutlineSymbol, ProjectionData, ProtectedWorkbookOperation, RawCellData, RangeQueryResult, RangeSchema, RectBounds, RowEdge, RegexSearchOptions, RegexSearchResult, ResolvedMergedRegion, ResizeConfig, Scenario, ScenarioActiveState, ScenarioCreateInput, ScenarioUpdateInput, SelectionAggregates, SetCellsBatchResult, FloatingObject, SerializedFloatingObjectGroup, ShapeStyleUpdate, SheetDataBinding, FindInRangeOptions, FindInRangeResult, WorkbookSearchResult, SignCheckOptions, SignCheckResult, SheetGroupingConfig, SheetMeta, SheetProtectionConfig, SheetProtectionOptions, SheetScrollPosition, SheetSettings, SheetSnapshot, SheetViewOptions, SplitViewConfig, SlicerItem, StoredSlicer, StoredSlicerUpdate, SlicerCustomStyle, NamedSlicerStyle, CsvImportOptions, PivotFieldItems, ImportedPivotViewRecord, PivotTableConfig, PivotTableResult, PivotField, HeaderFooterImageInfo, HfImagePosition, PrintRange, PrintSettings, PrintTitles, Sparkline, SparklineGroup, SparklineUpdate, SubtotalOptions, CustomTableStyleConfig, TableBoolOption, TableColumn, TableHitRegion, TableNameValidationResult, TableTopBottomFilter, TextToColumnsOptions, ThemeData, Transform, TotalsFunction, UndoState, UpdateBindingFields, RustWorkbookSettingsPatch, SemanticWorkbookDiff, SemanticWorkbookState, SemanticWorkbookStateEnvelope, Viewport, WorkbookProtectionOptions, WorkbookComment, WorkbookPivotTable, WorkbookSettings, WorkbookTable, ZOrderEntry } from './compute-types.gen';
-import type { IdentityFormulaWire as IdentityFormula, ColumnSchemaWire as ColumnSchema, SchemaTypeWire as SchemaType, ValidationResultWire as ValidationResult, EditorTypeResolutionInputWire as EditorTypeResolutionInput, EditorTypeResolutionResultWire as EditorTypeResolutionResult, InferredSchemaWire as InferredSchema, NamedRangeDef, DataRow, Point, RegressionMethod, RegressionOptions, RegressionOutput, DensityResult, HistogramBin, StackInput, StackMode, StackOutput, FormatEntry, DateValueResult, ParsedDateInput, FormulaCircularReferenceValidation, CFRuleWire, CfPresets, GoalSeekParams, GoalSeekResult, CreateDataTableInput, DataTableParams, DataTableResult, SchemaMapEntryWire, PageBreaks, TableRange, SlicerSortOrder, CFCellRange } from './types';
+import type { IdentityFormulaWire as IdentityFormula, ColumnSchemaWire as ColumnSchema, SchemaTypeWire as SchemaType, ValidationResultWire as ValidationResult, EditorTypeResolutionInputWire as EditorTypeResolutionInput, EditorTypeResolutionResultWire as EditorTypeResolutionResult, InferredSchemaWire as InferredSchema, NamedRangeDef, QueryRangeBinaryMeta, RangeBinaryMeta, DataRow, Point, RegressionMethod, RegressionOptions, RegressionOutput, DensityResult, HistogramBin, StackInput, StackMode, StackOutput, FormatEntry, DateValueResult, ParsedDateInput, FormulaCircularReferenceValidation, CFRuleWire, CfPresets, GoalSeekParams, GoalSeekResult, CreateDataTableInput, DataTableParams, DataTableResult, SchemaMapEntryWire, PageBreaks, TableRange, SlicerSortOrder, CFCellRange } from './types';
 import type { Table, FilterCriteria, Slicer, SlicerCache, SortSpec, RowVisibility, TableCellFormat, TableStyleDef, StructuredRef, DynamicFilter, FilterDropdownData, TableStructureChange } from '@mog/table-engine';
 import type { CellFormat, CellValue, SheetId } from '@mog-sdk/contracts/core';
 import type { CellFormat as ResolvedCellFormat } from '@mog-sdk/contracts/core';
@@ -325,6 +325,7 @@ export interface GeneratedBridgeMethods {
   getNamedRangeArrayValues(name: string, currentSheet: string | null): Promise<CellValue[][] | null>;
   formatCellValueForDisplay(sheetId: SheetId, row: number, col: number): Promise<string>;
   queryRange(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<RangeQueryResult>;
+  queryRangeBinary(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<[Uint8Array, QueryRangeBinaryMeta]>;
   getRangeWithIdentity(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<IdentityCell[]>;
   queryRanges(requests: BatchRangeRequest[]): Promise<BatchRangeResponse>;
   regexSearch(sheetId: SheetId, options: RegexSearchOptions): Promise<RegexSearchResult>;
@@ -411,6 +412,7 @@ export interface GeneratedBridgeMethods {
   queryRangeProperties(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<(CellFormat | null)[][]>;
   getDisplayedCellProperties(sheetId: SheetId, row: number, col: number): Promise<CellFormat>;
   getDisplayedRangeProperties(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<CellFormat[][]>;
+  getDisplayedRangePropertiesBinary(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<[Uint8Array, RangeBinaryMeta]>;
   getColumnSchema(sheetId: SheetId, colIndex: number): Promise<ColumnSchema | null>;
   setColumnSchema(sheetId: SheetId, colIndex: number, schema: ColumnSchema, admissionOptions?: MutationAdmissionOptions): Promise<MutationResult>;
   clearColumnSchema(sheetId: SheetId, colIndex: number, admissionOptions?: MutationAdmissionOptions): Promise<MutationResult>;
@@ -662,6 +664,7 @@ export interface GeneratedBridgeMethods {
   autoFitRowsAndSet(sheetId: SheetId, rows: number[], admissionOptions?: MutationAdmissionOptions): Promise<MutationResult>;
   getCellValue(sheetId: SheetId, row: number, col: number): Promise<CellValue>;
   getRangeValues2d(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<CellValue[][]>;
+  getRangeValues2dBinary(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<[Uint8Array, RangeBinaryMeta]>;
   getCellInfo(sheetId: SheetId, row: number, col: number): Promise<CellInfo | null>;
   getRawCellData(sheetId: SheetId, row: number, col: number, includeFormula: boolean): Promise<RawCellData | null>;
   getValueForEditing(sheetId: SheetId, row: number, col: number): Promise<string>;
@@ -1934,6 +1937,10 @@ export class GeneratedBridgeBase implements GeneratedBridgeMethods {
     return this.core.query(this.core.transport.call<RangeQueryResult>('compute_query_range', { docId: this.core.docId, sheetId, startRow, startCol, endRow, endCol }));
   }
 
+  queryRangeBinary(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<[Uint8Array, QueryRangeBinaryMeta]> {
+    return this.core.query(this.core.transport.call<[Uint8Array, QueryRangeBinaryMeta]>('compute_query_range_binary', { docId: this.core.docId, sheetId, startRow, startCol, endRow, endCol }));
+  }
+
   getRangeWithIdentity(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<IdentityCell[]> {
     return this.core.query(this.core.transport.call<IdentityCell[]>('compute_get_range_with_identity', { docId: this.core.docId, sheetId, startRow, startCol, endRow, endCol }));
   }
@@ -2276,6 +2283,10 @@ export class GeneratedBridgeBase implements GeneratedBridgeMethods {
 
   getDisplayedRangeProperties(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<CellFormat[][]> {
     return this.core.query(this.core.transport.call<CellFormat[][]>('compute_get_displayed_range_properties', { docId: this.core.docId, sheetId, startRow, startCol, endRow, endCol }));
+  }
+
+  getDisplayedRangePropertiesBinary(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<[Uint8Array, RangeBinaryMeta]> {
+    return this.core.query(this.core.transport.call<[Uint8Array, RangeBinaryMeta]>('compute_get_displayed_range_properties_binary', { docId: this.core.docId, sheetId, startRow, startCol, endRow, endCol }));
   }
 
   getColumnSchema(sheetId: SheetId, colIndex: number): Promise<ColumnSchema | null> {
@@ -3280,6 +3291,10 @@ export class GeneratedBridgeBase implements GeneratedBridgeMethods {
 
   getRangeValues2d(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<CellValue[][]> {
     return this.core.query(this.core.transport.call<CellValue[][]>('compute_get_range_values_2d', { docId: this.core.docId, sheetId, startRow, startCol, endRow, endCol }));
+  }
+
+  getRangeValues2dBinary(sheetId: SheetId, startRow: number, startCol: number, endRow: number, endCol: number): Promise<[Uint8Array, RangeBinaryMeta]> {
+    return this.core.query(this.core.transport.call<[Uint8Array, RangeBinaryMeta]>('compute_get_range_values_2d_binary', { docId: this.core.docId, sheetId, startRow, startCol, endRow, endCol }));
   }
 
   getCellInfo(sheetId: SheetId, row: number, col: number): Promise<CellInfo | null> {

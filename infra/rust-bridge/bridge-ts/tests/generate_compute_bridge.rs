@@ -395,6 +395,9 @@ fn build_import_config() -> ImportConfig {
                     // Direct exports
                     ti("NamedRangeDef"),
                     ti("TableDef"),
+                    ti("QueryRangeBinaryMeta"),
+                    ti("RangeBinaryEncoding"),
+                    ti("RangeBinaryMeta"),
                     ti("StructureChange"),
                     // Chart bridge stubs
                     ti("DataRow"),

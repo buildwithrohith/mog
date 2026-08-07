@@ -127,6 +127,24 @@ export interface TableDef {
   has_totals: boolean;
 }
 
+/** Binary bulk-range encoding selected by the Rust bytes tuple. */
+export type RangeBinaryEncoding = 'F64Le' | 'MixedLe' | 'FormatPalette';
+
+/** Rectangle metadata paired with a dense values or format binary payload. */
+export interface RangeBinaryMeta {
+  startRow: number;
+  startCol: number;
+  rows: number;
+  cols: number;
+  encoding: RangeBinaryEncoding;
+}
+
+/** Metadata paired with a sparse-or-dense query-range binary payload. */
+export interface QueryRangeBinaryMeta extends RangeBinaryMeta {
+  cellCount: number;
+  mergeCount: number;
+}
+
 /**
  * Identity-based cell range used by wire-level CF rule encodings.
  *
