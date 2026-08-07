@@ -69,6 +69,7 @@ function createHarness(options?: {
     }
   >;
   sheetViewStates?: Record<string, SheetViewState>;
+  resetPreviousSheetViewports?: SheetSwitchCoordinationConfig['resetPreviousSheetViewports'];
 }) {
   const setScrollPosition = jest.fn(async () => undefined);
   const getViewSelection = jest.fn(
@@ -111,6 +112,7 @@ function createHarness(options?: {
           awaitImportDurability: jest.fn(() => durabilityPromise),
         }
       : undefined,
+    resetPreviousSheetViewports: options?.resetPreviousSheetViewports,
     onSheetSwitch: (callback) => {
       listener = callback;
       return jest.fn();
@@ -193,6 +195,55 @@ describe('setupSheetSwitchCoordination import durability', () => {
 
     expect(harness.setScrollPosition).toHaveBeenCalledTimes(1);
     expect(harness.setScrollPosition).toHaveBeenCalledWith(8, 9);
+    harness.cleanup();
+  });
+
+  it('resets only the sheet being left and repopulates a revisited sheet', () => {
+    const resetPreviousSheetViewports = jest.fn(async () => undefined);
+    const previousSheetState: SheetViewState = {
+      activeCell: { row: 4, col: 3 },
+      ranges: [{ startRow: 4, startCol: 3, endRow: 4, endCol: 3 }],
+      anchor: null,
+      anchorCol: null,
+      anchorRow: null,
+      scrollTop: 120,
+      scrollLeft: 80,
+    };
+    const harness = createHarness({
+      resetPreviousSheetViewports,
+      sheetViewStates: { 'sheet-1': previousSheetState },
+    });
+
+    // A -> B: cleanup targets only A, while the renderer is sent to B.
+    harness.listener(sheetId('sheet-2'), sheetId('sheet-1'));
+    expect(resetPreviousSheetViewports).toHaveBeenCalledTimes(1);
+    expect(resetPreviousSheetViewports).toHaveBeenCalledWith(sheetId('sheet-1'));
+    expect(harness.actors.rendererActor.send).toHaveBeenCalledWith({
+      type: 'SWITCH_SHEET',
+      sheetId: sheetId('sheet-2'),
+    });
+
+    harness.emitRendererState({ value: 'ready' });
+    expect(harness.getViewSelection).toHaveBeenCalledWith(sheetId('sheet-2'));
+
+    // B -> A: cleanup targets B, and A's saved view state is restored on revisit.
+    harness.listener(sheetId('sheet-1'), sheetId('sheet-2'));
+    expect(resetPreviousSheetViewports).toHaveBeenNthCalledWith(2, sheetId('sheet-2'));
+    expect(harness.actors.rendererActor.send).toHaveBeenLastCalledWith({
+      type: 'SWITCH_SHEET',
+      sheetId: sheetId('sheet-1'),
+    });
+
+    harness.emitRendererState({ value: 'ready' });
+    expect(harness.actors.selectionActor.send).toHaveBeenCalledWith({
+      type: 'SET_SELECTION',
+      ranges: previousSheetState.ranges,
+      activeCell: previousSheetState.activeCell,
+      anchor: previousSheetState.anchor,
+      anchorCol: previousSheetState.anchorCol,
+      anchorRow: previousSheetState.anchorRow,
+      source: 'restore',
+    });
     harness.cleanup();
   });
 

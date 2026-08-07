@@ -557,6 +557,8 @@ export class SheetCoordinator {
         setupSheetSwitchCoordination({
           workbook,
           importDurability: this.config.sheetSwitchDependencies.importDurability,
+          resetPreviousSheetViewports:
+            this.config.sheetSwitchDependencies.resetPreviousSheetViewports,
           editorActor: this.grid.access.actors.editor,
           clipboardActor: this.grid.access.actors.clipboard,
           rendererActor: this.renderer.access.actors.renderer,

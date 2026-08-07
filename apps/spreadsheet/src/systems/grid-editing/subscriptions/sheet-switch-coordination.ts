@@ -78,6 +78,8 @@ export interface SheetSwitchCoordinationConfig {
   workbook: WorkbookInternal;
   /** Import durability gate for host-backed XLSX documents. */
   importDurability?: SheetSwitchImportDurabilityGate;
+  /** Releases the previous sheet's viewport registrations and format palette. */
+  resetPreviousSheetViewports?: (sheetId: SheetId) => Promise<unknown>;
   editorActor: EditorActor;
   clipboardActor: ClipboardActor;
   rendererActor: RendererActor;
@@ -219,6 +221,7 @@ export function setupSheetSwitchCoordination(config: SheetSwitchCoordinationConf
   const {
     workbook,
     importDurability,
+    resetPreviousSheetViewports,
     editorActor,
     rendererActor,
     selectionActor,
@@ -425,6 +428,15 @@ export function setupSheetSwitchCoordination(config: SheetSwitchCoordinationConf
   });
 
   const unsubSheetSwitch = onSheetSwitch((newSheetId, prevSheetId) => {
+    if (resetPreviousSheetViewports && prevSheetId !== null && prevSheetId !== newSheetId) {
+      void resetPreviousSheetViewports(prevSheetId).catch((err) => {
+        console.warn(
+          '[SheetSwitchCoordination] Failed to reset previous sheet viewport state:',
+          err,
+        );
+      });
+    }
+
     // Save current sheet's view state BEFORE switching
     if (prevSheetId && saveSheetViewState) {
       const selectionSnapshot = selectionActor.getSnapshot();

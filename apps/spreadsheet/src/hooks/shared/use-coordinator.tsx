@@ -31,9 +31,28 @@ import type {
   EditorDependencies,
   SheetSwitchImportDurabilityGate,
 } from '../../coordinator/types';
+import type { WorkbookInternal } from '@mog-sdk/contracts/api';
+import type { SheetId } from '@mog-sdk/contracts/core';
 import type { Platform } from '@mog-sdk/contracts/platform';
 import type { Metric } from '../../systems/shared/types';
 import type { UIState } from '../../ui-store';
+
+interface WorkbookWithComputeBridge extends WorkbookInternal {
+  readonly ctx?: {
+    readonly computeBridge?: {
+      resetViewportState(sheetId: SheetId): Promise<unknown>;
+    };
+  };
+}
+
+function getResetPreviousSheetViewports(
+  workbook: WorkbookInternal,
+): ((sheetId: SheetId) => Promise<unknown>) | undefined {
+  const computeBridge = (workbook as WorkbookWithComputeBridge).ctx?.computeBridge;
+  return computeBridge
+    ? (sheetId: SheetId) => computeBridge.resetViewportState(sheetId)
+    : undefined;
+}
 
 // =============================================================================
 // RE-EXPORT TYPES FROM FULL COORDINATOR
@@ -85,13 +104,19 @@ export interface SheetCoordinatorConfig {
  * from state/coordinator/index.ts with cross-machine coordination.
  */
 export function createSheetCoordinator(config: SheetCoordinatorConfig): SheetCoordinator {
+  const resetPreviousSheetViewports = getResetPreviousSheetViewports(config.workbook);
+
   return createFullCoordinator({
     initialSheetId: config.initialSheetId,
     platform: config.platform,
     onMetric: config.onMetric,
     // Pass sheet switch dependencies if uiStoreApi is provided
     sheetSwitchDependencies: config.uiStoreApi
-      ? { uiStoreApi: config.uiStoreApi, importDurability: config.importDurability }
+      ? {
+          uiStoreApi: config.uiStoreApi,
+          importDurability: config.importDurability,
+          resetPreviousSheetViewports,
+        }
       : undefined,
     // Pass toolbar dependencies (independent of sheet switch) if uiStoreApi is provided
     toolbarDependencies: config.uiStoreApi ? { uiStoreApi: config.uiStoreApi } : undefined,
