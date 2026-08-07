@@ -117,7 +117,10 @@ pub(super) fn convert_cell(
     cell: &DomainCellData,
     shared_strings: &mut SharedStringsWriter,
 ) -> CellData {
-    let style_remapper = StyleExportRemapper::palette_projection(u32::MAX);
+    // Identity projection sized for test style ids, NOT u32::MAX: the
+    // projection materializes one Vec slot per id, so u32::MAX allocated
+    // ~34GB per test and got the suite SIGKILLed under memory pressure.
+    let style_remapper = StyleExportRemapper::palette_projection(4096);
     convert_cell_with_metadata_refs(cell, shared_strings, true, &style_remapper)
 }
 
