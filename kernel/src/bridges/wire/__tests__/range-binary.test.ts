@@ -1,3 +1,7 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import type { CellFormat } from '@mog-sdk/contracts/core';
 
 import type {
@@ -31,6 +35,10 @@ const TAG_ERROR = 4;
 const TAG_ARRAY = 5;
 
 const encoder = new TextEncoder();
+const TEST_FIXTURES_DIR = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'fixtures',
+);
 
 class Writer {
   private readonly output: number[] = [];
@@ -271,6 +279,26 @@ describe('range binary decoder', () => {
         },
       ],
       merges: [{ startRow: 10, startCol: 4, endRow: 10, endCol: 5 }],
+    });
+  });
+
+  it('decodes the public inline-format fixture and preserves alignment', () => {
+    const bytes = new Uint8Array(
+      fs.readFileSync(path.join(TEST_FIXTURES_DIR, 'range-query-inline-format.bin')),
+    );
+
+    expect(
+      decodeQueryRangeBinary(bytes, {
+        ...metadata(0, 0, 1, 2, 'MixedLe'),
+        cellCount: 2,
+        mergeCount: 0,
+      }),
+    ).toEqual({
+      cells: [
+        { row: 0, col: 0, cellId: '', value: null, format: { bold: true } },
+        { row: 0, col: 1, cellId: '', value: null },
+      ],
+      merges: [],
     });
   });
 

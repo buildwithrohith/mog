@@ -702,7 +702,9 @@ fn palette_is_lossless(palette_bytes: &[u8], palette: &[CellFormat]) -> bool {
         .unwrap_or(false)
 }
 
-fn encode_format_slot(out: &mut Vec<u8>, slot: &FormatSlot) {
+/// Encode a format slot. Dense format payloads use fixed `u32` byte lengths;
+/// query inline formats use the varint length consumed by the query decoder.
+fn encode_format_slot(out: &mut Vec<u8>, slot: &FormatSlot, variable_length: bool) {
     match slot {
         FormatSlot::None => out.push(0),
         FormatSlot::Palette { index, .. } => {
@@ -711,7 +713,11 @@ fn encode_format_slot(out: &mut Vec<u8>, slot: &FormatSlot) {
         }
         FormatSlot::Inline(bytes) => {
             out.push(2);
-            push_bytes(out, bytes);
+            if variable_length {
+                push_var_bytes(out, bytes);
+            } else {
+                push_bytes(out, bytes);
+            }
         }
     }
 }
@@ -785,7 +791,7 @@ pub(crate) fn encode_formats(
     push_u32(&mut bytes, slots.len());
     push_u32(&mut bytes, palette_bytes.len());
     for slot in &slots {
-        encode_format_slot(&mut bytes, slot);
+        encode_format_slot(&mut bytes, slot, false);
     }
     bytes.extend_from_slice(&palette_bytes);
     (
@@ -967,7 +973,7 @@ fn encode_optional_query_fields(out: &mut Vec<u8>, cell: &RangeCellData, slots: 
         push_var_string(out, formatted);
     }
     if mask & OPTIONAL_FORMAT != 0 {
-        encode_format_slot(out, slots);
+        encode_format_slot(out, slots, true);
     }
     if let Some(hyperlink) = &cell.hyperlink_url {
         push_var_string(out, hyperlink);
@@ -1221,6 +1227,8 @@ mod tests {
     use crate::snapshot::RangeCellData;
     use domain_types::CellFormat;
     use serde_json::json;
+    use std::fs;
+    use std::path::PathBuf;
 
     fn mixed_values() -> Vec<Vec<CellValue>> {
         vec![
@@ -1246,6 +1254,113 @@ mod tests {
                 ))),
             ],
         ]
+    }
+
+    fn real_fixture_path() -> PathBuf {
+        std::env::var_os("MOG_RANGE_BINARY_REAL_FIXTURE")
+            .map(PathBuf::from)
+            .expect("set MOG_RANGE_BINARY_REAL_FIXTURE to run the real-workbook repro test")
+    }
+
+    // JSON query results may preserve compact 32-hex IDs; kind-1 binary UUIDs
+    // decode to the canonical hyphenated spelling used by the TS decoder.
+    fn normalize_query_uuid_spellings(value: &mut serde_json::Value) {
+        let Some(cells) = value
+            .get_mut("cells")
+            .and_then(serde_json::Value::as_array_mut)
+        else {
+            return;
+        };
+        for cell in cells {
+            let Some(cell_id) = cell
+                .get("cellId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+            else {
+                continue;
+            };
+            let Ok(uuid) = Uuid::parse_str(&cell_id) else {
+                continue;
+            };
+            cell["cellId"] = serde_json::Value::String(uuid.to_string());
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the external repro194.xlsx fixture; run explicitly with --ignored"]
+    fn repro194_query_range_binary_matches_json_sibling_on_every_sheet() {
+        let fixture = real_fixture_path();
+        let bytes = fs::read(&fixture).expect("read repro194.xlsx");
+        let (engine, _) = crate::storage::engine::YrsComputeEngine::from_xlsx_bytes(&bytes)
+            .expect("import repro194.xlsx");
+        let dump_dir = std::env::var_os("MOG_RANGE_BINARY_DUMP_DIR").map(PathBuf::from);
+        let sheet_ids = engine.get_all_sheet_ids();
+        assert!(!sheet_ids.is_empty(), "repro194.xlsx has no sheets");
+
+        for (index, sheet_id_text) in sheet_ids.iter().enumerate() {
+            let sheet_id = cell_types::SheetId::from_uuid_str(sheet_id_text)
+                .expect("imported sheet ID is a UUID");
+            let bounds = engine.get_data_bounds(&sheet_id);
+            let (start_row, start_col, end_row, end_col) = bounds
+                .map(|bounds| {
+                    (
+                        bounds.min_row,
+                        bounds.min_col,
+                        bounds.max_row,
+                        bounds.max_col,
+                    )
+                })
+                .unwrap_or((0, 0, 0, 0));
+            let json_result = engine.query_range(&sheet_id, start_row, start_col, end_row, end_col);
+            let (binary, metadata) =
+                engine.query_range_binary(&sheet_id, start_row, start_col, end_row, end_col);
+            if let Some(directory) = &dump_dir {
+                fs::create_dir_all(directory).expect("create range-binary dump directory");
+                fs::write(directory.join(format!("sheet-{index:02}.bin")), &binary)
+                    .expect("write range-binary payload dump");
+                fs::write(
+                    directory.join(format!("sheet-{index:02}.metadata.json")),
+                    serde_json::to_vec_pretty(&metadata).expect("serialize range metadata"),
+                )
+                .expect("write range-binary metadata dump");
+            }
+            eprintln!(
+                "sheet {index}: {} bounds=({start_row},{start_col})..({end_row},{end_col}) cells={} merges={} bytes={}",
+                engine
+                    .get_sheet_name(&sheet_id)
+                    .unwrap_or_else(|| sheet_id_text.clone()),
+                metadata.cell_count,
+                metadata.merge_count,
+                binary.len(),
+            );
+            let decoded = decode_query_range(&binary, metadata)
+                .unwrap_or_else(|error| panic!("sheet {index} Rust decode failed: {error}"));
+            let decoded_json = serde_json::to_value(&decoded).expect("serialize decoded query");
+            let mut json_result_json =
+                serde_json::to_value(&json_result).expect("serialize JSON query");
+            normalize_query_uuid_spellings(&mut json_result_json);
+            if decoded_json != json_result_json {
+                let decoded_cells = decoded_json
+                    .get("cells")
+                    .and_then(serde_json::Value::as_array)
+                    .expect("decoded query cells array");
+                let json_cells = json_result_json
+                    .get("cells")
+                    .and_then(serde_json::Value::as_array)
+                    .expect("JSON query cells array");
+                if let Some((cell_index, (decoded_cell, json_cell))) = decoded_cells
+                    .iter()
+                    .zip(json_cells)
+                    .enumerate()
+                    .find(|(_, (decoded_cell, json_cell))| decoded_cell != json_cell)
+                {
+                    panic!(
+                        "sheet {index} query_range binary differs at cell {cell_index}: decoded={decoded_cell:?} json={json_cell:?}"
+                    );
+                }
+                panic!("sheet {index} query_range binary differs from JSON sibling");
+            }
+        }
     }
 
     #[test]
@@ -1327,6 +1442,55 @@ mod tests {
             encoding: query_value_encoding(&result.cells),
         };
         let (bytes, metadata) = encode_query_range(&result, metadata);
+        let decoded = decode_query_range(&bytes, metadata).unwrap();
+        assert_eq!(
+            serde_json::to_value(decoded).unwrap(),
+            serde_json::to_value(result).unwrap()
+        );
+    }
+
+    #[test]
+    fn query_inline_format_round_trip_uses_varint_length() {
+        let result = RangeQueryResult {
+            cells: vec![
+                RangeCellData {
+                    row: 0,
+                    col: 0,
+                    cell_id: String::new(),
+                    value: CellValue::Text(Arc::from("inline format")),
+                    formula: None,
+                    formatted: None,
+                    format: Some(json!({
+                        "backgroundColor": "#FFFF00",
+                        "backgroundColorTint": 0.2
+                    })),
+                    hyperlink_url: None,
+                },
+                RangeCellData {
+                    row: 0,
+                    col: 1,
+                    cell_id: String::new(),
+                    value: CellValue::number(2.0),
+                    formula: None,
+                    formatted: None,
+                    format: None,
+                    hyperlink_url: None,
+                },
+            ],
+            merges: Vec::new(),
+        };
+        let metadata = QueryRangeBinaryMeta {
+            start_row: 0,
+            start_col: 0,
+            rows: 1,
+            cols: 2,
+            cell_count: 0,
+            merge_count: 0,
+            encoding: query_value_encoding(&result.cells),
+        };
+
+        let (bytes, metadata) = encode_query_range(&result, metadata);
+        assert_eq!(&bytes[28..32], &[0, 0, 0, 0]);
         let decoded = decode_query_range(&bytes, metadata).unwrap();
         assert_eq!(
             serde_json::to_value(decoded).unwrap(),

@@ -51,6 +51,7 @@ const ALLOWED_DATA_PATHS = [
   /^file-io\/xlsx\/parser\/test-corpus\//,
   /^infra\/transport\/test-fixtures\/synthetic-trap\/synthetic-trap\.wasm$/,
   /^kernel\/src\/bridges\/wire\/__tests__\/fixtures\/(?:mutation|viewport)\.bin$/,
+  /^kernel\/src\/bridges\/wire\/__tests__\/fixtures\/range-query-inline-format\.bin$/,
   /^runtime\/embed\/public\/showcase\.xlsx$/,
 ];
 
