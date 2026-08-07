@@ -182,14 +182,15 @@ impl CellMirror {
             return;
         };
 
-        if let Some(losing_id) = sheet.pos_to_id.insert(pos, cell_id) {
-            sheet.id_to_pos.remove(&losing_id);
-        }
-        if let Some(old_pos) = sheet.id_to_pos.insert(cell_id, pos)
+        // Capture the winner's previous position before rebinding; the lazy
+        // reverse cache is maintained by the mapping helpers themselves.
+        let old_pos = sheet.position_of(&cell_id);
+        sheet.insert_position_mapping(pos, cell_id);
+        if let Some(old_pos) = old_pos
             && old_pos != pos
             && sheet.pos_to_id.get(&old_pos) == Some(&cell_id)
         {
-            sheet.pos_to_id.remove(&old_pos);
+            sheet.remove_position_mapping(old_pos);
         }
         sheet.cells.entry(cell_id).or_insert_with(|| CellEntry {
             value: CellValue::Null,
