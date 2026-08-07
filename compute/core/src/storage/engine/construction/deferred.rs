@@ -742,7 +742,7 @@ pub(in crate::storage::engine) fn stage_deferred_hydration(
                 let ranged: std::collections::HashSet<(u32, u32)> = sheet_data
                     .cells
                     .iter()
-                    .filter(|c| c.formula.is_some() || !c.value.is_null())
+                    .filter(|c| c.formula().is_some() || !c.value.is_null())
                     .map(|c| (c.row, c.col))
                     .filter(|pos| !snap_positions.contains(pos))
                     .collect();
@@ -949,7 +949,7 @@ fn build_deferred_critical_sheet_range_plan(
     let ranged_positions = sheet_data
         .cells
         .iter()
-        .filter(|c| c.formula.is_some() || !c.value.is_null())
+        .filter(|c| c.formula().is_some() || !c.value.is_null())
         .map(|c| (c.row, c.col))
         .filter(|pos| !snap_positions.contains(pos))
         .collect();

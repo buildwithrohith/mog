@@ -407,7 +407,8 @@ impl ComputeCore {
 
     pub(super) fn seed_cell_formula_text(&mut self, formula_cells: &[(CellId, SheetId, String)]) {
         for (cell_id, _sheet_id, formula) in formula_cells {
-            self.cell_formula_text.insert(*cell_id, formula.clone());
+            self.cell_formula_text
+                .insert(*cell_id, std::sync::Arc::from(formula.as_str()));
         }
     }
 
@@ -611,16 +612,14 @@ impl ComputeCore {
                                 is_dynamic_array,
                             },
                         );
-                        self.formula_strings.insert(cell_id, rendered_formula);
-                        self.cell_formula_text.insert(cell_id, formula);
+                        self.insert_formula_text_pair(cell_id, rendered_formula, formula);
                         if !range_keys.is_empty() {
                             self.cell_range_keys.insert(cell_id, range_keys);
                         }
                     }
                     Err(formula) => {
                         mirror.set_value_mut(&cell_id, CellValue::Error(CellError::Name, None));
-                        self.formula_strings.insert(cell_id, formula.clone());
-                        self.cell_formula_text.insert(cell_id, formula);
+                        self.insert_formula_text_pair(cell_id, formula.clone(), formula);
                     }
                 }
             }
@@ -737,16 +736,14 @@ impl ComputeCore {
                                 is_dynamic_array,
                             },
                         );
-                        self.formula_strings.insert(cell_id, rendered_formula);
-                        self.cell_formula_text.insert(cell_id, formula);
+                        self.insert_formula_text_pair(cell_id, rendered_formula, formula);
                         if !range_keys.is_empty() {
                             self.cell_range_keys.insert(cell_id, range_keys);
                         }
                     }
                     Err(_) => {
                         mirror.set_value_mut(&cell_id, CellValue::Error(CellError::Name, None));
-                        self.formula_strings.insert(cell_id, formula.clone());
-                        self.cell_formula_text.insert(cell_id, formula);
+                        self.insert_formula_text_pair(cell_id, formula.clone(), formula);
                     }
                 }
             }

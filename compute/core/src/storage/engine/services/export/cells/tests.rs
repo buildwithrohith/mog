@@ -1,7 +1,7 @@
 use super::materialize::build_cell_data_for_cell_id;
 use super::{export_authored_style_runs_for_sheet, export_cells_for_sheet};
 use cell_types::{CellId, SheetId, SheetPos};
-use domain_types::{AuthoredStyleRun, CellFormat, DocumentFormat};
+use domain_types::{AuthoredStyleRun, CellDataExtras, CellFormat, DocumentFormat};
 use rustc_hash::FxHashMap;
 use value_types::CellValue;
 
@@ -51,8 +51,11 @@ fn metadata_only_shared_string_output() -> domain_types::ParseOutput {
                 row: 0,
                 col: 0,
                 value: CellValue::Text(Arc::<str>::from("")),
-                original_sst_index: Some(7),
-                original_value: Some("7".to_string()),
+                extras: Some(Box::new(CellDataExtras {
+                    original_sst_index: Some(7),
+                    original_value: Some("7".to_string()),
+                    ..Default::default()
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -71,8 +74,11 @@ fn empty_shared_string_source_xlsx() -> Vec<u8> {
                 row: 0,
                 col: 0,
                 value: CellValue::Text(Arc::<str>::from("")),
-                original_sst_index: Some(0),
-                original_value: Some("0".to_string()),
+                extras: Some(Box::new(CellDataExtras {
+                    original_sst_index: Some(0),
+                    original_value: Some("0".to_string()),
+                    ..Default::default()
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -640,8 +646,8 @@ fn cached_shared_string_metadata_survives_hydration_export() {
         .find(|cell| cell.row == 0 && cell.col == 0)
         .expect("A1 should export");
 
-    assert_eq!(exported.original_sst_index, Some(7));
-    assert_eq!(exported.original_value.as_deref(), Some("7"));
+    assert_eq!(exported.original_sst_index(), Some(7));
+    assert_eq!(exported.original_value().map(String::as_str), Some("7"));
 }
 
 #[test]
@@ -650,8 +656,11 @@ fn skipped_spill_target_is_not_replayed_from_modeled_export() {
         row: 0,
         col: 0,
         value: number(1.0),
-        formula: Some("SEQUENCE(1,2)".to_string()),
-        cell_metadata_index: Some(1),
+        extras: Some(Box::new(CellDataExtras {
+            formula: Some("SEQUENCE(1,2)".to_string()),
+            cell_metadata_index: Some(1),
+            ..Default::default()
+        })),
         projection_role: domain_types::ImportedCellProjectionRole::DynamicArraySource,
         ..Default::default()
     };
@@ -659,8 +668,11 @@ fn skipped_spill_target_is_not_replayed_from_modeled_export() {
         row: 0,
         col: 1,
         value: number(2.0),
-        cell_metadata_index: Some(1),
-        original_value: Some("2".to_string()),
+        extras: Some(Box::new(CellDataExtras {
+            cell_metadata_index: Some(1),
+            original_value: Some("2".to_string()),
+            ..Default::default()
+        })),
         projection_role: domain_types::ImportedCellProjectionRole::DynamicArraySpillTarget,
         ..Default::default()
     };
@@ -730,7 +742,10 @@ fn edited_formula_export_does_not_replay_stale_shared_group_metadata() {
                 row: 0,
                 col: 0,
                 value: number(10.0),
-                formula: Some("SUM(A2:A10)".to_string()),
+                extras: Some(Box::new(CellDataExtras {
+                    formula: Some("SUM(A2:A10)".to_string()),
+                    ..Default::default()
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -788,7 +803,10 @@ fn edited_formula_export_does_not_replay_stale_array_group_metadata() {
                 row: 0,
                 col: 0,
                 value: number(10.0),
-                formula: Some("SUM(A2:A10)".to_string()),
+                extras: Some(Box::new(CellDataExtras {
+                    formula: Some("SUM(A2:A10)".to_string()),
+                    ..Default::default()
+                })),
                 ..Default::default()
             }],
             ..Default::default()

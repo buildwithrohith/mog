@@ -108,10 +108,10 @@ fn xlsx_insert_row_shifts_formula_refs() {
         .find(|c| c.row == 1 && c.col == 1)
         .expect("B2 cell present");
     assert_eq!(
-        b2.formula.as_deref(),
+        b2.formula().map(String::as_str),
         Some("A2"),
         "B2 formula after insert_row; got {:?}",
-        b2.formula
+        b2.formula()
     );
 
     // C3 (was C3 at row 2, =SUM(A1:A5)) is now C4 referencing A2:A6.
@@ -121,10 +121,10 @@ fn xlsx_insert_row_shifts_formula_refs() {
         .find(|c| c.row == 3 && c.col == 2)
         .expect("C4 cell present");
     assert_eq!(
-        c4.formula.as_deref(),
+        c4.formula().map(String::as_str),
         Some("SUM(A2:A6)"),
         "C4 formula after insert_row; got {:?}",
-        c4.formula
+        c4.formula()
     );
 }
 
@@ -159,10 +159,10 @@ fn xlsx_delete_row_shifts_formula_refs() {
         .find(|c| c.row == 0 && c.col == 1)
         .expect("B1 cell present");
     assert_eq!(
-        b1.formula.as_deref(),
+        b1.formula().map(String::as_str),
         Some("A1"),
         "B1 formula after delete_row; got {:?}",
-        b1.formula
+        b1.formula()
     );
 
     // Original C3 =SUM(A1:A5) — A1 was deleted, should become SUM(A1:A4).
@@ -172,10 +172,10 @@ fn xlsx_delete_row_shifts_formula_refs() {
         .find(|c| c.row == 1 && c.col == 2)
         .expect("C2 cell present (shifted from C3)");
     assert_eq!(
-        c2.formula.as_deref(),
+        c2.formula().map(String::as_str),
         Some("SUM(A1:A4)"),
         "C2 formula after delete_row; got {:?}",
-        c2.formula
+        c2.formula()
     );
 }
 
@@ -210,10 +210,10 @@ fn xlsx_insert_col_shifts_formula_refs() {
         .find(|c| c.row == 0 && c.col == 2)
         .expect("C1 cell present (shifted from B1)");
     assert_eq!(
-        c1.formula.as_deref(),
+        c1.formula().map(String::as_str),
         Some("B1"),
         "C1 formula after insert_col; got {:?}",
-        c1.formula
+        c1.formula()
     );
 
     // Former C3 =SUM(A1:A5) is now at D3 and should reference B1:B5.
@@ -223,10 +223,10 @@ fn xlsx_insert_col_shifts_formula_refs() {
         .find(|c| c.row == 2 && c.col == 3)
         .expect("D3 cell present (shifted from C3)");
     assert_eq!(
-        d3.formula.as_deref(),
+        d3.formula().map(String::as_str),
         Some("SUM(B1:B5)"),
         "D3 formula after insert_col; got {:?}",
-        d3.formula
+        d3.formula()
     );
 }
 
@@ -275,9 +275,9 @@ fn xlsx_delete_col_shifts_formula_refs() {
         .find(|c| c.row == 0 && c.col == 2)
         .expect("C1 cell present (shifted from D1)");
     assert_eq!(
-        c1.formula.as_deref(),
+        c1.formula().map(String::as_str),
         Some("SUM(A1:A5)"),
         "C1 formula after delete_col; got {:?}",
-        c1.formula
+        c1.formula()
     );
 }

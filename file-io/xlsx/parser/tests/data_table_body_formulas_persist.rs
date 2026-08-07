@@ -98,8 +98,7 @@ fn data_table_master_carries_synthesized_formula() {
 
     let master = find_cell(&sheet.cells, 1, 1).expect("B2 should be present");
     let formula = master
-        .formula
-        .as_ref()
+        .formula()
         .expect("B2 (master) should carry a synthesized TABLE() formula");
     assert_eq!(
         formula, "TABLE($A$2,$A$1)",
@@ -125,7 +124,7 @@ fn data_table_body_cells_carry_synthesized_formula() {
     for (row, col, label) in body_positions {
         let cell = find_cell(&sheet.cells, row, col)
             .unwrap_or_else(|| panic!("{label} should be present in ParseOutput"));
-        let formula = cell.formula.as_ref().unwrap_or_else(|| {
+        let formula = cell.formula().unwrap_or_else(|| {
             panic!(
                 "{label} (Data Table body cell) should carry the synthesized \
                  TABLE() formula by construction; got formula=None"
@@ -187,7 +186,7 @@ fn data_table_writer_suppresses_body_cell_formulas() {
         let cell = find_cell(&sheet.cells, row, col)
             .unwrap_or_else(|| panic!("{label} should be present after round-trip"));
         assert_eq!(
-            cell.formula.as_deref(),
+            cell.formula().map(String::as_str),
             Some("TABLE($A$2,$A$1)"),
             "{label} body cell formula must round-trip through writer + reader"
         );
@@ -195,7 +194,7 @@ fn data_table_writer_suppresses_body_cell_formulas() {
         // correctly suppressed `<f>` on the body cell, so on re-parse the
         // OOXML cell_formula attribute is absent.
         assert!(
-            cell.cell_formula.is_none(),
+            cell.cell_formula().is_none(),
             "{label} must NOT round-trip with a `<f>` element (writer compactness contract)"
         );
     }
@@ -203,8 +202,7 @@ fn data_table_writer_suppresses_body_cell_formulas() {
     // The master must still carry its data-table cell_formula after round-trip.
     let master = find_cell(&sheet.cells, 1, 1).expect("B2 should be present after round-trip");
     let cf = master
-        .cell_formula
-        .as_ref()
+        .cell_formula()
         .expect("master B2 must carry cell_formula after round-trip");
     use ooxml_types::worksheet::CellFormulaType;
     assert_eq!(

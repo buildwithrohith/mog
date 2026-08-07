@@ -43,6 +43,7 @@
 //! sequentially.
 
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::sync::Arc;
 
 use crate::eval_bridge::MirrorCellRefResolver;
 use crate::formula_text::{FormulaTextDepIndex, FormulaTextDepTarget, FormulaTextProvider};
@@ -178,13 +179,13 @@ pub struct ComputeCore {
     id_alloc: std::sync::Arc<IdAllocator>,
     ast_cache: FxHashMap<CellId, AstEntry>,
     /// Formula strings stored separately for reparsing when references change.
-    formula_strings: FxHashMap<CellId, String>,
+    formula_strings: FxHashMap<CellId, Arc<str>>,
     /// Cell-authored formula text used for readback, independent of graph readiness.
     ///
     /// This is deliberately cell-only. `formula_strings` also stores synthetic
     /// variable/named-range formulas used by the graph, so it cannot be the
     /// document identity source for cell formula readback during deferred import.
-    cell_formula_text: FxHashMap<CellId, String>,
+    cell_formula_text: FxHashMap<CellId, Arc<str>>,
     formula_text_deps: FormulaTextDepIndex,
     /// Whether iterative calculation is enabled for this workbook.
     iterative_calc: bool,
@@ -289,6 +290,28 @@ impl ComputeCore {
 
     pub(crate) fn formula_text_provider(&self) -> FormulaTextProvider<'_> {
         FormulaTextProvider::new(&self.cell_formula_text, &self.formula_strings)
+    }
+
+    /// Store the rendered and authored forms of one cell formula while sharing
+    /// their allocation whenever the two strings are identical.
+    pub(super) fn insert_formula_text_pair(
+        &mut self,
+        cell_id: CellId,
+        rendered_formula: String,
+        authored_formula: String,
+    ) {
+        let authored_formula: Arc<str> = Arc::from(authored_formula);
+        let rendered_formula = if rendered_formula.as_str() == authored_formula.as_ref() {
+            Arc::clone(&authored_formula)
+        } else {
+            Arc::from(rendered_formula)
+        };
+        self.formula_strings.insert(cell_id, rendered_formula);
+        self.cell_formula_text.insert(cell_id, authored_formula);
+    }
+
+    pub(super) fn insert_formula_string(&mut self, cell_id: CellId, formula: String) {
+        self.formula_strings.insert(cell_id, Arc::from(formula));
     }
 
     pub(super) fn begin_sumifs_cache_epoch(&mut self) -> SumifsCacheEpoch {
@@ -571,7 +594,19 @@ impl ComputeCore {
 
         for (cell_id, formula) in authored_formula_text {
             let updated = replace_sheet_name_in_a1_formula(&formula, &old_name, name);
-            self.cell_formula_text.insert(cell_id, updated);
+            if self
+                .formula_strings
+                .get(&cell_id)
+                .is_some_and(|rendered| rendered.as_ref() == updated)
+            {
+                let rendered = self
+                    .formula_strings
+                    .get(&cell_id)
+                    .expect("formula string checked above");
+                self.cell_formula_text.insert(cell_id, Arc::clone(rendered));
+            } else {
+                self.cell_formula_text.insert(cell_id, Arc::from(updated));
+            }
         }
     }
 
@@ -584,20 +619,20 @@ impl ComputeCore {
         self.cell_formula_text
             .get(cell_id)
             .or_else(|| self.formula_strings.get(cell_id))
-            .map(|s| s.as_str())
+            .map(|s| s.as_ref())
     }
 
     /// Iterate over all (CellId, formula_string) pairs.
     /// Used to sync regenerated formula strings back to Yrs after structural changes.
     pub fn formula_strings_iter(&self) -> impl Iterator<Item = (&CellId, &str)> {
-        self.formula_strings.iter().map(|(k, v)| (k, v.as_str()))
+        self.formula_strings.iter().map(|(k, v)| (k, v.as_ref()))
     }
 
     pub fn formula_texts_for_diagnostics(&self) -> impl Iterator<Item = (&CellId, &str)> {
         self.cell_formula_text
             .iter()
-            .map(|(k, v)| (k, v.as_str()))
-            .chain(self.formula_strings.iter().map(|(k, v)| (k, v.as_str())))
+            .map(|(k, v)| (k, v.as_ref()))
+            .chain(self.formula_strings.iter().map(|(k, v)| (k, v.as_ref())))
     }
 
     /// Get the current value of a cell.
@@ -818,7 +853,7 @@ impl ComputeCore {
                     && pos.col() >= start_col
                     && pos.col() <= end_col
                 {
-                    Some((*cell_id, formula.clone()))
+                    Some((*cell_id, formula.to_string()))
                 } else {
                     None
                 }

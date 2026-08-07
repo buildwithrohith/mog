@@ -163,13 +163,18 @@ pub fn parse_csv_to_parse_output(
             let Some(inferred) = infer_cell(field, &palette_idx, evaluate_formulas) else {
                 continue; // empty fields are skipped (no entry in `cells`)
             };
+            let extras = inferred.formula.map(|formula| {
+                Box::new(domain_types::CellDataExtras {
+                    formula: Some(formula),
+                    ..Default::default()
+                })
+            });
             cells.push(CellData {
                 row: row_idx,
                 col: col_idx,
                 value: inferred.value,
-                formula: inferred.formula,
-                array_ref: None,
                 style_id: inferred.style_id,
+                extras,
                 ..CellData::default()
             });
         }

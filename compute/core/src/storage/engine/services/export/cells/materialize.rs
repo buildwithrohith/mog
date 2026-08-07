@@ -1,5 +1,5 @@
 use cell_types::{CellId, SheetId};
-use domain_types::{CellData, DocumentFormat, ImportedCellProjectionRole};
+use domain_types::{CellData, CellDataExtras, DocumentFormat, ImportedCellProjectionRole};
 use rustc_hash::FxHashMap;
 use value_types::CellValue;
 
@@ -105,27 +105,31 @@ pub(super) fn build_cell_data_for_cell_id(
         return None;
     }
 
-    Some(CellData {
-        row,
-        col,
-        value,
+    let extras = CellDataExtras {
         rich_string,
         formula: formula
             .as_deref()
             .map(|f| f.strip_prefix('=').unwrap_or(f).to_string()),
         array_ref: array_refs.get(cell_id).cloned(),
-        style_id,
         cell_formula: formula_metadata.get(cell_id).cloned(),
         cell_metadata_index,
         formula_result_type,
         has_empty_cached_value,
         formula_cache_provenance,
         vm,
-        phonetic,
         date_lexical_value,
         original_sst_index,
         original_value,
+    };
+
+    Some(CellData {
+        row,
+        col,
+        value,
+        style_id,
+        phonetic,
         projection_role: ImportedCellProjectionRole::Normal,
+        extras: (!extras.is_empty()).then(|| Box::new(extras)),
     })
 }
 
@@ -213,59 +217,42 @@ pub(super) fn range_payload_cell(row: u32, col: u32, value: CellValue) -> CellDa
         row,
         col,
         value,
-        rich_string: None,
-        formula: None,
-        array_ref: None,
         style_id: None,
-        cell_formula: None,
-        cell_metadata_index: None,
-        formula_result_type: None,
-        has_empty_cached_value: false,
-        formula_cache_provenance: Default::default(),
-        vm: None,
         phonetic: false,
-        date_lexical_value: None,
-        original_sst_index: None,
-        original_value: None,
         projection_role: ImportedCellProjectionRole::Normal,
+        extras: None,
     }
 }
 
 pub(super) fn is_plain_blank_cell(cell: &CellData) -> bool {
     cell.value.is_null()
-        && cell.formula.is_none()
-        && cell.rich_string.is_none()
+        && cell.formula().is_none()
+        && cell.rich_string().is_none()
         && cell.style_id.is_none()
-        && cell.cell_formula.is_none()
-        && cell.cell_metadata_index.is_none()
-        && cell.formula_result_type.is_none()
-        && !cell.has_empty_cached_value
-        && cell.formula_cache_provenance.is_absent_or_unknown()
-        && cell.vm.is_none()
+        && cell.cell_formula().is_none()
+        && cell.cell_metadata_index().is_none()
+        && cell.formula_result_type().is_none()
+        && !cell.has_empty_cached_value()
+        && cell.formula_cache_provenance().is_absent_or_unknown()
+        && cell.vm().is_none()
         && !cell.phonetic
-        && cell.date_lexical_value.is_none()
-        && cell.original_sst_index.is_none()
-        && cell
-            .original_value
-            .as_ref()
-            .is_none_or(|value| value.is_empty())
+        && cell.date_lexical_value().is_none()
+        && cell.original_sst_index().is_none()
+        && cell.original_value().is_none_or(|value| value.is_empty())
 }
 
 pub(super) fn is_imported_style_only_blank_cell(cell: &CellData) -> bool {
     cell.value.is_null()
-        && cell.formula.is_none()
-        && cell.rich_string.is_none()
+        && cell.formula().is_none()
+        && cell.rich_string().is_none()
         && cell.style_id.is_some()
-        && cell.cell_formula.is_none()
-        && cell.cell_metadata_index.is_none()
-        && cell.formula_result_type.is_none()
-        && !cell.has_empty_cached_value
-        && cell.vm.is_none()
-        && cell.original_sst_index.is_none()
-        && cell
-            .original_value
-            .as_ref()
-            .is_none_or(|value| value.is_empty())
+        && cell.cell_formula().is_none()
+        && cell.cell_metadata_index().is_none()
+        && cell.formula_result_type().is_none()
+        && !cell.has_empty_cached_value()
+        && cell.vm().is_none()
+        && cell.original_sst_index().is_none()
+        && cell.original_value().is_none_or(|value| value.is_empty())
 }
 
 pub(super) fn explicit_blank_cell(row: u32, col: u32) -> CellData {

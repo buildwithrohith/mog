@@ -102,7 +102,7 @@ pub(in crate::storage::engine) fn parse_and_hydrate_csv(
         let ranged: std::collections::HashSet<(u32, u32)> = sheet_data
             .cells
             .iter()
-            .filter(|c| c.formula.is_some() || !c.value.is_null())
+            .filter(|c| c.formula().is_some() || !c.value.is_null())
             .map(|c| (c.row, c.col))
             .filter(|pos| !snap_positions.contains(pos))
             .collect();

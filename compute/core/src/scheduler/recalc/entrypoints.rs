@@ -214,7 +214,7 @@ impl ComputeCore {
             .cell_formula_text
             .iter()
             .filter(|(cid, _)| !self.ast_cache.contains_key(cid))
-            .map(|(cid, s)| (*cid, s.clone()))
+            .map(|(cid, s)| (*cid, s.to_string()))
             .collect();
         for (cell_id, formula) in orphaned {
             if let Some(sheet_id) = mirror.sheet_for_cell(&cell_id) {

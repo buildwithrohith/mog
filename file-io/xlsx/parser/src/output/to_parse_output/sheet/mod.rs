@@ -118,7 +118,7 @@ pub(super) fn convert_sheet(
             authored_style_points.push((cell.row, cell.col, cell.style_id.unwrap_or(0)));
         } else {
             if is_styleless_blank_cell(&cell) {
-                cell.original_value = Some(String::new());
+                cell.extras_mut().original_value = Some(String::new());
             }
             cells.push(cell);
         }

@@ -73,7 +73,7 @@ pub(crate) fn collect_identity_required_anchors(
 
 fn anchors_from_formulas(sheet_data: &SheetData, out: &mut FxHashSet<(u32, u32)>) {
     for cell in &sheet_data.cells {
-        if cell.formula.is_some() {
+        if cell.formula().is_some() {
             out.insert((cell.row, cell.col));
         }
     }
@@ -81,7 +81,7 @@ fn anchors_from_formulas(sheet_data: &SheetData, out: &mut FxHashSet<(u32, u32)>
 
 fn anchors_from_rich_strings(sheet_data: &SheetData, out: &mut FxHashSet<(u32, u32)>) {
     for cell in &sheet_data.cells {
-        if cell.rich_string.is_some() {
+        if cell.rich_string().is_some() {
             out.insert((cell.row, cell.col));
         }
     }
@@ -246,7 +246,7 @@ fn anchors_from_merges(sheet_data: &SheetData, out: &mut FxHashSet<(u32, u32)>) 
 
 fn anchors_from_array_formulas(sheet_data: &SheetData, out: &mut FxHashSet<(u32, u32)>) {
     for cell in &sheet_data.cells {
-        if cell.array_ref.is_some() {
+        if cell.array_ref().is_some() {
             out.insert((cell.row, cell.col));
         }
     }
@@ -254,7 +254,7 @@ fn anchors_from_array_formulas(sheet_data: &SheetData, out: &mut FxHashSet<(u32,
 
 fn anchors_from_cse_arrays(sheet_data: &SheetData, out: &mut FxHashSet<(u32, u32)>) {
     for cell in &sheet_data.cells {
-        if let Some(cf) = &cell.cell_formula
+        if let Some(cf) = cell.cell_formula()
             && matches!(cf.t, CellFormulaType::Shared | CellFormulaType::Array)
         {
             out.insert((cell.row, cell.col));
@@ -400,10 +400,10 @@ mod tests {
     use super::*;
     use cell_types::{CellId, SheetId, SheetRange};
     use domain_types::{
-        AutoFilter, Comment, ConditionalFormat, FilterColumn, FloatingObject, FloatingObjectAnchor,
-        FloatingObjectCommon, FloatingObjectData, Hyperlink, MergeRegion, OoxmlFilterType,
-        ShapeData, Sparkline, SparklineCellAddress, SparklineDataRange, SparklineType,
-        ValidationSpec,
+        AutoFilter, CellDataExtras, Comment, ConditionalFormat, FilterColumn, FloatingObject,
+        FloatingObjectAnchor, FloatingObjectCommon, FloatingObjectData, Hyperlink, MergeRegion,
+        OoxmlFilterType, ShapeData, Sparkline, SparklineCellAddress, SparklineDataRange,
+        SparklineType, ValidationSpec,
     };
     use formula_types::{
         IdentityCellRef, IdentityFormula, IdentityRangeRef, NamedRangeDef, Scope, TableDef,
@@ -429,24 +429,33 @@ mod tests {
 
     fn make_formula_cell(row: u32, col: u32) -> domain_types::CellData {
         domain_types::CellData {
-            formula: Some("=1".into()),
+            extras: Some(Box::new(CellDataExtras {
+                formula: Some("=1".into()),
+                ..Default::default()
+            })),
             ..make_cell(row, col)
         }
     }
 
     fn make_spill_cell(row: u32, col: u32) -> domain_types::CellData {
         domain_types::CellData {
-            array_ref: Some("A1:B2".into()),
+            extras: Some(Box::new(CellDataExtras {
+                array_ref: Some("A1:B2".into()),
+                ..Default::default()
+            })),
             ..make_cell(row, col)
         }
     }
 
     fn make_cse_cell(row: u32, col: u32, t: CellFormulaType) -> domain_types::CellData {
         domain_types::CellData {
-            cell_formula: Some(CellFormula {
-                t,
+            extras: Some(Box::new(CellDataExtras {
+                cell_formula: Some(CellFormula {
+                    t,
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
+            })),
             ..make_cell(row, col)
         }
     }

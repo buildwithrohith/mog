@@ -69,9 +69,9 @@ pub(crate) fn convert_sheets(
                     // defaults. Cells with a style that differs from the
                     // positional default must be kept so their CellId is
                     // allocated and cell-level properties are hydrated.
-                    if cell.formula.is_none()
+                    if cell.formula().is_none()
                         && matches!(cell.value, CellValue::Null)
-                        && cell.original_value.is_none()
+                        && cell.original_value().is_none()
                     {
                         let cell_sid = cell.style_id.unwrap_or(0);
                         let row_sid = row_default_style.get(&cell.row).copied().unwrap_or(0);
@@ -95,9 +95,9 @@ pub(crate) fn convert_sheets(
                         row: cell.row,
                         col: cell.col,
                         value: cell.value.clone(),
-                        formula: cell.formula.clone(),
+                        formula: cell.formula().cloned(),
                         identity_formula: None,
-                        array_ref: cell.array_ref.clone(),
+                        array_ref: cell.array_ref().cloned(),
                     })
                 })
                 .collect();

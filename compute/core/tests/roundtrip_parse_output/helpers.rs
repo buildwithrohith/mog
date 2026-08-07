@@ -1,6 +1,6 @@
 //! Shared test helpers for round-trip tests.
 
-use domain_types::{CellData, ParseOutput, SheetData};
+use domain_types::{CellData, CellDataExtras, ParseOutput, SheetData};
 use value_types::CellValue;
 use xlsx_parser::write::write_xlsx_from_parse_output;
 
@@ -49,9 +49,8 @@ pub(super) fn cell(row: u32, col: u32, value: CellValue) -> CellData {
         row,
         col,
         value,
-        formula: None,
-        array_ref: None,
         style_id: None,
+        extras: None,
         ..Default::default()
     }
 }
@@ -62,9 +61,11 @@ pub(super) fn formula_cell(row: u32, col: u32, formula: &str, cached: CellValue)
         row,
         col,
         value: cached,
-        formula: Some(formula.to_string()),
-        array_ref: None,
         style_id: None,
+        extras: Some(Box::new(CellDataExtras {
+            formula: Some(formula.to_string()),
+            ..Default::default()
+        })),
         ..Default::default()
     }
 }
@@ -75,9 +76,8 @@ pub(super) fn styled_cell(row: u32, col: u32, value: CellValue, style_id: u32) -
         row,
         col,
         value,
-        formula: None,
-        array_ref: None,
         style_id: Some(style_id),
+        extras: None,
         ..Default::default()
     }
 }
@@ -97,12 +97,12 @@ pub(super) fn assert_cells_match(
     // Check all original cells exist in round-tripped
     for ((row, col), orig_cell) in &orig_map {
         // Skip empty/null cells -- the parser may drop them
-        if matches!(orig_cell.value, CellValue::Null) && orig_cell.formula.is_none() {
+        if matches!(orig_cell.value, CellValue::Null) && orig_cell.formula().is_none() {
             continue;
         }
         // Skip empty text cells -- they are not written to XLSX
         if matches!(&orig_cell.value, CellValue::Text(s) if s.as_ref().is_empty())
-            && orig_cell.formula.is_none()
+            && orig_cell.formula().is_none()
         {
             continue;
         }
@@ -130,7 +130,8 @@ pub(super) fn assert_cells_match(
 
         // Compare formulas
         assert_eq!(
-            orig_cell.formula, rt_cell.formula,
+            orig_cell.formula(),
+            rt_cell.formula(),
             "[{sheet_name}] Cell ({row}, {col}): formula mismatch"
         );
     }

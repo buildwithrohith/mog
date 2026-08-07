@@ -111,7 +111,10 @@ fn rich_data_relationship_closure_registers_owned_media_parts() {
                 row: 0,
                 col: 0,
                 value: DomainValue::Text(Arc::from("image")),
-                vm: Some(1),
+                extras: Some(Box::new(domain_types::CellDataExtras {
+                    vm: Some(1),
+                    ..Default::default()
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -166,7 +169,10 @@ fn rich_data_parts_do_not_emit_from_stale_cell_vm_fallback() {
                 row: 0,
                 col: 0,
                 value: DomainValue::Text(Arc::from("stale")),
-                vm: Some(1),
+                extras: Some(Box::new(domain_types::CellDataExtras {
+                    vm: Some(1),
+                    ..Default::default()
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -219,7 +225,10 @@ fn stale_imported_metadata_xml_does_not_emit_rich_data_or_cell_vm_refs() {
                 row: 0,
                 col: 0,
                 value: DomainValue::Text(Arc::from("stale")),
-                vm: Some(1),
+                extras: Some(Box::new(domain_types::CellDataExtras {
+                    vm: Some(1),
+                    ..Default::default()
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -271,7 +280,10 @@ fn rich_data_missing_related_part_does_not_block_export() {
                 row: 0,
                 col: 0,
                 value: DomainValue::Text(Arc::from("image")),
-                vm: Some(1),
+                extras: Some(Box::new(domain_types::CellDataExtras {
+                    vm: Some(1),
+                    ..Default::default()
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -366,7 +378,10 @@ fn rich_data_malformed_relationship_target_does_not_block_export() {
                 row: 0,
                 col: 0,
                 value: DomainValue::Text(Arc::from("image")),
-                vm: Some(1),
+                extras: Some(Box::new(domain_types::CellDataExtras {
+                    vm: Some(1),
+                    ..Default::default()
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -456,7 +471,10 @@ fn rich_data_xml_relationship_reference_requires_matching_rels_entry() {
                 row: 0,
                 col: 0,
                 value: DomainValue::Text(Arc::from("image")),
-                vm: Some(1),
+                extras: Some(Box::new(domain_types::CellDataExtras {
+                    vm: Some(1),
+                    ..Default::default()
+                })),
                 ..Default::default()
             }],
             ..Default::default()

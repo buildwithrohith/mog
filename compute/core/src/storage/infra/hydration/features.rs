@@ -62,17 +62,17 @@ pub(super) fn hydrate_cells(
         // so we pass None for the identity_formula parameter.
         let cell_prelim = build_cell_prelim(
             &cell.value,
-            cell.formula.as_deref(),
+            cell.formula().map(String::as_str),
             None, // No identity formulas in ParseOutput
         );
         let cell_map: MapRef = cells_map.insert(txn, &*cell_hex, cell_prelim);
-        if let Some(array_ref) = cell.array_ref.as_deref() {
+        if let Some(array_ref) = cell.array_ref().map(String::as_str) {
             write_array_ref_to_yrs(&cell_map, txn, array_ref);
         }
-        if let Some(rich_string) = cell.rich_string.as_ref() {
+        if let Some(rich_string) = cell.rich_string() {
             write_rich_string_to_yrs(&cell_map, txn, rich_string);
         }
-        if let Some(cell_formula) = cell.cell_formula.as_ref() {
+        if let Some(cell_formula) = cell.cell_formula() {
             write_formula_metadata_to_yrs(&cell_map, txn, cell_formula);
         }
 
@@ -105,17 +105,18 @@ pub(super) fn hydrate_cells_with_ids(
         if cell.projection_role == ImportedCellProjectionRole::DynamicArraySpillTarget {
             continue;
         }
-        let is_empty = cell.formula.is_none() && cell.value.is_null() && cell.rich_string.is_none();
+        let is_empty =
+            cell.formula().is_none() && cell.value.is_null() && cell.rich_string().is_none();
         let style_is_range_backed = range_style_positions.contains(&(cell.row, cell.col));
         let has_cell_properties = (cell.style_id.is_some() && !style_is_range_backed)
-            || cell.cell_metadata_index.is_some()
-            || cell.vm.is_some()
-            || cell.formula_result_type.is_some()
-            || cell.has_empty_cached_value
-            || !cell.formula_cache_provenance.is_absent_or_unknown()
-            || cell.original_sst_index.is_some()
-            || cell.original_value.is_some()
-            || cell.rich_string.is_some();
+            || cell.cell_metadata_index().is_some()
+            || cell.vm().is_some()
+            || cell.formula_result_type().is_some()
+            || cell.has_empty_cached_value()
+            || !cell.formula_cache_provenance().is_absent_or_unknown()
+            || cell.original_sst_index().is_some()
+            || cell.original_value().is_some()
+            || cell.rich_string().is_some();
 
         // Skip truly empty cells (no value, no formula, no persisted properties).
         // Cells with properties must stay in pos_map so hydrate_cell_styles can
@@ -126,7 +127,7 @@ pub(super) fn hydrate_cells_with_ids(
 
         let is_ranged = ranged_positions.contains(&(cell.row, cell.col));
         let requires_explicit_identity =
-            !is_ranged || cell.formula.is_some() || has_cell_properties;
+            !is_ranged || cell.formula().is_some() || has_cell_properties;
         if !requires_explicit_identity {
             continue;
         }
@@ -137,7 +138,7 @@ pub(super) fn hydrate_cells_with_ids(
 
         // Empty styled cells don't need a Yrs cell entry — only the
         // pos_map slot (for style hydration). Skip the Yrs write.
-        if is_empty && cell.original_value.is_none() {
+        if is_empty && cell.original_value().is_none() {
             continue;
         }
 
@@ -145,15 +146,15 @@ pub(super) fn hydrate_cells_with_ids(
             continue;
         }
 
-        let cell_prelim = build_cell_prelim(&cell.value, cell.formula.as_deref(), None);
+        let cell_prelim = build_cell_prelim(&cell.value, cell.formula().map(String::as_str), None);
         let cell_map: MapRef = cells_map.insert(txn, &*cell_hex, cell_prelim);
-        if let Some(array_ref) = cell.array_ref.as_deref() {
+        if let Some(array_ref) = cell.array_ref().map(String::as_str) {
             write_array_ref_to_yrs(&cell_map, txn, array_ref);
         }
-        if let Some(rich_string) = cell.rich_string.as_ref() {
+        if let Some(rich_string) = cell.rich_string() {
             write_rich_string_to_yrs(&cell_map, txn, rich_string);
         }
-        if let Some(cell_formula) = cell.cell_formula.as_ref() {
+        if let Some(cell_formula) = cell.cell_formula() {
             write_formula_metadata_to_yrs(&cell_map, txn, cell_formula);
         }
     }

@@ -42,7 +42,7 @@ pub(super) fn apply_cells(
     for cell in &sheet_data.cells {
         let key = (cell.row, cell.col);
         let is_data_table_master = data_table_master_formulas.contains_key(&key)
-            || cell.cell_formula.as_ref().is_some_and(|formula| {
+            || cell.cell_formula().is_some_and(|formula| {
                 formula.t == ooxml_types::worksheet::CellFormulaType::DataTable
             });
         // Data Table body cells carry a synthesized `=TABLE(r2, r1)` formula
@@ -52,8 +52,10 @@ pub(super) fn apply_cells(
             || is_data_table_body_formula(cell, is_data_table_master)
         {
             let mut sanitized = cell.clone();
-            sanitized.formula = None;
-            sanitized.cell_formula = None;
+            if let Some(extras) = sanitized.extras.as_mut() {
+                extras.formula = None;
+                extras.cell_formula = None;
+            }
             if sanitized.style_id.is_none() {
                 sanitized.style_id = authored_style_at(sanitized.row, sanitized.col);
             }
@@ -68,14 +70,20 @@ pub(super) fn apply_cells(
             if canonical.style_id.is_none() {
                 canonical.style_id = authored_style_at(canonical.row, canonical.col);
             }
-            canonical.cell_formula = shared_formula_plan
+            let current_formula_metadata = shared_formula_plan
                 .metadata_for(canonical.row, canonical.col)
                 .cloned()
                 .or_else(|| current_formula_metadata(&canonical).cloned());
+            if let Some(cell_formula) = current_formula_metadata {
+                canonical.extras_mut().cell_formula = Some(cell_formula);
+            } else if canonical.cell_formula().is_some() {
+                canonical.extras_mut().cell_formula = None;
+            }
             if let Some(cell_formula) = data_table_master_formulas.get(&key) {
-                canonical.cell_formula = Some(cell_formula.clone());
-                if canonical.formula.is_none() {
-                    canonical.formula = Some(data_table_formula_text(cell_formula));
+                let extras = canonical.extras_mut();
+                extras.cell_formula = Some(cell_formula.clone());
+                if extras.formula.is_none() {
+                    extras.formula = Some(data_table_formula_text(cell_formula));
                 }
             }
             convert_cell_with_metadata_refs(
@@ -124,7 +132,7 @@ fn convert_cell_with_metadata_refs(
         .and_then(|id| style_remapper.emitted_cell_xf_id(id));
 
     let authored_numeric_value = matching_authored_numeric_value(cell);
-    let value = match (&cell.value, &cell.formula) {
+    let value = match (&cell.value, cell.formula()) {
         (_, Some(formula)) => {
             let cached = match &cell.value {
                 DomainValue::Number(n) => Some(Box::new(CellValue::Number(n.get()))),
@@ -138,13 +146,13 @@ fn convert_cell_with_metadata_refs(
                 DomainValue::Error(e, _) => {
                     Some(Box::new(CellValue::Error(e.as_str().to_string())))
                 }
-                _ if cell.has_empty_cached_value => Some(Box::new(CellValue::Number(0.0))),
+                _ if cell.has_empty_cached_value() => Some(Box::new(CellValue::Number(0.0))),
                 _ => None,
             };
             CellValue::Formula {
                 formula: formula.clone(),
                 cached_value: cached,
-                cell_formula: cell.cell_formula.clone(),
+                cell_formula: cell.cell_formula().cloned(),
             }
         }
         (DomainValue::Number(n), None) => CellValue::Number(n.get()),
@@ -152,7 +160,7 @@ fn convert_cell_with_metadata_refs(
             CellValue::FormulaString(s.as_ref().to_string())
         }
         (DomainValue::Text(s), None) => {
-            if cell.formula_result_type == Some(6) {
+            if cell.formula_result_type() == Some(6) {
                 CellValue::FormulaString(s.as_ref().to_string())
             } else if let Some(rich) = current_rich_string(cell, s.as_ref()) {
                 let sst_idx = shared_strings.add_rich_shared_string(rich);
@@ -170,7 +178,7 @@ fn convert_cell_with_metadata_refs(
         _ => CellValue::Empty,
     };
 
-    let formula_type_hint = cell.formula_result_type.and_then(|t| match t {
+    let formula_type_hint = cell.formula_result_type().and_then(|t| match t {
         6 => Some("str".to_string()),
         4 => Some("e".to_string()),
         3 => Some("b".to_string()),
@@ -183,16 +191,16 @@ fn convert_cell_with_metadata_refs(
         col: cell.col,
         value,
         style_index,
-        original_value: if cell.has_empty_cached_value {
+        original_value: if cell.has_empty_cached_value() {
             Some(String::new())
         } else {
             authored_numeric_value
         },
         force_recalc: current_force_recalc(cell),
         cell_metadata_index: emit_cell_metadata_refs
-            .then_some(cell.cell_metadata_index)
+            .then_some(cell.cell_metadata_index())
             .flatten(),
-        vm: emit_cell_metadata_refs.then_some(cell.vm).flatten(),
+        vm: emit_cell_metadata_refs.then_some(cell.vm()).flatten(),
         preserve_space_formula: false,
         preserve_space_value: false,
         explicit_type: None,
@@ -203,11 +211,12 @@ fn convert_cell_with_metadata_refs(
 }
 
 fn current_force_recalc(cell: &DomainCellData) -> bool {
-    cell.formula_cache_provenance.state.is_current() && cell.formula_cache_provenance.force_recalc
+    cell.formula_cache_provenance().state.is_current()
+        && cell.formula_cache_provenance().force_recalc
 }
 
 fn compatible_date_lexical_value(cell: &DomainCellData) -> Option<String> {
-    let date = cell.date_lexical_value.as_ref()?;
+    let date = cell.date_lexical_value()?;
     match &cell.value {
         DomainValue::Text(s) if s.as_ref() == date => Some(date.clone()),
         _ => None,
@@ -218,12 +227,12 @@ fn current_rich_string(
     cell: &DomainCellData,
     text: &str,
 ) -> Option<domain_types::RichSharedString> {
-    let rich = cell.rich_string.as_ref()?;
+    let rich = cell.rich_string()?;
     (rich.plain_text == text).then(|| rich.clone())
 }
 
 fn matching_authored_numeric_value(cell: &DomainCellData) -> Option<String> {
-    let original = cell.original_value.as_ref()?;
+    let original = cell.original_value()?;
     let parsed = original.parse::<f64>().ok()?;
 
     match &cell.value {
@@ -246,8 +255,11 @@ mod tests {
             row: 0,
             col: 0,
             value: DomainValue::Text(Arc::from(value)),
-            original_sst_index,
-            original_value: original_sst_index.map(|idx| idx.to_string()),
+            extras: Some(Box::new(domain_types::CellDataExtras {
+                original_sst_index,
+                original_value: original_sst_index.map(|idx| idx.to_string()),
+                ..Default::default()
+            })),
             ..Default::default()
         }
     }
@@ -257,7 +269,12 @@ mod tests {
             row: 0,
             col: 0,
             value: DomainValue::Number(FiniteF64::must(value)),
-            original_value: original_value.map(str::to_string),
+            extras: original_value.map(|value| {
+                Box::new(domain_types::CellDataExtras {
+                    original_value: Some(value.to_string()),
+                    ..Default::default()
+                })
+            }),
             ..Default::default()
         }
     }
@@ -283,7 +300,10 @@ mod tests {
             row: 0,
             col: 0,
             value: DomainValue::Error(CellError::Num, None),
-            original_value: Some("NaN".to_string()),
+            extras: Some(Box::new(domain_types::CellDataExtras {
+                original_value: Some("NaN".to_string()),
+                ..Default::default()
+            })),
             ..Default::default()
         };
 
@@ -300,7 +320,10 @@ mod tests {
             row: 0,
             col: 0,
             value: DomainValue::Error(CellError::Value, None),
-            original_value: Some("NaN".to_string()),
+            extras: Some(Box::new(domain_types::CellDataExtras {
+                original_value: Some("NaN".to_string()),
+                ..Default::default()
+            })),
             ..Default::default()
         };
 
@@ -352,8 +375,11 @@ mod tests {
             row: 0,
             col: 0,
             value: DomainValue::Null,
-            formula: Some("A2".to_string()),
-            has_empty_cached_value: true,
+            extras: Some(Box::new(domain_types::CellDataExtras {
+                formula: Some("A2".to_string()),
+                has_empty_cached_value: true,
+                ..Default::default()
+            })),
             ..Default::default()
         };
 

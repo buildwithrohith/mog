@@ -7,7 +7,8 @@ use crate::snapshot::{
 };
 use cell_types::{ColId, PayloadEncoding, RangeAnchor, RangeId, RangeKind, RowId};
 use domain_types::{
-    AutoFilter, ParseOutput, SheetData, SheetDimensions, SortCondition, SortConditionBy, SortState,
+    AutoFilter, CellDataExtras, ParseOutput, SheetData, SheetDimensions, SortCondition,
+    SortConditionBy, SortState,
     domain::comment::{Comment, CommentType, PersonInfo},
     domain::external_link::{ExternalLink, ImportedExternalLinkIdentity},
     domain::workbook::{WorkbookView, WorkbookViewVisibility, WorkbookWebPublishing},
@@ -292,8 +293,11 @@ fn shared_string_hints_survive_yrs_hydration_export() {
                 row: 0,
                 col: 0,
                 value: CellValue::Text(Arc::from("Rich")),
-                original_sst_index: Some(0),
-                original_value: Some("0".to_string()),
+                extras: Some(Box::new(CellDataExtras {
+                    original_sst_index: Some(0),
+                    original_value: Some("0".to_string()),
+                    ..Default::default()
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -567,8 +571,11 @@ fn explicit_empty_cached_formula_value_survives_yrs_hydration_export() {
                 row: 0,
                 col: 0,
                 value: CellValue::Null,
-                formula: Some("A2".to_string()),
-                has_empty_cached_value: true,
+                extras: Some(Box::new(CellDataExtras {
+                    formula: Some("A2".to_string()),
+                    has_empty_cached_value: true,
+                    ..Default::default()
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -584,8 +591,8 @@ fn explicit_empty_cached_formula_value_survives_yrs_hydration_export() {
         .iter()
         .find(|cell| cell.row == 0 && cell.col == 0)
         .expect("formula cell should export");
-    assert_eq!(cell.formula.as_deref(), Some("A2"));
-    assert!(cell.has_empty_cached_value);
+    assert_eq!(cell.formula().map(String::as_str), Some("A2"));
+    assert!(cell.has_empty_cached_value());
 }
 
 #[test]
@@ -599,8 +606,11 @@ fn editing_formula_clears_explicit_empty_cached_value_metadata() {
                 row: 0,
                 col: 0,
                 value: CellValue::Null,
-                formula: Some("A2".to_string()),
-                has_empty_cached_value: true,
+                extras: Some(Box::new(CellDataExtras {
+                    formula: Some("A2".to_string()),
+                    has_empty_cached_value: true,
+                    ..Default::default()
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -641,8 +651,8 @@ fn editing_formula_clears_explicit_empty_cached_value_metadata() {
         .iter()
         .find(|cell| cell.row == 0 && cell.col == 0)
         .expect("formula cell should export");
-    assert_eq!(cell.formula.as_deref(), Some("A3"));
-    assert!(!cell.has_empty_cached_value);
+    assert_eq!(cell.formula().map(String::as_str), Some("A3"));
+    assert!(!cell.has_empty_cached_value());
 }
 
 #[test]
@@ -888,9 +898,12 @@ fn build_parse_output_from_yrs_preserves_imported_array_refs() {
                 row: 0,
                 col: 0,
                 value: CellValue::Text("first".into()),
-                formula: Some("_xlfn.SEQUENCE(3)".to_string()),
-                array_ref: Some("A1:A3".to_string()),
-                cell_formula: Some(cell_formula.clone()),
+                extras: Some(Box::new(CellDataExtras {
+                    formula: Some("_xlfn.SEQUENCE(3)".to_string()),
+                    array_ref: Some("A1:A3".to_string()),
+                    cell_formula: Some(cell_formula.clone()),
+                    ..Default::default()
+                })),
                 ..Default::default()
             }],
             ..Default::default()
@@ -906,9 +919,9 @@ fn build_parse_output_from_yrs_preserves_imported_array_refs() {
         .find(|cell| cell.row == 0 && cell.col == 0)
         .expect("exported array formula anchor");
 
-    assert_eq!(cell.formula.as_deref(), Some("SEQUENCE(3)"));
-    assert_eq!(cell.array_ref.as_deref(), Some("A1:A3"));
-    assert_eq!(cell.cell_formula.as_ref(), Some(&cell_formula));
+    assert_eq!(cell.formula().map(String::as_str), Some("SEQUENCE(3)"));
+    assert_eq!(cell.array_ref().map(String::as_str), Some("A1:A3"));
+    assert_eq!(cell.cell_formula(), Some(&cell_formula));
 }
 
 fn engine_from_parse_output_with_ranges(output: &ParseOutput) -> YrsComputeEngine {
@@ -1109,7 +1122,7 @@ fn test_xlsx_export_roundtrip() {
     // B2: formula =1+2 with computed value 3
     let b2 = cell_map.get(&(1, 1)).expect("B2 should exist");
     assert_eq!(
-        b2.formula.as_deref(),
+        b2.formula().map(String::as_str),
         Some("1+2"),
         "B2 should preserve formula '1+2' (export strips '=' prefix)"
     );
@@ -1172,7 +1185,7 @@ fn test_xlsx_export_simple_snapshot_reparseable() {
 
     // A2 = =A1+B1, computed value 30
     let a2 = cell_map.get(&(1, 0)).expect("A2 should exist");
-    assert_eq!(a2.formula.as_deref(), Some("A1+B1"));
+    assert_eq!(a2.formula().map(String::as_str), Some("A1+B1"));
 }
 
 fn range_export_row_id(row: u32) -> RowId {
@@ -1684,7 +1697,7 @@ fn test_xlsx_export_blank_range_override_suppresses_payload_value() {
         .get(&(2, 2))
         .expect("cleared override should export as an explicit blank cell");
     assert_eq!(cleared.value, CellValue::Null);
-    assert!(cleared.formula.is_none());
+    assert!(cleared.formula().is_none());
 }
 
 #[test]

@@ -41,8 +41,8 @@ pub(super) fn imported_metadata_xml_is_current(
     {
         return false;
     }
-    collect_cell_refs(output, |cell| cell.cell_metadata_index) == imported.cell_metadata_refs
-        && collect_cell_refs(output, |cell| cell.vm) == imported.value_metadata_refs
+    collect_cell_refs(output, |cell| cell.cell_metadata_index()) == imported.cell_metadata_refs
+        && collect_cell_refs(output, |cell| cell.vm()) == imported.value_metadata_refs
 }
 
 fn collect_cell_refs(
