@@ -96,8 +96,7 @@ pub(crate) fn link_named_ranges_to_data_ranges<R, C>(
     sheets: &[SheetSnapshot],
     all_row_ids: &[R],
     all_col_ids: &[C],
-)
-where
+) where
     R: AsRef<[RowId]>,
     C: AsRef<[ColId]>,
 {

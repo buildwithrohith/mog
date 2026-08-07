@@ -1,7 +1,7 @@
 use cell_types::{CellId, SheetId};
 use snapshot_types::RecalcResult;
 
-use super::{services, YrsComputeEngine};
+use super::{YrsComputeEngine, services};
 
 impl YrsComputeEngine {
     /// Post-process recalc (CF refresh + display text + schema validation) and stash for flush.

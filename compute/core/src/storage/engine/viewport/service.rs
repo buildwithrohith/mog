@@ -160,9 +160,9 @@ impl ViewportService {
 #[cfg(test)]
 mod tests {
     use super::ViewportService;
+    use crate::storage::engine::viewport::functions::reset_viewport_state;
     use cell_types::SheetId;
     use domain_types::CellFormat;
-    use crate::storage::engine::viewport::functions::reset_viewport_state;
 
     #[test]
     fn reset_viewport_state_removes_only_the_reset_sheet_palette() {
