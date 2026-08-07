@@ -239,6 +239,27 @@ impl YrsComputeEngine {
         ))
     }
 
+    /// Hydrate one existing deferred XLSX sheet into Yrs without changing
+    /// workbook order or rewriting workbook-root maps.
+    #[bridge::write(scope = "sheet")]
+    #[bridge::skip(ts_bridge)]
+    #[tracing::instrument(name = "engine_hydrate_deferred_sheet", skip_all)]
+    pub fn hydrate_deferred_sheet(
+        &mut self,
+        sheet_id: SheetId,
+    ) -> Result<(Vec<u8>, MutationResult), ComputeError> {
+        construction::hydrate_deferred_sheet(self, sheet_id)?;
+        let result = services::mutation_handlers::build_mutation_result_for_deferred(
+            &self.stores,
+            &self.mirror,
+            self.deferred_hydration.as_ref(),
+        );
+        Ok((
+            compute_wire::mutation::serialize_multi_viewport_patches(&[]),
+            result,
+        ))
+    }
+
     // -------------------------------------------------------------------
     // Import (CSV → Rust hydration, mirrors the XLSX path)
     // -------------------------------------------------------------------

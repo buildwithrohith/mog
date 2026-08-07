@@ -114,6 +114,7 @@ pub(crate) fn insert_missing_anchored_identities(
 ///
 /// This allows the Range classifier to run between ID allocation and Yrs
 /// hydration, so that ranged cells can be skipped during per-cell Yrs writes.
+#[derive(Clone)]
 pub(crate) struct SheetIdAllocation {
     pub sheet_id: SheetId,
     pub sheet_hex: SmallHex,

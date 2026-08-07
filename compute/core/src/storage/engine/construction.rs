@@ -55,15 +55,15 @@ mod xlsx;
 
 pub(super) use assembly::{
     assemble_engine, from_snapshot, from_snapshot_with_layout_metrics, from_yrs_state,
-    from_yrs_state_with_layout_metrics, rebuild_engine_from_snapshot, snapshot_id_high_water_mark,
+    from_yrs_state_with_layout_metrics, rebuild_engine_from_snapshot,
 };
 pub(in crate::storage::engine) use axis_resolver::{
     register_pos_to_id_entries, resolve_sheet_axes_from_yrs,
 };
 pub(super) use csv::{from_csv_bytes, import_from_csv_bytes};
 pub(super) use deferred::{
-    commit_deferred_hydration, import_from_xlsx_bytes_deferred, materialize_deferred_sheet,
-    stage_deferred_hydration,
+    commit_deferred_hydration, hydrate_deferred_sheet, import_from_xlsx_bytes_deferred,
+    materialize_deferred_sheet, stage_deferred_hydration,
 };
 pub(super) use indexes::{
     build_grid_indexes_from_allocations_range, build_grid_indexes_from_yrs,

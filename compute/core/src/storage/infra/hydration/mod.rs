@@ -128,20 +128,23 @@ pub trait IdAllocator {
     fn alloc_col_id(&mut self) -> ColId;
 }
 
-/// Default allocator backed by a `cell_types::IdAllocator` instance.
+/// Hydration adapter backed by a shared `cell_types::IdAllocator`.
 ///
-/// Uses the same monotonic counter approach as the storage-level allocator.
-/// Each `DefaultIdAllocator` instance has its own counter; for shared global
-/// allocation, wrap in a static or pass the same instance throughout hydration.
-pub struct DefaultIdAllocator {
-    inner: cell_types::IdAllocator,
+/// Hydration APIs take a mutable trait object for historical reasons, while the
+/// authoritative allocator is atomic and shared by GridIndex, ComputeCore, and
+/// deferred XLSX hydration. Keeping the `Arc` here means later-sheet hydration
+/// advances the same counter that user edits use; it cannot accidentally start
+/// from a stale snapshot seed.
+#[derive(Clone)]
+pub struct SharedIdAllocator {
+    inner: Arc<cell_types::IdAllocator>,
 }
 
-impl DefaultIdAllocator {
+impl SharedIdAllocator {
     /// Create a new allocator with counter starting at 1.
     pub fn new() -> Self {
         Self {
-            inner: cell_types::IdAllocator::new(),
+            inner: Arc::new(cell_types::IdAllocator::new()),
         }
     }
 
@@ -151,8 +154,23 @@ impl DefaultIdAllocator {
     /// ID collisions with already-allocated identities.
     pub fn with_seed(seed: u64) -> Self {
         Self {
-            inner: cell_types::IdAllocator::with_seed(seed),
+            inner: Arc::new(cell_types::IdAllocator::with_seed(seed)),
         }
+    }
+
+    /// Adapt an existing engine allocator for a hydration operation.
+    pub fn from_shared(inner: Arc<cell_types::IdAllocator>) -> Self {
+        Self { inner }
+    }
+
+    /// Return the authoritative allocator shared with the engine.
+    pub fn shared(&self) -> Arc<cell_types::IdAllocator> {
+        Arc::clone(&self.inner)
+    }
+
+    /// Atomically reserve every raw ID up to and including `raw_id`.
+    pub fn ensure_past(&self, raw_id: u128) {
+        self.inner.ensure_past(raw_id);
     }
 
     pub fn alloc_range_id(&mut self) -> cell_types::RangeId {
@@ -160,13 +178,13 @@ impl DefaultIdAllocator {
     }
 }
 
-impl Default for DefaultIdAllocator {
+impl Default for SharedIdAllocator {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl IdAllocator for DefaultIdAllocator {
+impl IdAllocator for SharedIdAllocator {
     fn alloc_cell_id(&mut self) -> CellId {
         CellId::from_raw(self.inner.next_u128())
     }
@@ -178,5 +196,37 @@ impl IdAllocator for DefaultIdAllocator {
     }
     fn alloc_col_id(&mut self) -> ColId {
         ColId::from_raw(self.inner.next_u128())
+    }
+}
+
+/// Backwards-compatible name for callers that want an independent allocator.
+/// New deferred hydration code uses [`SharedIdAllocator::from_shared`].
+pub type DefaultIdAllocator = SharedIdAllocator;
+
+#[cfg(test)]
+mod tests {
+    use super::{IdAllocator, SharedIdAllocator};
+    use std::collections::HashSet;
+    use std::sync::Arc;
+
+    #[test]
+    fn shared_hydration_allocator_uses_runtime_authority_for_all_identity_kinds() {
+        let runtime = Arc::new(cell_types::IdAllocator::with_seed(100));
+        let mut hydration = SharedIdAllocator::from_shared(Arc::clone(&runtime));
+        let raw_ids = [
+            hydration.alloc_sheet_id().as_u128(),
+            hydration.alloc_row_id().as_u128(),
+            hydration.alloc_col_id().as_u128(),
+            hydration.alloc_cell_id().as_u128(),
+            hydration.alloc_range_id().as_u128(),
+            runtime.next_u128(),
+        ];
+
+        let unique_ids: HashSet<_> = raw_ids.into_iter().collect();
+        assert_eq!(unique_ids.len(), raw_ids.len());
+        assert_eq!(runtime.high_water_mark(), 106);
+
+        hydration.ensure_past(10_000);
+        assert_eq!(runtime.next_u128(), 10_001);
     }
 }
