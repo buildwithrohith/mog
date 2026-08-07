@@ -12,9 +12,10 @@
 #![allow(clippy::string_slice)]
 
 use crate::domain::cells::{
-    CellData, ParseExtras, apply_parse_extras_with_arcs, build_col_style_ranges_from_widths,
-    coalesce_authored_style_only_cells, convert_cell_data, count_worksheet_cell_elements,
-    data_table_info, parse_worksheet_fast_with_extras, pre_sheet_data_region,
+    CellData, FastParseDiagnostics, ParseExtras, apply_parse_extras_with_arcs,
+    build_col_style_ranges_from_widths, coalesce_authored_style_only_cells, convert_cell_data,
+    count_worksheet_cell_elements, data_table_info, parse_worksheet_fast_with_extras,
+    pre_sheet_data_region,
 };
 use crate::domain::charts::read::{
     parse_charts_for_sheet, parse_connectors_for_sheet, parse_drawing_and_charts_for_sheet,
@@ -1281,6 +1282,7 @@ fn process_sheet_core(
 
     let mut row_heights = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut fast_parse_diagnostics = FastParseDiagnostics::default();
 
     // Parse col widths early so we can build a col-style lookup for the cell parser
     let pre_sd = pre_sheet_data_region(worksheet_xml);
@@ -1333,6 +1335,7 @@ fn process_sheet_core(
         &mut strings_buffer,
         &mut row_heights,
         &mut extras,
+        &mut fast_parse_diagnostics,
         empty_col_styles,
     );
 
@@ -1344,6 +1347,7 @@ fn process_sheet_core(
         strings_buffer.clear();
         row_heights.clear();
         extras = ParseExtras::default();
+        fast_parse_diagnostics.clear();
 
         cell_count = parse_worksheet_fast_with_extras(
             worksheet_xml,
@@ -1352,6 +1356,7 @@ fn process_sheet_core(
             &mut strings_buffer,
             &mut row_heights,
             &mut extras,
+            &mut fast_parse_diagnostics,
             empty_col_styles,
         );
     }
@@ -1509,6 +1514,7 @@ fn process_sheet_core(
         sheet_id: None,            // Set later from SheetInfo at assembly time
         state: Default::default(), // Set later from SheetInfo at assembly time
         cells,
+        fast_parse_diagnostics,
         authored_style_runs,
         explicit_blank_cells,
         merges,
@@ -1696,6 +1702,7 @@ fn parse_sheets_sequential(
 
         let mut row_heights = Vec::new();
         let mut extras = ParseExtras::default();
+        let mut fast_parse_diagnostics = FastParseDiagnostics::default();
 
         // Parse col widths early so we can build a col-style lookup for the cell parser
         let pre_sd_early = pre_sheet_data_region(&worksheet_xml);
@@ -1749,6 +1756,7 @@ fn parse_sheets_sequential(
             &mut strings_buffer,
             &mut row_heights,
             &mut extras,
+            &mut fast_parse_diagnostics,
             empty_col_styles,
         );
 
@@ -1760,6 +1768,7 @@ fn parse_sheets_sequential(
             strings_buffer.clear();
             row_heights.clear();
             extras = ParseExtras::default();
+            fast_parse_diagnostics.clear();
 
             cell_count = parse_worksheet_fast_with_extras(
                 &worksheet_xml,
@@ -1768,6 +1777,7 @@ fn parse_sheets_sequential(
                 &mut strings_buffer,
                 &mut row_heights,
                 &mut extras,
+                &mut fast_parse_diagnostics,
                 empty_col_styles,
             );
         }
@@ -2069,6 +2079,7 @@ fn parse_sheets_sequential(
             sheet_id: sheet_context.sheet_id,
             state: sheet_context.visibility,
             cells,
+            fast_parse_diagnostics,
             authored_style_runs,
             explicit_blank_cells,
             merges,

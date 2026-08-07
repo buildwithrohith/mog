@@ -6,6 +6,7 @@ use domain_types::{
     ThemeColorSource, ThemeData, WorkbookMetadata,
 };
 
+use crate::domain::cells::{FastParseDiagnosticCode, FastParseDiagnosticSample};
 use crate::output::results::FullParseResult;
 
 use super::normalize_rgb_color;
@@ -182,39 +183,175 @@ fn metadata_refs(
 // =============================================================================
 
 pub(super) fn build_diagnostics(result: &FullParseResult) -> ParseDiagnostics {
-    let errors: Vec<DtParseError> = result
-        .errors
-        .iter()
-        .map(|e| DtParseError {
-            code: e.code,
-            severity: e.severity.clone(),
-            message: e.message.clone(),
-            part: e.part.clone(),
-            row: e.row,
-            col: e.col,
-        })
-        .collect();
-
-    let stats = DtParseStats {
-        total_cells: result.stats.total_cells,
-        total_sheets: result.stats.total_sheets,
-        parse_time_us: result.stats.parse_time_us as u64,
+    let mut diagnostics = ParseDiagnostics {
+        errors: result
+            .errors
+            .iter()
+            .map(|e| DtParseError {
+                code: e.code,
+                severity: e.severity.clone(),
+                message: e.message.clone(),
+                part: e.part.clone(),
+                row: e.row,
+                col: e.col,
+            })
+            .collect(),
+        stats: DtParseStats {
+            total_cells: result.stats.total_cells,
+            total_sheets: result.stats.total_sheets,
+            parse_time_us: result.stats.parse_time_us as u64,
+        },
+        force_recalc_cells: std::collections::HashSet::new(),
+        import_report: None,
     };
 
+    append_fast_parse_diagnostics(result, &mut diagnostics);
+
     // Collect force-recalc cells across all sheets, preserving sheet identity.
-    let mut force_recalc_cells = std::collections::HashSet::new();
     for (sheet_idx, sheet) in result.sheets.iter().enumerate() {
         for cell in &sheet.cells {
             if cell.force_recalc {
-                force_recalc_cells.insert((sheet_idx as u32, cell.row, cell.col));
+                diagnostics
+                    .force_recalc_cells
+                    .insert((sheet_idx as u32, cell.row, cell.col));
             }
         }
     }
 
-    ParseDiagnostics {
-        errors,
-        stats,
-        force_recalc_cells,
-        import_report: None,
+    diagnostics
+}
+
+fn append_fast_parse_diagnostics(result: &FullParseResult, diagnostics: &mut ParseDiagnostics) {
+    if !result
+        .sheets
+        .iter()
+        .any(|sheet| sheet.fast_parse_diagnostics.total_count() > 0)
+    {
+        return;
     }
+
+    let mut report = diagnostics.clone().into_import_report();
+    for sheet in &result.sheets {
+        let fast = &sheet.fast_parse_diagnostics;
+        for code in FastParseDiagnosticCode::ALL {
+            let count = fast.count(code);
+            if count == 0 {
+                continue;
+            }
+
+            let mut sampled = false;
+            for sample in fast.samples().filter(|sample| sample.code == code) {
+                sampled = true;
+                append_fast_parse_diagnostic(
+                    diagnostics,
+                    &mut report,
+                    sheet.index,
+                    sheet.owner_part_path.as_deref(),
+                    code,
+                    count,
+                    Some(sample),
+                );
+            }
+            if !sampled {
+                append_fast_parse_diagnostic(
+                    diagnostics,
+                    &mut report,
+                    sheet.index,
+                    sheet.owner_part_path.as_deref(),
+                    code,
+                    count,
+                    None,
+                );
+            }
+        }
+    }
+    diagnostics.import_report = Some(report.canonicalized());
+}
+
+fn append_fast_parse_diagnostic(
+    diagnostics: &mut ParseDiagnostics,
+    report: &mut domain_types::ImportReport,
+    sheet_index: usize,
+    part: Option<&str>,
+    code: FastParseDiagnosticCode,
+    count: u32,
+    sample: Option<&FastParseDiagnosticSample>,
+) {
+    let import_code = match code {
+        FastParseDiagnosticCode::MalformedXml => domain_types::ImportDiagnosticCode::MalformedXml,
+        FastParseDiagnosticCode::InvalidCellReference => {
+            domain_types::ImportDiagnosticCode::InvalidCellReference
+        }
+        FastParseDiagnosticCode::InvalidSharedStringIndex => {
+            domain_types::ImportDiagnosticCode::InvalidSharedStringIndex
+        }
+    };
+    let (row, byte_offset) = sample
+        .map(|sample| (Some(sample.row), Some(sample.byte_offset)))
+        .unwrap_or((None, None));
+    let message = match byte_offset {
+        Some(byte_offset) => format!(
+            "Fast worksheet parser recorded {} at byte offset {} (row {}); total occurrences: {}",
+            code.description(),
+            byte_offset,
+            row.unwrap_or_default(),
+            count
+        ),
+        None => format!(
+            "Fast worksheet parser recorded {} occurrence(s) of {}; sample limit exhausted",
+            count,
+            code.description()
+        ),
+    };
+    let part = part.map(str::to_owned);
+    let object_id = format!(
+        "fast-parse:{}:{}:{}",
+        sheet_index,
+        code.parse_code(),
+        byte_offset.unwrap_or_default()
+    );
+    let diagnostic = domain_types::ImportDiagnostic {
+        id: domain_types::deterministic_diagnostic_id(
+            &import_code,
+            part.as_deref(),
+            None,
+            row,
+            None,
+            Some(&object_id),
+        ),
+        code: import_code.clone(),
+        severity: domain_types::ImportSeverity::Error,
+        feature: domain_types::ImportFeatureKind::Cell,
+        recoverability: match code {
+            FastParseDiagnosticCode::InvalidSharedStringIndex => {
+                domain_types::ImportRecoverability::Repaired
+            }
+            FastParseDiagnosticCode::MalformedXml
+            | FastParseDiagnosticCode::InvalidCellReference => {
+                domain_types::ImportRecoverability::MalformedDropped
+            }
+        },
+        message: message.clone(),
+        reference: Some(domain_types::ImportDiagnosticRef {
+            code: Some(import_code),
+            part: part.clone(),
+            sheet_index: Some(sheet_index as u32),
+            row,
+            message: Some(message.clone()),
+            feature_kind: Some(domain_types::ImportFeatureKind::Cell),
+            ..Default::default()
+        }),
+        details: None,
+        import_phases: vec![domain_types::ImportPhase::Parser],
+        first_import_phase: Some(domain_types::ImportPhase::Parser),
+    };
+    diagnostics.errors.push(DtParseError {
+        code: code.parse_code(),
+        severity: "error".to_string(),
+        message,
+        part,
+        row,
+        col: None,
+    });
+    report.diagnostics.push(diagnostic);
 }

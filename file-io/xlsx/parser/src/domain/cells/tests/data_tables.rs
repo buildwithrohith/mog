@@ -1,4 +1,6 @@
-use crate::domain::cells::{CellData, ParseExtras, parse_worksheet_fast_with_extras};
+use crate::domain::cells::{
+    CellData, FastParseDiagnostics, ParseExtras, parse_worksheet_fast_with_extras,
+};
 
 #[test]
 fn test_parse_data_table_typed_input_refs() {
@@ -22,6 +24,7 @@ fn test_parse_data_table_typed_input_refs() {
     let mut cells = vec![CellData::default(); 10];
     let mut strings = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let _ = parse_worksheet_fast_with_extras(
         xml,
@@ -30,6 +33,7 @@ fn test_parse_data_table_typed_input_refs() {
         &mut strings,
         &mut Vec::new(),
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 
@@ -77,6 +81,7 @@ fn test_parse_data_table_ref_error_collapses_to_none() {
     let mut cells = vec![CellData::default(); 10];
     let mut strings = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let _ = parse_worksheet_fast_with_extras(
         xml,
@@ -85,6 +90,7 @@ fn test_parse_data_table_ref_error_collapses_to_none() {
         &mut strings,
         &mut Vec::new(),
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 
@@ -119,6 +125,7 @@ fn test_parse_data_table_unicode_does_not_panic() {
     let mut cells = vec![CellData::default(); 10];
     let mut strings = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let _ = parse_worksheet_fast_with_extras(
         xml,
@@ -127,6 +134,7 @@ fn test_parse_data_table_unicode_does_not_panic() {
         &mut strings,
         &mut Vec::new(),
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 

@@ -1,15 +1,27 @@
 use crate::domain::cells::{
     CELL_TYPE_BOOL, CELL_TYPE_ERROR, CELL_TYPE_FORMULA_STRING, CELL_TYPE_NUMBER, CELL_TYPE_STRING,
-    CellData, ParseExtras, VALUE_TYPE_CACHED_FORMULA, VALUE_TYPE_FORMULA, VALUE_TYPE_INLINE,
-    VALUE_TYPE_SHARED_STRING, apply_parse_extras_with_arcs, convert_cell_data,
-    parse_worksheet_fast, parse_worksheet_fast_with_extras,
+    CellData, FastParseDiagnosticCode, FastParseDiagnostics, ParseExtras,
+    VALUE_TYPE_CACHED_FORMULA, VALUE_TYPE_FORMULA, VALUE_TYPE_INLINE, VALUE_TYPE_SHARED_STRING,
+    parse_worksheet_fast,
+    parse_worksheet_fast_with_extras,
 };
-use std::sync::Arc;
 
 fn value_bytes<'a>(cell: &CellData, strings: &'a [u8]) -> &'a [u8] {
     let start = cell.get_value_offset() as usize;
     let end = start + cell.get_value_len() as usize;
     &strings[start..end]
+}
+
+fn cell_fixture(cell: &CellData) -> (u32, u32, u8, u16, u8, u32, u32) {
+    (
+        cell.get_row(),
+        cell.get_col(),
+        cell.get_cell_type(),
+        cell.get_style_idx(),
+        cell.get_value_type(),
+        cell.get_value_offset(),
+        cell.get_value_len(),
+    )
 }
 
 #[test]
@@ -58,63 +70,146 @@ fn test_parse_worksheet_basic() {
 }
 
 #[test]
-fn full_parse_shared_strings_resolve_from_workbook_arcs_without_sheet_copies() {
+fn malformed_cell_resyncs_to_later_cells_and_records_diagnostic() {
     let xml = br#"<worksheet><sheetData><row r="1">
-      <c r="A1" t="s"><v>0</v></c>
-      <c r="B1" t="s"><f>A1</f><v>0</v></c>
+      <c r="A1"><v>1</v></c>
+      <c r="B1><v>broken</v>
+      <c r="C1"><v>3</v></c>
     </row></sheetData></worksheet>"#;
-    let shared_strings: Vec<&str> = vec!["Shared"];
-    let shared_string_arcs: Vec<Arc<str>> = shared_strings
-        .iter()
-        .map(|value| Arc::from(*value))
-        .collect();
-    let mut cells = vec![CellData::default(); 4];
+    let shared_strings: Vec<&str> = vec![];
+    let mut cells = vec![CellData::default(); 10];
     let mut strings = Vec::new();
-    let mut row_heights = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let count = parse_worksheet_fast_with_extras(
         xml,
         &shared_strings,
         &mut cells,
         &mut strings,
-        &mut row_heights,
+        &mut Vec::new(),
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 
     assert_eq!(count, 2);
-    assert_eq!(cells[0].value_type, VALUE_TYPE_SHARED_STRING);
-    let first_value_len = cells[0].value_len;
-    assert_eq!(first_value_len, 0);
-    assert_eq!(extras.sst_indices, vec![(0, 0)]);
-    assert_eq!(extras.cached_values, vec![(1, 2, 1)]);
+    assert_eq!(cells[0].get_col(), 0);
+    assert_eq!(cells[1].get_col(), 2);
+    assert_eq!(value_bytes(&cells[0], &strings), b"1");
+    assert_eq!(value_bytes(&cells[1], &strings), b"3");
+    assert_eq!(diagnostics.count(FastParseDiagnosticCode::MalformedXml), 1);
+    assert_eq!(diagnostics.sample_count(), 1);
+}
 
-    let mut decode_buf = Vec::new();
-    let mut full_cells: Vec<_> = cells[..count]
-        .iter()
-        .map(|cell| convert_cell_data(cell, &strings, &mut decode_buf))
-        .collect();
-    apply_parse_extras_with_arcs(
-        &mut full_cells,
-        &extras,
-        &cells[..count],
-        &strings,
+#[test]
+fn clean_fast_parse_keeps_diagnostics_empty() {
+    let xml = br#"<worksheet><sheetData><row r="1">
+      <c r="A1"><v>1</v></c>
+      <c r="B1" t="s"><v>0</v></c>
+    </row></sheetData></worksheet>"#;
+    let shared_strings = vec!["clean"];
+    let mut cells = vec![CellData::default(); 10];
+    let mut strings = Vec::new();
+    let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
+    let mut baseline_cells = vec![CellData::default(); 10];
+    let mut baseline_strings = Vec::new();
+
+    // The legacy entry point is the clean-fixture baseline for the diagnostics
+    // equipped entry point: both must emit identical cell bytes and metadata.
+    let baseline_count = parse_worksheet_fast(
+        xml,
+        &shared_strings,
+        &mut baseline_cells,
+        &mut baseline_strings,
+        &mut Vec::new(),
         &[],
-        &shared_string_arcs,
     );
 
-    assert_eq!(full_cells[0].value.as_deref(), Some(""));
-    assert_eq!(full_cells[0].sst_index, Some(0));
-    assert!(Arc::ptr_eq(
-        full_cells[0].sst_resolved.as_ref().unwrap(),
-        &shared_string_arcs[0]
-    ));
-    assert!(full_cells[1].value.is_none());
-    assert!(Arc::ptr_eq(
-        full_cells[1].sst_resolved.as_ref().unwrap(),
-        &shared_string_arcs[0]
-    ));
+    let count = parse_worksheet_fast_with_extras(
+        xml,
+        &shared_strings,
+        &mut cells,
+        &mut strings,
+        &mut Vec::new(),
+        &mut extras,
+        &mut diagnostics,
+        &[],
+    );
+
+    assert_eq!(count, baseline_count);
+    assert_eq!(strings, baseline_strings);
+    for (actual, baseline) in cells[..count].iter().zip(&baseline_cells[..baseline_count]) {
+        assert_eq!(cell_fixture(actual), cell_fixture(baseline));
+    }
+    assert_eq!(value_bytes(&cells[0], &strings), b"1");
+    assert_eq!(value_bytes(&cells[1], &strings), b"clean");
+    assert_eq!(diagnostics.total_count(), 0);
+    assert_eq!(diagnostics.sample_count(), 0);
+}
+
+#[test]
+fn invalid_cell_reference_is_skipped_without_misplacing_neighbors() {
+    let xml = br#"<worksheet><sheetData><row r="1">
+      <c r="A1"><v>1</v></c>
+      <c r="not-a-cell"><v>2</v></c>
+      <c r="not-a-cell-2"/>
+      <c r="C1"><v>3</v></c>
+    </row></sheetData></worksheet>"#;
+    let shared_strings: Vec<&str> = vec![];
+    let mut cells = vec![CellData::default(); 10];
+    let mut strings = Vec::new();
+    let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
+
+    let count = parse_worksheet_fast_with_extras(
+        xml,
+        &shared_strings,
+        &mut cells,
+        &mut strings,
+        &mut Vec::new(),
+        &mut extras,
+        &mut diagnostics,
+        &[],
+    );
+
+    assert_eq!(count, 2);
+    assert_eq!(cells[0].get_col(), 0);
+    assert_eq!(cells[1].get_col(), 2);
+    assert_eq!(value_bytes(&cells[0], &strings), b"1");
+    assert_eq!(value_bytes(&cells[1], &strings), b"3");
+    assert_eq!(diagnostics.count(FastParseDiagnosticCode::InvalidCellReference), 2);
+}
+
+#[test]
+fn invalid_shared_string_index_uses_ref_placeholder_and_records_diagnostic() {
+    let xml = br#"<worksheet><sheetData><row r="1">
+      <c r="A1" t="s"><v>99</v></c>
+      <c r="B1"><v>2</v></c>
+    </row></sheetData></worksheet>"#;
+    let shared_strings = vec!["one", "two", "three"];
+    let mut cells = vec![CellData::default(); 10];
+    let mut strings = Vec::new();
+    let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
+
+    let count = parse_worksheet_fast_with_extras(
+        xml,
+        &shared_strings,
+        &mut cells,
+        &mut strings,
+        &mut Vec::new(),
+        &mut extras,
+        &mut diagnostics,
+        &[],
+    );
+
+    assert_eq!(count, 2);
+    assert_eq!(value_bytes(&cells[0], &strings), b"#REF!");
+    assert_eq!(value_bytes(&cells[1], &strings), b"2");
+    assert_eq!(cells[0].get_value_type(), VALUE_TYPE_INLINE);
+    assert_eq!(diagnostics.count(FastParseDiagnosticCode::InvalidSharedStringIndex), 1);
 }
 
 #[test]
@@ -177,6 +272,7 @@ fn test_parse_worksheet_fast_with_extras_prefixed_formula_tags() {
     let mut strings = Vec::new();
     let mut row_heights = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let count = parse_worksheet_fast_with_extras(
         xml,
@@ -185,6 +281,7 @@ fn test_parse_worksheet_fast_with_extras_prefixed_formula_tags() {
         &mut strings,
         &mut row_heights,
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 
@@ -227,6 +324,7 @@ fn self_closing_shared_formula_without_cached_value_does_not_read_next_cell_valu
     let mut strings = Vec::new();
     let mut row_heights = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let count = parse_worksheet_fast_with_extras(
         xml,
@@ -235,6 +333,7 @@ fn self_closing_shared_formula_without_cached_value_does_not_read_next_cell_valu
         &mut strings,
         &mut row_heights,
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 
@@ -264,6 +363,7 @@ fn prefixed_self_closing_shared_formula_without_cached_value_stays_empty() {
     let mut strings = Vec::new();
     let mut row_heights = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let count = parse_worksheet_fast_with_extras(
         xml,
@@ -272,6 +372,7 @@ fn prefixed_self_closing_shared_formula_without_cached_value_stays_empty() {
         &mut strings,
         &mut row_heights,
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 
@@ -355,6 +456,7 @@ fn test_parse_formula_str_cached_value_with_xml_space_preserve() {
     let mut cells = vec![CellData::default(); 10];
     let mut strings = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let count = parse_worksheet_fast_with_extras(
         xml,
@@ -363,6 +465,7 @@ fn test_parse_formula_str_cached_value_with_xml_space_preserve() {
         &mut strings,
         &mut Vec::new(),
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 
@@ -391,6 +494,7 @@ fn test_parse_formula_str_cached_value_without_xml_space() {
     let mut cells = vec![CellData::default(); 10];
     let mut strings = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let count = parse_worksheet_fast_with_extras(
         xml,
@@ -399,6 +503,7 @@ fn test_parse_formula_str_cached_value_without_xml_space() {
         &mut strings,
         &mut Vec::new(),
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 
@@ -506,4 +611,64 @@ fn test_parse_worksheet_fast_extracts_row_heights() {
     assert_eq!(row_heights[0].height, 20.5);
     assert_eq!(row_heights[1].row, 2); // 0-indexed
     assert_eq!(row_heights[1].height, 30.0);
+}
+
+#[test]
+fn full_parse_shared_strings_resolve_from_workbook_arcs_without_sheet_copies() {
+    let xml = br#"<worksheet><sheetData><row r="1">
+      <c r="A1" t="s"><v>0</v></c>
+      <c r="B1" t="s"><f>A1</f><v>0</v></c>
+    </row></sheetData></worksheet>"#;
+    let shared_strings: Vec<&str> = vec!["Shared"];
+    let shared_string_arcs: Vec<Arc<str>> = shared_strings
+        .iter()
+        .map(|value| Arc::from(*value))
+        .collect();
+    let mut cells = vec![CellData::default(); 4];
+    let mut strings = Vec::new();
+    let mut row_heights = Vec::new();
+    let mut extras = ParseExtras::default();
+
+    let count = parse_worksheet_fast_with_extras(
+        xml,
+        &shared_strings,
+        &mut cells,
+        &mut strings,
+        &mut row_heights,
+        &mut extras,
+        &[],
+    );
+
+    assert_eq!(count, 2);
+    assert_eq!(cells[0].value_type, VALUE_TYPE_SHARED_STRING);
+    let first_value_len = cells[0].value_len;
+    assert_eq!(first_value_len, 0);
+    assert_eq!(extras.sst_indices, vec![(0, 0)]);
+    assert_eq!(extras.cached_values, vec![(1, 2, 1)]);
+
+    let mut decode_buf = Vec::new();
+    let mut full_cells: Vec<_> = cells[..count]
+        .iter()
+        .map(|cell| convert_cell_data(cell, &strings, &mut decode_buf))
+        .collect();
+    apply_parse_extras_with_arcs(
+        &mut full_cells,
+        &extras,
+        &cells[..count],
+        &strings,
+        &[],
+        &shared_string_arcs,
+    );
+
+    assert_eq!(full_cells[0].value.as_deref(), Some(""));
+    assert_eq!(full_cells[0].sst_index, Some(0));
+    assert!(Arc::ptr_eq(
+        full_cells[0].sst_resolved.as_ref().unwrap(),
+        &shared_string_arcs[0]
+    ));
+    assert!(full_cells[1].value.is_none());
+    assert!(Arc::ptr_eq(
+        full_cells[1].sst_resolved.as_ref().unwrap(),
+        &shared_string_arcs[0]
+    ));
 }

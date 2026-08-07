@@ -2,12 +2,15 @@ use super::super::adapters::find_byte;
 use super::super::types::SharedStringLookup;
 use super::super::types::{
     AuthoredStyleOnlyCell, CELL_TYPE_BOOL, CELL_TYPE_DATE, CELL_TYPE_ERROR,
-    CELL_TYPE_FORMULA_STRING, CELL_TYPE_NUMBER, CELL_TYPE_STRING, CellData, VALUE_TYPE_INLINE,
-    VALUE_TYPE_NONE, VALUE_TYPE_SHARED_STRING,
+    CELL_TYPE_FORMULA_STRING, CELL_TYPE_NUMBER, CELL_TYPE_STRING, CellData,
+    FastParseDiagnosticCode, FastParseDiagnostics, VALUE_TYPE_INLINE, VALUE_TYPE_NONE,
+    VALUE_TYPE_SHARED_STRING,
 };
 use super::a1::parse_a1_reference;
 use super::bytes::parse_u32;
-use super::tags::{closing_tag_at, find_closing_tag_span, start_tag_at};
+use super::tags::{
+    closing_tag_at, find_closing_tag_span, find_start_tag, start_tag_at,
+};
 use super::value::{extract_formula_forward, extract_inline_string_owned_forward};
 
 pub(crate) struct ScanResult {
@@ -34,6 +37,43 @@ pub(crate) struct ScanResult {
     pub authored_style_only: Option<AuthoredStyleOnlyCell>,
 }
 
+/// Recognize a cell start boundary even when the opening tag is malformed.
+///
+/// `start_tag_at` intentionally rejects unterminated tags. Resynchronization
+/// still needs to identify that rejected `<c` as the broken boundary while
+/// scanning for the next valid cell.
+#[inline]
+pub(crate) fn looks_like_cell_start(xml: &[u8], lt: usize) -> bool {
+    if xml.get(lt) != Some(&b'<') {
+        return false;
+    }
+    let name_start = lt + 1;
+    let Some(&first) = xml.get(name_start) else {
+        return false;
+    };
+    if matches!(first, b'/' | b'!' | b'?') {
+        return false;
+    }
+
+    let mut name_end = name_start;
+    while let Some(&byte) = xml.get(name_end) {
+        if matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'/') {
+            break;
+        }
+        name_end += 1;
+    }
+    if name_end <= name_start {
+        return false;
+    }
+
+    let name = &xml[name_start..name_end];
+    let local_name = name
+        .iter()
+        .rposition(|&byte| byte == b':')
+        .map_or(name, |colon| &name[colon + 1..]);
+    local_name == b"c"
+}
+
 /// Fused cell scanner: combines find_cell_end + parse_cell_element into a single pass,
 /// also extracting extras data inline to avoid re-scanning.
 ///
@@ -52,11 +92,33 @@ pub(crate) fn scan_cell<'a, T: SharedStringLookup + ?Sized>(
     shared_strings: &'a T,
     resolve_shared_strings: bool,
     strings: &mut Vec<u8>,
+    diagnostics: &mut FastParseDiagnostics,
     _row_style_idx: Option<u32>,
     _col_styles: &[Option<u32>],
 ) -> Option<ScanResult> {
     let len = xml.len();
-    let cell_tag = start_tag_at(xml, cell_start, b"c")?;
+    let cell_tag = match start_tag_at(xml, cell_start, b"c") {
+        Some(tag) => tag,
+        None => {
+            diagnostics.record(
+                FastParseDiagnosticCode::MalformedXml,
+                cell_start,
+                fallback_row,
+            );
+            return None;
+        }
+    };
+    // A quoted attribute that never closes can make `start_tag_at` pair its
+    // quote with a later cell's attribute. Reject that span before parsing any
+    // value so the later cell remains a resynchronization boundary.
+    if xml[cell_tag.name_end..cell_tag.tag_end].contains(&b'<') {
+        diagnostics.record(
+            FastParseDiagnosticCode::MalformedXml,
+            cell_start,
+            fallback_row,
+        );
+        return None;
+    }
     let mut pos = cell_tag.name_end; // Skip past the qualified cell tag name.
 
     // --- Step 1: scan opening tag for r/s/t attributes + extras (cm, vm, s) ---
@@ -67,14 +129,29 @@ pub(crate) fn scan_cell<'a, T: SharedStringLookup + ?Sized>(
     let mut cm_val: Option<u32> = None;
     let mut vm_val: Option<u32> = None;
     let mut has_ph = false;
+    let mut invalid_cell_ref = false;
     let mut has_explicit_s = false;
     let mut has_explicit_t = false;
 
     loop {
         if pos >= len {
+            diagnostics.record(
+                FastParseDiagnosticCode::MalformedXml,
+                cell_start,
+                fallback_row,
+            );
             return None;
         }
         let b = xml[pos];
+
+        if b == b'<' {
+            diagnostics.record(
+                FastParseDiagnosticCode::MalformedXml,
+                cell_start,
+                fallback_row,
+            );
+            return None;
+        }
 
         if b == b'>' {
             pos += 1;
@@ -84,6 +161,26 @@ pub(crate) fn scan_cell<'a, T: SharedStringLookup + ?Sized>(
         if b == b'/' && pos + 1 < len && xml[pos + 1] == b'>' {
             // Self-closing <c ... />
             let end = pos + 2;
+
+            if invalid_cell_ref {
+                diagnostics.record(
+                    FastParseDiagnosticCode::InvalidCellReference,
+                    cell_start,
+                    fallback_row,
+                );
+                return Some(ScanResult {
+                    cell: None,
+                    end,
+                    is_self_closing: true,
+                    cm_val,
+                    vm_val,
+                    has_ph,
+                    has_explicit_s,
+                    has_xml_space_v: false,
+                    sst_raw_idx: None,
+                    authored_style_only: None,
+                });
+            }
 
             if has_explicit_s && cm_val.is_none() && vm_val.is_none() && !has_ph && !has_explicit_t
             {
@@ -144,9 +241,12 @@ pub(crate) fn scan_cell<'a, T: SharedStringLookup + ?Sized>(
 
             match b {
                 b'r' => {
-                    if let Some((r, c)) = parse_a1_reference(&xml[val_start..val_end]) {
-                        row = r;
-                        col = c;
+                    match parse_a1_reference(&xml[val_start..val_end]) {
+                        Some((r, c)) => {
+                            row = r;
+                            col = c;
+                        }
+                        None => invalid_cell_ref = true,
                     }
                 }
                 b's' => {
@@ -281,7 +381,12 @@ pub(crate) fn scan_cell<'a, T: SharedStringLookup + ?Sized>(
                                 // into the per-sheet byte buffer here.
                                 (VALUE_TYPE_SHARED_STRING, b"")
                             } else {
-                                (VALUE_TYPE_INLINE, value_bytes)
+                                diagnostics.record(
+                                    FastParseDiagnosticCode::InvalidSharedStringIndex,
+                                    cell_start,
+                                    fallback_row,
+                                );
+                                (VALUE_TYPE_INLINE, b"#REF!")
                             }
                         } else {
                             (VALUE_TYPE_INLINE, value_bytes)
@@ -344,8 +449,33 @@ pub(crate) fn scan_cell<'a, T: SharedStringLookup + ?Sized>(
         }
         // Fallback: SIMD search for unusual cell structures or formula cells
         match find_closing_tag_span(xml, b"c", body_start) {
-            Some(close) => close.end,
-            None => return None,
+            Some(close) => {
+                // A missing cell close must not consume the next cell's close.
+                // The fast path normally avoids this scan; this guard only
+                // runs for the fallback shape where the close was not adjacent
+                // to the last recognized child element.
+                let next_cell_before_close = find_start_tag(xml, b"c", body_start)
+                    .is_some_and(|next| next.lt < close.lt);
+                let next_row_before_close = find_closing_tag_span(xml, b"row", body_start)
+                    .is_some_and(|next| next.lt < close.lt);
+                if next_cell_before_close || next_row_before_close {
+                    diagnostics.record(
+                        FastParseDiagnosticCode::MalformedXml,
+                        cell_start,
+                        fallback_row,
+                    );
+                    return None;
+                }
+                close.end
+            }
+            None => {
+                diagnostics.record(
+                    FastParseDiagnosticCode::MalformedXml,
+                    cell_start,
+                    fallback_row,
+                );
+                return None;
+            }
         }
     };
 
@@ -361,6 +491,26 @@ pub(crate) fn scan_cell<'a, T: SharedStringLookup + ?Sized>(
         sst_raw_idx,
         authored_style_only: None,
     };
+
+    if invalid_cell_ref {
+        diagnostics.record(
+            FastParseDiagnosticCode::InvalidCellReference,
+            cell_start,
+            fallback_row,
+        );
+        return Some(ScanResult {
+            cell: None,
+            end: cell_end,
+            is_self_closing: false,
+            cm_val,
+            vm_val,
+            has_ph,
+            has_explicit_s,
+            has_xml_space_v,
+            sst_raw_idx,
+            authored_style_only: None,
+        });
+    }
 
     if value_type == VALUE_TYPE_NONE
         && has_explicit_s

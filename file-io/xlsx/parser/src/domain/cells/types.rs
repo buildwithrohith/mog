@@ -46,6 +46,116 @@ impl SharedStringLookup for [String] {
     }
 }
 
+/// Diagnostic categories emitted by the worksheet fast path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
+pub enum FastParseDiagnosticCode {
+    MalformedXml = 0,
+    InvalidCellReference = 1,
+    InvalidSharedStringIndex = 2,
+}
+
+impl FastParseDiagnosticCode {
+    pub const ALL: [Self; 3] = [
+        Self::MalformedXml,
+        Self::InvalidCellReference,
+        Self::InvalidSharedStringIndex,
+    ];
+
+    #[inline]
+    pub const fn parse_code(self) -> u32 {
+        match self {
+            Self::MalformedXml => 200,
+            Self::InvalidCellReference => 300,
+            Self::InvalidSharedStringIndex => 500,
+        }
+    }
+
+    #[inline]
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::MalformedXml => "malformed cell XML",
+            Self::InvalidCellReference => "invalid cell reference",
+            Self::InvalidSharedStringIndex => "invalid shared string index",
+        }
+    }
+}
+
+/// Bounded source location retained for a fast-path diagnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FastParseDiagnosticSample {
+    pub code: FastParseDiagnosticCode,
+    pub byte_offset: usize,
+    pub row: u32,
+}
+
+/// Allocation-free diagnostic collector for the worksheet fast path.
+///
+/// Valid workbooks only increment no counters and retain no samples. Errors use
+/// fixed counters and a bounded sample array so the hot loop never grows a
+/// collection or formats a message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FastParseDiagnostics {
+    counts: [u32; FastParseDiagnosticCode::ALL.len()],
+    samples: [Option<FastParseDiagnosticSample>; 8],
+    sample_count: usize,
+}
+
+impl Default for FastParseDiagnostics {
+    fn default() -> Self {
+        Self {
+            counts: [0; FastParseDiagnosticCode::ALL.len()],
+            samples: [None; 8],
+            sample_count: 0,
+        }
+    }
+}
+
+impl FastParseDiagnostics {
+    pub const SAMPLE_LIMIT: usize = 8;
+
+    #[inline]
+    pub fn record(&mut self, code: FastParseDiagnosticCode, byte_offset: usize, row: u32) {
+        self.counts[code as usize] = self.counts[code as usize].saturating_add(1);
+        if self.sample_count < Self::SAMPLE_LIMIT {
+            self.samples[self.sample_count] = Some(FastParseDiagnosticSample {
+                code,
+                byte_offset,
+                row,
+            });
+            self.sample_count += 1;
+        }
+    }
+
+    #[inline]
+    pub const fn count(&self, code: FastParseDiagnosticCode) -> u32 {
+        self.counts[code as usize]
+    }
+
+    #[inline]
+    pub const fn total_count(&self) -> u32 {
+        self.counts[0] + self.counts[1] + self.counts[2]
+    }
+
+    #[inline]
+    pub const fn sample_count(&self) -> usize {
+        self.sample_count
+    }
+
+    pub fn samples(&self) -> impl Iterator<Item = &FastParseDiagnosticSample> {
+        self.samples[..self.sample_count]
+            .iter()
+            .filter_map(Option::as_ref)
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.counts = [0; FastParseDiagnosticCode::ALL.len()];
+        self.samples = [None; Self::SAMPLE_LIMIT];
+        self.sample_count = 0;
+    }
+}
+
 /// Cell data layout in shared buffer (20 bytes per cell)
 ///
 /// This struct is designed for zero-copy transfer between WASM and JavaScript

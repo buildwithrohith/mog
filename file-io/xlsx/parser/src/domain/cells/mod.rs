@@ -28,8 +28,9 @@ mod tests;
 pub use types::{
     AuthoredStyleOnlyCell, CELL_TYPE_BOOL, CELL_TYPE_DATE, CELL_TYPE_EMPTY, CELL_TYPE_ERROR,
     CELL_TYPE_FORMULA, CELL_TYPE_FORMULA_STRING, CELL_TYPE_NUMBER, CELL_TYPE_STRING, CellData,
-    ParseExtras, SharedFormulaInfo, VALUE_TYPE_CACHED_FORMULA, VALUE_TYPE_FORMULA,
-    VALUE_TYPE_INLINE, VALUE_TYPE_NONE, VALUE_TYPE_SHARED_STRING,
+    FastParseDiagnosticCode, FastParseDiagnosticSample, FastParseDiagnostics, ParseExtras,
+    SharedFormulaInfo, VALUE_TYPE_CACHED_FORMULA, VALUE_TYPE_FORMULA, VALUE_TYPE_INLINE,
+    VALUE_TYPE_NONE, VALUE_TYPE_SHARED_STRING,
 };
 
 // Re-export public parsing functions

@@ -24,7 +24,7 @@ pub(crate) use formula_extras::FormulaExtras;
 pub use formula_extras::extract_formula_extras_fused;
 pub use formula_refs::adjust_formula_references;
 pub(crate) use formula_refs::{expand_formula_references, tokenize_formula_references};
-pub(crate) use scan::{ScanResult, scan_cell};
+pub(crate) use scan::{ScanResult, looks_like_cell_start, scan_cell};
 pub use shared_formula::extract_shared_formula_info;
 pub(crate) use tags::{
     count_worksheet_cell_elements, find_closing_tag_span, find_sheet_data_bounds, find_start_tag,

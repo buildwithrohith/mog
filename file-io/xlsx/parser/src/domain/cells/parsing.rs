@@ -12,7 +12,7 @@ mod row_attrs;
 mod rows;
 mod xml_text;
 
-use super::types::{CellData, ParseExtras};
+use super::types::{CellData, FastParseDiagnostics, ParseExtras};
 use crate::infra::error::ParseContext;
 use ooxml_types::worksheet::RowHeight;
 
@@ -28,6 +28,7 @@ pub fn parse_worksheet_fast(
     row_heights: &mut Vec<RowHeight>,
     col_styles: &[Option<u32>],
 ) -> usize {
+    let mut diagnostics = FastParseDiagnostics::default();
     fast::parse_worksheet_core(
         xml,
         shared_strings,
@@ -35,6 +36,7 @@ pub fn parse_worksheet_fast(
         strings,
         row_heights,
         None,
+        &mut diagnostics,
         col_styles,
     )
 }
@@ -48,6 +50,7 @@ pub fn parse_worksheet_fast_with_extras(
     strings: &mut Vec<u8>,
     row_heights: &mut Vec<RowHeight>,
     extras: &mut ParseExtras,
+    diagnostics: &mut FastParseDiagnostics,
     col_styles: &[Option<u32>],
 ) -> usize {
     fast::parse_worksheet_core(
@@ -57,6 +60,7 @@ pub fn parse_worksheet_fast_with_extras(
         strings,
         row_heights,
         Some(extras),
+        diagnostics,
         col_styles,
     )
 }
@@ -70,6 +74,7 @@ pub(crate) fn parse_worksheet_fast_with_owned_strings(
     cells: &mut [CellData],
     strings: &mut Vec<u8>,
     row_heights: &mut Vec<RowHeight>,
+    diagnostics: &mut FastParseDiagnostics,
     col_styles: &[Option<u32>],
 ) -> usize {
     fast::parse_worksheet_core(
@@ -79,6 +84,7 @@ pub(crate) fn parse_worksheet_fast_with_owned_strings(
         strings,
         row_heights,
         None,
+        diagnostics,
         col_styles,
     )
 }

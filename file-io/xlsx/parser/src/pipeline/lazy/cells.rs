@@ -2,6 +2,8 @@ use crate::domain::cells::{CellData, parse_worksheet_fast_with_owned_strings};
 use crate::zip::constants::MAX_WORKSHEET_CELLS;
 use ooxml_types::worksheet::RowHeight;
 
+use crate::domain::cells::FastParseDiagnostics;
+
 use super::limits::{count_worksheet_cell_elements, ensure_lazy_limit};
 use super::{ParseError, ParsedSheet, SheetMetadata};
 
@@ -45,14 +47,22 @@ pub(super) fn fill_materialized_cells(
     parsed.cells.resize(cell_capacity, CellData::default());
 
     let mut row_heights_buf: Vec<RowHeight> = Vec::new();
+    let mut fast_parse_diagnostics = FastParseDiagnostics::default();
     let cell_count = parse_worksheet_fast_with_owned_strings(
         worksheet_xml,
         shared_string_refs,
         &mut parsed.cells,
         &mut parsed.strings,
         &mut row_heights_buf,
+        &mut fast_parse_diagnostics,
         &[],
     );
+    if fast_parse_diagnostics.total_count() > 0 {
+        tracing::warn!(
+            diagnostic_count = fast_parse_diagnostics.total_count(),
+            "lazy worksheet materialization recovered from malformed cells"
+        );
+    }
 
     parsed.cells.truncate(cell_count);
     parsed.cell_count = cell_count;
