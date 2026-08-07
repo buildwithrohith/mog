@@ -2,6 +2,8 @@
 
 use super::StrInternPool;
 
+use std::fmt::{self, Write as _};
+
 use domain_types::{
     CellData, CellDataExtras, FormulaCacheProvenance, FormulaCacheState,
     FormulaCachedValuePresence, ImportedCellProjectionRole,
@@ -385,6 +387,53 @@ fn rich_string_for_cell(
     })
 }
 
+const NUMBER_FORMAT_BUFFER_SIZE: usize = 32;
+
+struct NumberFormatBuffer {
+    bytes: [u8; NUMBER_FORMAT_BUFFER_SIZE],
+    len: usize,
+}
+
+impl NumberFormatBuffer {
+    fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+
+    fn trimmed_len(&self) -> usize {
+        let mut len = self.len;
+        if self.as_bytes().contains(&b'.') {
+            while len > 0 && self.bytes[len - 1] == b'0' {
+                len -= 1;
+            }
+            if len > 0 && self.bytes[len - 1] == b'.' {
+                len -= 1;
+            }
+        }
+        len
+    }
+}
+
+impl Default for NumberFormatBuffer {
+    fn default() -> Self {
+        Self {
+            bytes: [0; NUMBER_FORMAT_BUFFER_SIZE],
+            len: 0,
+        }
+    }
+}
+
+impl fmt::Write for NumberFormatBuffer {
+    fn write_str(&mut self, value: &str) -> fmt::Result {
+        let end = self.len.checked_add(value.len()).ok_or(fmt::Error)?;
+        if end > self.bytes.len() {
+            return Err(fmt::Error);
+        }
+        self.bytes[self.len..end].copy_from_slice(value.as_bytes());
+        self.len = end;
+        Ok(())
+    }
+}
+
 fn numeric_original_value_is_writer_canonical(value: Option<&str>) -> bool {
     let Some(value) = value else {
         return false;
@@ -392,19 +441,40 @@ fn numeric_original_value_is_writer_canonical(value: Option<&str>) -> bool {
     let Ok(parsed) = value.parse::<f64>() else {
         return false;
     };
-    parsed.is_finite() && format_number_like_writer(parsed) == value
+    if !parsed.is_finite() {
+        return false;
+    }
+
+    let mut rendered = NumberFormatBuffer::default();
+    let result = if parsed.fract() == 0.0 && parsed.abs() < 1e15 {
+        write!(&mut rendered, "{parsed:.0}")
+    } else {
+        write!(&mut rendered, "{parsed}")
+    };
+    if result.is_err() {
+        return false;
+    }
+
+    let rendered_len = rendered.trimmed_len();
+    rendered.as_bytes().get(..rendered_len) == Some(value.as_bytes())
 }
 
-fn format_number_like_writer(n: f64) -> String {
-    if n.fract() == 0.0 && n.abs() < 1e15 {
-        format!("{n:.0}")
-    } else {
-        let s = format!("{n}");
-        if s.contains('.') {
-            s.trim_end_matches('0').trim_end_matches('.').to_string()
-        } else {
-            s
-        }
+#[cfg(test)]
+mod numeric_provenance_tests {
+    use super::numeric_original_value_is_writer_canonical;
+
+    #[test]
+    fn canonical_numeric_comparison_preserves_writer_lexemes_without_allocating() {
+        assert!(numeric_original_value_is_writer_canonical(Some("2")));
+        assert!(numeric_original_value_is_writer_canonical(Some(
+            "7039265000250605000000000000"
+        )));
+        assert!(!numeric_original_value_is_writer_canonical(Some(
+            "7.039265000250605e+27"
+        )));
+        assert!(!numeric_original_value_is_writer_canonical(Some("2.0")));
+        assert!(!numeric_original_value_is_writer_canonical(Some("1.0")));
+        assert!(!numeric_original_value_is_writer_canonical(Some("NaN")));
     }
 }
 
