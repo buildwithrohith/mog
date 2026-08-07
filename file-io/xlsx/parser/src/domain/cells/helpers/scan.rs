@@ -1,4 +1,5 @@
 use super::super::adapters::find_byte;
+use super::super::types::SharedStringLookup;
 use super::super::types::{
     AuthoredStyleOnlyCell, CELL_TYPE_BOOL, CELL_TYPE_DATE, CELL_TYPE_ERROR,
     CELL_TYPE_FORMULA_STRING, CELL_TYPE_NUMBER, CELL_TYPE_STRING, CellData, VALUE_TYPE_INLINE,
@@ -44,11 +45,11 @@ pub(crate) struct ScanResult {
 ///
 /// Safe because `<c>` children in OOXML are always flat (`<f>`, `<v>`, `<is>`).
 #[inline(always)]
-pub(crate) fn scan_cell<'a>(
+pub(crate) fn scan_cell<'a, T: SharedStringLookup + ?Sized>(
     xml: &'a [u8],
     cell_start: usize, // position of '<' in '<c ...'
     fallback_row: u32,
-    shared_strings: &'a [&'a str],
+    shared_strings: &'a T,
     resolve_shared_strings: bool,
     strings: &mut Vec<u8>,
     _row_style_idx: Option<u32>,
@@ -240,16 +241,17 @@ pub(crate) fn scan_cell<'a>(
         find_byte(xml, b'<', body_start)
     };
     let mut owned_value: Option<Vec<u8>> = None;
-    let resolution_shared_strings: &[&str] = if resolve_shared_strings {
-        shared_strings
-    } else {
-        &[]
-    };
     let (value_type, mut value_bytes): (u8, &[u8]) = if let Some(first_lt) = first_lt_opt {
         let next = first_lt + 1;
         if next < len {
             if start_tag_at(xml, first_lt, b"f").is_some() {
-                extract_formula_forward(xml, first_lt, cell_type, resolution_shared_strings)
+                extract_formula_forward(
+                    xml,
+                    first_lt,
+                    cell_type,
+                    shared_strings,
+                    resolve_shared_strings,
+                )
             } else if let Some(v_tag) = start_tag_at(xml, first_lt, b"v") {
                 // Inline <v> extraction to also capture xml_space and sst_raw_idx
                 let tag_bytes = &xml[first_lt..=v_tag.tag_end];

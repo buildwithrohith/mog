@@ -132,8 +132,7 @@ where
         compressed_entry.crc32,
     )
     .map_err(|e| ParseError::ParseFailed(e.to_string()))?;
-    let shared_string_refs: Vec<&str> = shared_string_refs.iter().map(|s| s.as_str()).collect();
-    let mut cell_parser = StreamingCellParser::new(&shared_string_refs);
+    let mut cell_parser = StreamingCellParser::new_with_lookup(shared_string_refs);
 
     while let Some(chunk) = decompressor
         .next_chunk()

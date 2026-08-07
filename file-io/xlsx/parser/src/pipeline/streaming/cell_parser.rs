@@ -1,6 +1,6 @@
 use super::cell_xml::{find_cell_end, matches_tag, parse_cell_element, parse_row_number};
 use super::state::ParseState;
-use crate::domain::cells::CellData;
+use crate::domain::cells::{CellData, SharedStringLookup};
 use crate::infra::scanner::{find_gt_simd, find_lt_simd, find_tag_simd};
 
 /// A streaming cell parser that processes XML chunks incrementally.
@@ -35,9 +35,24 @@ use crate::infra::scanner::{find_gt_simd, find_lt_simd, find_tag_simd};
 /// // Process any remaining data
 /// parser.finish(&mut cells, &mut strings);
 /// ```
+enum SharedStringTable<'a> {
+    Borrowed(&'a [&'a str]),
+    Owned(&'a [String]),
+}
+
+impl SharedStringLookup for SharedStringTable<'_> {
+    #[inline]
+    fn get(&self, index: usize) -> Option<&str> {
+        match self {
+            Self::Borrowed(strings) => strings.get(index).copied(),
+            Self::Owned(strings) => strings.get(index).map(String::as_str),
+        }
+    }
+}
+
 pub struct StreamingCellParser<'a> {
     /// Reference to the shared strings table
-    shared_strings: &'a [&'a str],
+    shared_strings: SharedStringTable<'a>,
     /// Buffer for incomplete XML elements that span chunks
     pending_xml: Vec<u8>,
     /// Current parsing state
@@ -58,6 +73,15 @@ impl<'a> StreamingCellParser<'a> {
     ///
     /// A new `StreamingCellParser` ready to process XML chunks.
     pub fn new(shared_strings: &'a [&'a str]) -> Self {
+        Self::from_table(SharedStringTable::Borrowed(shared_strings))
+    }
+
+    /// Create a streaming parser from any borrowed workbook string table.
+    pub(crate) fn new_with_lookup(shared_strings: &'a [String]) -> Self {
+        Self::from_table(SharedStringTable::Owned(shared_strings))
+    }
+
+    fn from_table(shared_strings: SharedStringTable<'a>) -> Self {
         Self {
             shared_strings,
             pending_xml: Vec::with_capacity(4096), // Pre-allocate for typical element sizes
@@ -183,7 +207,7 @@ impl<'a> StreamingCellParser<'a> {
                         if let Some(cell_data) = parse_cell_element(
                             cell_xml,
                             self.current_row,
-                            self.shared_strings,
+                            &self.shared_strings,
                             strings,
                         ) {
                             output.push(cell_data);

@@ -33,6 +33,7 @@ pub use types::{
 };
 
 // Re-export public parsing functions
+pub(crate) use parsing::parse_worksheet_fast_with_owned_strings;
 pub use parsing::{
     parse_worksheet_fast, parse_worksheet_fast_with_extras, parse_worksheet_with_context,
 };
@@ -41,10 +42,12 @@ pub(crate) use full_convert::{
     apply_parse_extras_with_arcs, build_col_style_ranges_from_widths,
     coalesce_authored_style_only_cells, col_style_range_at, convert_cell_data, data_table_info,
 };
+pub(crate) use helpers::extract_cell_value_fast_with_lookup;
 pub(crate) use helpers::{
     count_worksheet_cell_elements, find_closing_tag_span, find_start_tag, post_sheet_data_region,
     pre_sheet_data_region,
 };
+pub(crate) use types::SharedStringLookup;
 
 // Re-export public helper functions
 pub use helpers::{

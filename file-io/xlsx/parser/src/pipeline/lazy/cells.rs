@@ -1,4 +1,4 @@
-use crate::domain::cells::{CellData, parse_worksheet_fast};
+use crate::domain::cells::{CellData, parse_worksheet_fast_with_owned_strings};
 use crate::zip::constants::MAX_WORKSHEET_CELLS;
 use ooxml_types::worksheet::RowHeight;
 
@@ -49,14 +49,13 @@ pub(super) fn fill_materialized_cells(
     estimated_cells: usize,
     shared_string_refs: &[String],
 ) -> Result<(), ParseError> {
-    let shared_string_refs: Vec<&str> = shared_string_refs.iter().map(|s| s.as_str()).collect();
     let mut buffer_size = estimated_cells;
     parsed.cells.resize(buffer_size, CellData::default());
 
     let mut row_heights_buf: Vec<RowHeight> = Vec::new();
-    let mut cell_count = parse_worksheet_fast(
+    let mut cell_count = parse_worksheet_fast_with_owned_strings(
         worksheet_xml,
-        &shared_string_refs,
+        shared_string_refs,
         &mut parsed.cells,
         &mut parsed.strings,
         &mut row_heights_buf,
@@ -75,9 +74,9 @@ pub(super) fn fill_materialized_cells(
         parsed.strings.clear();
         row_heights_buf.clear();
 
-        cell_count = parse_worksheet_fast(
+        cell_count = parse_worksheet_fast_with_owned_strings(
             worksheet_xml,
-            &shared_string_refs,
+            shared_string_refs,
             &mut parsed.cells,
             &mut parsed.strings,
             &mut row_heights_buf,

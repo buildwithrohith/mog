@@ -1,8 +1,8 @@
-use crate::domain::cells::extract_cell_value_fast;
+use crate::domain::cells::extract_cell_value_fast_with_lookup;
 use crate::domain::cells::{
     CELL_TYPE_BOOL, CELL_TYPE_ERROR, CELL_TYPE_FORMULA_STRING, CELL_TYPE_NUMBER, CELL_TYPE_STRING,
 };
-use crate::domain::cells::{CellData, VALUE_TYPE_NONE};
+use crate::domain::cells::{CellData, SharedStringLookup, VALUE_TYPE_NONE};
 use crate::infra::scanner::{find_gt_simd, find_lt_simd};
 
 /// Check if the tag at the given position matches the expected tag name.
@@ -118,7 +118,7 @@ pub(super) fn find_cell_end(data: &[u8], start: usize) -> Option<usize> {
 pub(super) fn parse_cell_element(
     xml: &[u8],
     fallback_row: u32,
-    shared_strings: &[&str],
+    shared_strings: &dyn SharedStringLookup,
     strings: &mut Vec<u8>,
 ) -> Option<CellData> {
     // Parse cell reference
@@ -131,7 +131,7 @@ pub(super) fn parse_cell_element(
     let style_idx = parse_style_idx(xml);
 
     // Extract value
-    let (value_type, value_bytes) = extract_cell_value(xml, shared_strings);
+    let (value_type, value_bytes) = extract_cell_value_with_lookup(xml, shared_strings);
 
     // Skip empty cells
     if value_type == VALUE_TYPE_NONE {
@@ -269,8 +269,16 @@ fn parse_style_idx(xml: &[u8]) -> u16 {
 }
 
 /// Extract cell value from XML.
+#[cfg(test)]
 fn extract_cell_value<'a>(xml: &'a [u8], shared_strings: &'a [&'a str]) -> (u8, &'a [u8]) {
-    extract_cell_value_fast(xml, shared_strings)
+    extract_cell_value_fast_with_lookup(xml, shared_strings)
+}
+
+fn extract_cell_value_with_lookup<'a>(
+    xml: &'a [u8],
+    shared_strings: &'a dyn SharedStringLookup,
+) -> (u8, &'a [u8]) {
+    extract_cell_value_fast_with_lookup(xml, shared_strings)
 }
 
 #[cfg(test)]

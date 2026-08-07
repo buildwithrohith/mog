@@ -2,15 +2,15 @@ use super::super::adapters::find_byte;
 use super::super::helpers::{
     ScanResult, find_sheet_data_bounds, parse_row_number, scan_cell, start_tag_at,
 };
-use super::super::types::{CellData, ParseExtras};
+use super::super::types::{CellData, ParseExtras, SharedStringLookup};
 use super::cell_extras::{CellExtrasInput, collect_cell_extras};
 use super::formula_extras::collect_formula_extras;
 use super::rows::apply_fast_row_attrs;
 use ooxml_types::worksheet::RowHeight;
 
-pub(super) fn parse_worksheet_core(
+pub(super) fn parse_worksheet_core<T: SharedStringLookup + ?Sized>(
     xml: &[u8],
-    shared_strings: &[&str],
+    shared_strings: &T,
     cells: &mut [CellData],
     strings: &mut Vec<u8>,
     row_heights: &mut Vec<RowHeight>,
