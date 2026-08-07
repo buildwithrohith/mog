@@ -529,6 +529,30 @@ impl YrsComputeEngine {
         )
     }
 
+    /// Return displayed range formats through a compact little-endian
+    /// format-palette bytes tuple. The JSON sibling is intentionally kept for
+    /// external callers and compatibility.
+    #[bridge::read(scope = "range")]
+    pub fn get_displayed_range_properties_binary(
+        &self,
+        sheet_id: &SheetId,
+        start_row: u32,
+        start_col: u32,
+        end_row: u32,
+        end_col: u32,
+    ) -> Result<(Vec<u8>, crate::storage::engine::RangeBinaryMeta), ComputeError> {
+        let formats = displayed::get_displayed_range_properties(
+            self, sheet_id, start_row, start_col, end_row, end_col,
+        )?;
+        let rows = formats
+            .into_iter()
+            .map(|row| row.into_iter().map(Some).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        Ok(crate::storage::engine::range_binary::encode_formats(
+            start_row, start_col, &rows,
+        ))
+    }
+
     #[bridge::read(scope = "sheet")]
     pub fn get_column_schema(&self, sheet_id: &SheetId, col_index: u32) -> Option<ColumnSchema> {
         schemas::get_column_schema(self, sheet_id, col_index)

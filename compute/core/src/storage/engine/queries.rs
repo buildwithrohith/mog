@@ -8,7 +8,7 @@ mod styles_named_ranges;
 mod workbook_settings;
 mod yrs_a1_named_values;
 
-use super::YrsComputeEngine;
+use super::{YrsComputeEngine, range_binary};
 use crate::diagnostics::formula_references::{
     FormulaReferenceDiagnosticsOptions, FormulaReferenceDiagnosticsPage,
 };
@@ -31,6 +31,19 @@ use domain_types::domain::sheet::{FrozenPanes, SheetMeta, SheetScrollPosition, S
 use domain_types::domain::slicer::{NamedSlicerStyle, SlicerCustomStyle};
 use domain_types::{DefinedName, ImportDiagnostic, NameValidationResult};
 use value_types::{CellValue, ComputeError};
+
+/// Metadata paired with a self-describing `query_range_binary` payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryRangeBinaryMeta {
+    pub start_row: u32,
+    pub start_col: u32,
+    pub rows: u32,
+    pub cols: u32,
+    pub cell_count: u32,
+    pub merge_count: u32,
+    pub encoding: super::cell_semantics::RangeBinaryEncoding,
+}
 
 #[bridge::api(
     service = "YrsComputeEngine",
@@ -880,6 +893,35 @@ impl YrsComputeEngine {
         end_col: u32,
     ) -> RangeQueryResult {
         ranges_search_formula::query_range(self, sheet_id, start_row, start_col, end_row, end_col)
+    }
+
+    /// Return the same sparse cells and merges as `query_range`, using the
+    /// bytes-tuple bridge fast path for the payload. The JSON sibling remains
+    /// the compatibility surface for callers that need the original wire.
+    #[bridge::read(scope = "range")]
+    pub fn query_range_binary(
+        &self,
+        sheet_id: &SheetId,
+        start_row: u32,
+        start_col: u32,
+        end_row: u32,
+        end_col: u32,
+    ) -> (Vec<u8>, QueryRangeBinaryMeta) {
+        let result = ranges_search_formula::query_range(
+            self, sheet_id, start_row, start_col, end_row, end_col,
+        );
+        range_binary::encode_query_range(
+            &result,
+            QueryRangeBinaryMeta {
+                start_row,
+                start_col,
+                rows: end_row.saturating_sub(start_row).saturating_add(1),
+                cols: end_col.saturating_sub(start_col).saturating_add(1),
+                cell_count: result.cells.len() as u32,
+                merge_count: result.merges.len() as u32,
+                encoding: range_binary::query_value_encoding(&result.cells),
+            },
+        )
     }
 
     #[bridge::read(scope = "range")]

@@ -25,6 +25,7 @@ pub use domain_types::domain::print::{PageBreakEntry, PageBreaks, PrintSettings}
 pub use crate::storage::engine::mutation::{
     BridgeSortCriterion, BridgeSortMode, BridgeSortOptions,
 };
+pub use crate::storage::engine::{QueryRangeBinaryMeta, RangeBinaryEncoding, RangeBinaryMeta};
 
 // CellInput enum — structural intent for cell writes (replaces \x00 sentinel).
 pub use crate::storage::engine::mutation::CellInput;

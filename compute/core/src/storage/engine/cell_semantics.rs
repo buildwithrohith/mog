@@ -5,7 +5,7 @@
 //! cell info queries. By living in the engine, all FFI targets (WASM, Tauri,
 //! N-API) get them automatically.
 
-use super::{YrsComputeEngine, services};
+use super::{YrsComputeEngine, range_binary, services};
 use crate::storage::cells::values as cell_values;
 use crate::storage::properties;
 use bridge_core as bridge;
@@ -13,6 +13,30 @@ use cell_types::{SheetId, SheetPos};
 use compute_formats;
 use domain_types::CellFormat;
 use value_types::CellValue;
+
+/// Encoding selected for a bulk range binary payload.
+///
+/// `F64Le` is the dense numeric fast path: each cell is one little-endian
+/// `f64`. `MixedLe` uses the tagged little-endian value records documented in
+/// `storage::engine::range_binary`. `FormatPalette` is a little-endian index
+/// stream followed by the existing binary format-palette protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum RangeBinaryEncoding {
+    F64Le,
+    MixedLe,
+    FormatPalette,
+}
+
+/// Metadata paired with a binary dense range payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RangeBinaryMeta {
+    pub start_row: u32,
+    pub start_col: u32,
+    pub rows: u32,
+    pub cols: u32,
+    pub encoding: RangeBinaryEncoding,
+}
 
 // ---------------------------------------------------------------------------
 // CellInfo — combined cell metadata returned by get_cell_info
@@ -98,6 +122,21 @@ impl YrsComputeEngine {
         }
 
         result
+    }
+
+    /// Return dense range values through a compact little-endian bytes tuple.
+    /// `get_range_values_2d` remains available for JSON callers.
+    #[bridge::read(scope = "range")]
+    pub fn get_range_values_2d_binary(
+        &self,
+        sheet_id: &SheetId,
+        start_row: u32,
+        start_col: u32,
+        end_row: u32,
+        end_col: u32,
+    ) -> (Vec<u8>, RangeBinaryMeta) {
+        let values = self.get_range_values_2d(sheet_id, start_row, start_col, end_row, end_col);
+        range_binary::encode_values(start_row, start_col, &values)
     }
 
     /// Get structured cell information: value, formula, format, and display string.

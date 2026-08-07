@@ -36,7 +36,7 @@ mod undo_bridge;
 #[doc(hidden)]
 pub mod versioning;
 mod workbook_theme;
-pub use cell_semantics::CellInfo;
+pub use cell_semantics::{CellInfo, RangeBinaryEncoding, RangeBinaryMeta};
 mod cf_cache;
 mod data_table_formula;
 mod delegations;
@@ -53,7 +53,9 @@ mod merge_index;
 pub(crate) mod mutation;
 mod objects;
 mod queries;
+pub use queries::QueryRangeBinaryMeta;
 mod query_serialization;
+mod range_binary;
 mod recalc_postprocess;
 mod runtime_diagnostics;
 mod screenshot;
