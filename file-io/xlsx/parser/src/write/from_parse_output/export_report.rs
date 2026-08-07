@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use domain_types::{ChartDefinition, ChartSpec, FormulaCacheState, ParseOutput};
 
-use super::differential_formats;
 use super::style_remap::build_style_export_plan;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -55,8 +54,7 @@ pub struct ExportDiagnostic {
 pub(super) fn build_export_report(output: &ParseOutput) -> ExportReport {
     let mut diagnostics = Vec::new();
 
-    let (style_remapped_output, _) = differential_formats::remap_for_export(output);
-    let style_export_plan = build_style_export_plan(&style_remapped_output);
+    let style_export_plan = build_style_export_plan(output);
 
     let calc_decision = crate::domain::workbook::write::calc_settings_for_export(
         &output.calculation,
@@ -107,11 +105,7 @@ pub(super) fn build_export_report(output: &ParseOutput) -> ExportReport {
         });
     }
 
-    append_authored_style_run_diagnostics(
-        &style_remapped_output,
-        &style_export_plan.remapper,
-        &mut diagnostics,
-    );
+    append_authored_style_run_diagnostics(output, &style_export_plan.remapper, &mut diagnostics);
 
     append_chart_export_diagnostics(output, &mut diagnostics);
 
