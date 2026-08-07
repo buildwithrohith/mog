@@ -1,4 +1,5 @@
 use cell_types::{CellId, SheetId};
+use rustc_hash::FxHashSet;
 use snapshot_types::RecalcResult;
 
 use super::{YrsComputeEngine, services};
@@ -86,6 +87,12 @@ impl YrsComputeEngine {
             SchemaType, ValidationErrorCode, ValidationSeverity,
         };
 
+        let mut annotated_cells: FxHashSet<CellId> = recalc
+            .validation_annotations
+            .iter()
+            .filter_map(|annotation| CellId::from_uuid_str(&annotation.cell_id).ok())
+            .collect();
+
         for change in &recalc.changed_cells {
             let Some(ref pos) = change.position else {
                 continue;
@@ -121,11 +128,7 @@ impl YrsComputeEngine {
             // Skip if a column-schema annotation already exists for this cell.
             // Column schemas take priority — re-emitting would either
             // overwrite metadata or duplicate events.
-            let already_annotated = recalc
-                .validation_annotations
-                .iter()
-                .any(|a| a.cell_id == change.cell_id);
-            if already_annotated {
+            if !annotated_cells.insert(cell_id) {
                 continue;
             }
 
