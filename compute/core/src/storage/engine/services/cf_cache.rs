@@ -14,6 +14,24 @@ use crate::storage::sheet::cf_store;
 use cell_types::{CellId, SheetId};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+#[cfg(test)]
+use std::cell::Cell;
+
+#[cfg(test)]
+thread_local! {
+    static REFRESH_CF_CACHE_CALLS: Cell<usize> = Cell::new(0);
+}
+
+#[cfg(test)]
+pub(crate) fn reset_refresh_cf_cache_calls_for_tests() {
+    REFRESH_CF_CACHE_CALLS.with(|calls| calls.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn refresh_cf_cache_calls_for_tests() -> usize {
+    REFRESH_CF_CACHE_CALLS.with(Cell::get)
+}
+
 /// After a recalculation pass, refresh the CF cache for every sheet that
 /// both (a) has conditional formatting rules and (b) had at least one cell
 /// change in the recalc result.
@@ -126,6 +144,9 @@ pub(in crate::storage::engine) fn refresh_cf_cache(
     theme_palette: &HashMap<String, String>,
     sheet_id: &SheetId,
 ) {
+    #[cfg(test)]
+    REFRESH_CF_CACHE_CALLS.with(|calls| calls.set(calls.get() + 1));
+
     // 1. Read CF formats from Yrs storage
     let formats = cf_store::get_formats_for_sheet(
         stores.storage.doc(),

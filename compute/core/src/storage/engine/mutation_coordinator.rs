@@ -7,8 +7,10 @@
 //! mutation lifecycle state so that service modules can borrow `EngineStores`
 //! without conflicting with borrows of the observer or undo manager.
 
+use cell_types::SheetId;
 use compute_document::observe::{CellChange, DocumentObserver};
 use compute_document::undo::UndoRedoManager;
+use rustc_hash::FxHashMap;
 use snapshot_types::SheetLifecycleRuntimeHint;
 use std::collections::HashMap;
 
@@ -77,6 +79,11 @@ pub(crate) struct MutationCoordinator {
     /// patch production. `flush_viewport_patches()` takes this and produces
     /// binary patches.
     pub(super) pending_recalc: Option<snapshot_types::RecalcResult>,
+
+    /// Conditional-formatting sibling changes computed while preparing the
+    /// pending recalc. The viewport flush consumes this alongside
+    /// `pending_recalc` so the CF cache is not evaluated twice for one edit.
+    pub(super) pending_cf_only_changes: Option<FxHashMap<SheetId, Vec<(u32, u32)>>>,
 
     /// Stashed format viewport patches from the last format mutation.
     /// `flush_format_viewport_patches()` takes this.

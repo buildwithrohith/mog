@@ -308,6 +308,7 @@ fn assemble_engine_inner(
             observer,
             undo_manager,
             pending_recalc: None,
+            pending_cf_only_changes: None,
             pending_format_patches: None,
             sheet_lifecycle_history: Default::default(),
         },

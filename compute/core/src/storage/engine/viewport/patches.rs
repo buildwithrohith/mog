@@ -37,11 +37,10 @@ impl YrsComputeEngine {
         mutation_sheet_id: &SheetId,
         generation: u8,
     ) -> Vec<u8> {
-        // Refresh CF cache for this sheet if it has CF rules and cells changed
-        if self.stores.cf_cache.contains_key(mutation_sheet_id) && !recalc.changed_cells.is_empty()
-        {
-            self.refresh_cf_cache(mutation_sheet_id);
-        }
+        // CF cache refreshes happen in `produce_viewport_patches_for_recalc`
+        // before this single-sheet serializer is entered. The other callers
+        // of this helper only patch comment/sparkline metadata and do not
+        // change values that could affect conditional formatting.
         self.enrich_display_text(recalc);
         self.enrich_metadata_flags(recalc);
 
@@ -406,7 +405,11 @@ impl YrsComputeEngine {
         // side-effect of sibling cells changing (e.g. Duplicate-Values,
         // Top-N). These cells need viewport patches even though their values
         // didn't change — otherwise the old CF color stays in the TS buffer.
-        let cf_only_changes = self.refresh_cf_caches_after_recalc(recalc);
+        let cf_only_changes = self
+            .mutation
+            .pending_cf_only_changes
+            .take()
+            .unwrap_or_else(|| self.refresh_cf_caches_after_recalc(recalc));
 
         // Synthesize CellChange entries for CF-only-changed cells and append
         // them to recalc.changed_cells so they flow through the standard
@@ -562,7 +565,13 @@ impl YrsComputeEngine {
         let format_patches = self.mutation.pending_format_patches.take();
         let value_patches = match self.mutation.pending_recalc.take() {
             Some(mut recalc) => self.produce_viewport_patches_for_recalc(&mut recalc),
-            None => compute_wire::mutation::serialize_multi_viewport_patches(&[]),
+            None => {
+                // A format-only or full-rebuild path can intentionally skip
+                // the pending recalc flush. Clear its unused CF diff so it
+                // cannot survive into a later direct flush.
+                self.mutation.pending_cf_only_changes = None;
+                compute_wire::mutation::serialize_multi_viewport_patches(&[])
+            }
         };
 
         match format_patches {

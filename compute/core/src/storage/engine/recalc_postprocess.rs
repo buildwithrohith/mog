@@ -1,7 +1,7 @@
 use cell_types::{CellId, SheetId};
 use snapshot_types::RecalcResult;
 
-use super::{YrsComputeEngine, services};
+use super::{services, YrsComputeEngine};
 
 impl YrsComputeEngine {
     /// Post-process recalc (CF refresh + display text + schema validation) and stash for flush.
@@ -15,6 +15,11 @@ impl YrsComputeEngine {
         &mut self,
         recalc: &mut RecalcResult,
     ) {
+        // A previous prepare may not have been followed by a flush (for
+        // example, a structural path may switch to a full viewport rebuild).
+        // Never let that old CF diff be reused by a later mutation.
+        self.mutation.pending_cf_only_changes = None;
+
         // A mutation reached this funnel: a subsequent full recalc must run.
         // This covers every Engine-level mutation entry point in one place:
         //   set_cell / set_cell_binary / set_cell_value_parsed /
@@ -25,7 +30,8 @@ impl YrsComputeEngine {
         //   CreateSubtotals, AutoFill, FlashFill, RelocateCells, CopyRange, …
         self.stores.compute.mark_dirty();
 
-        self.refresh_cf_caches_after_recalc(recalc);
+        let cf_only_changes = self.refresh_cf_caches_after_recalc(recalc);
+        self.mutation.pending_cf_only_changes = Some(cf_only_changes);
         self.enrich_display_text(recalc);
 
         // Run schema validation on all changed cells.
@@ -66,6 +72,7 @@ impl YrsComputeEngine {
         self.enrich_metadata_flags(recalc);
         self.stores.compute.clear_dirty();
         self.mutation.pending_recalc = None;
+        self.mutation.pending_cf_only_changes = None;
     }
 
     /// Append `RecalcValidationAnnotation` entries for every changed cell

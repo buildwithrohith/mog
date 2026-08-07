@@ -116,6 +116,30 @@ fn add_score_highlight_cf(engine: &mut YrsComputeEngine, sheet_id: &SheetId, fil
 }
 
 #[test]
+fn cell_mutation_refreshes_conditional_format_cache_once() {
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(sort_filter_snapshot()).unwrap();
+    let sheet_id = sid();
+    add_score_highlight_cf(&mut engine, &sheet_id, "#ffde59");
+
+    crate::storage::engine::services::cf_cache::reset_refresh_cf_cache_calls_for_tests();
+    engine
+        .set_cell(
+            &sheet_id,
+            CellId::from_uuid_str(&cell_id(1, 2)).expect("score cell id"),
+            1,
+            2,
+            mutation::CellInput::Parse { text: "95".into() },
+        )
+        .expect("edit CF-bearing cell");
+
+    assert_eq!(
+        crate::storage::engine::services::cf_cache::refresh_cf_cache_calls_for_tests(),
+        1,
+        "one cell edit should evaluate the CF cache once"
+    );
+}
+
+#[test]
 fn sort_range_visible_rows_only_preserves_hidden_slots() {
     let (mut engine, _) = YrsComputeEngine::from_snapshot(sort_filter_snapshot()).unwrap();
     let sheet_id = sid();
