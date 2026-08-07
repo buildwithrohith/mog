@@ -4,6 +4,18 @@
 //! `ComputeService` (engine methods), the stateless bridge types in
 //! `bridge_pure.rs`, and the `ClockBridge` clock descriptor.
 
+// The NAPI addon is a native-only boundary. Keep the allocator declaration
+// target-gated so this crate cannot pull jemalloc into a wasm build.
+#[cfg(not(target_arch = "wasm32"))]
+use tikv_jemallocator::Jemalloc;
+
+// jemalloc reads MALLOC_CONF before its first allocation. Native NAPI hosts
+// should launch with `MALLOC_CONF=dirty_decay_ms:0,muzzy_decay_ms:0` so dirty
+// and muzzy pages are purged eagerly after a transient XLSX import.
+#[cfg(not(target_arch = "wasm32"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
 // Re-export the clean Rust API facade for downstream consumers.
 // Binding crates (PyO3, CLI) should use compute_api directly instead of
 // the FFI-shaped bridge surface below.
