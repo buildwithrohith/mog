@@ -55,6 +55,29 @@ doesn't exist; mailbox = `orca orchestration check --peek`, legacy read-only).
 Handles: M=term_bc76f6fe-6fea-46e8-af26-70ed836d2894,
 N=term_b19ef4a2-8182-4b43-b779-7ab62578bce1,
 O=term_33ab97e1-0a9f-4539-b40c-ab82ce02ae17 (also /tmp/r4-lanes.txt).
+INTEGRATION STATE (2026-08-07, later): all 3 lanes DONE, reviewed with two
+follow-ups (N: snapshot ownership + bounded rollback, no O(cumulative) clone;
+O: report-path ParseOutput clone removed — style plan proven dxf-independent).
+All 12 lane commits cherry-picked onto sapiex-patches with --reset-author
+(Rohith) + plans docs commit; HEAD 0da765e5 PUSHED to fork. Merged battery:
+check OK, compute-core 3,035/0, xlsx-parser 3,583/0, xlsx-api 30/0, fmt
+clean, bridge codegen byte-reproducible. Lane panes closed, worktrees
+mog-opt-{m,n,o} NOT yet removed (branches merged; clean up after ship).
+SHIPPED (2026-08-07): artifacts rebuilt (wasm sha matches app dist; napi
+fresh); same-session A/B: import peak −19% vs stock (10.6 vs 13.1GB), wall
+−7.5%; tarballs -0da765e packed + vendored; browser matrix GREEN with
+screenshot verification (repro194 full browse ZERO traps, renderer peak
+1.82GB vs round-3 ~4.0GB — incremental lowering delivered; c446k no
+update-depth; c648k formats; read-only refusal intact). Sapiex PR #2723
+MERGED to develop. Round-4 worktrees + lane branches deleted.
+TRAPS HIT (recorded for next round): matrix against a dev server produced a
+FALSE-GREEN 404 page (all counters 0 on a blank page) — dev server was
+EMFILE-broken (known Watchpack limit, documented in next.config.mjs);
+always screenshot-verify AND use a production build (next build + start).
+next build on develop was broken by route.test.ts NODE_ENV typecheck errors
+(every develop Vercel deploy ERROR) — fixed via issue #2724 / PR #2725
+(MERGED). pnpm install needed one-shot --config.minimumReleaseAge=0 for the
+Next 16.3 swc binary (lockfile-pinned, policy excludes only @sapiex/@mog-sdk).
 Integration: review each diff vs plan (verify claims yourself — every round
 had a false lane claim caught by re-running on base), merge to sapiex-patches,
 full battery (lib + parser via FILE capture, awk on pipes is flaky), cargo
