@@ -15,7 +15,7 @@
 use rustc_hash::FxHashMap;
 
 use super::SheetMirror;
-use cell_types::SheetId;
+use cell_types::{SheetId, SheetPos};
 use value_types::CellValue;
 
 // Re-export pure value types from their canonical home in value-types.
@@ -106,10 +106,8 @@ impl DenseColumnCache {
         } else {
             // Fallback: sparse cell-by-cell lookup via pos_to_id + cells map.
             for row in 0..rows {
-                if let Some(cell_id) = sheet_mirror
-                    .pos_to_id
-                    .get(&cell_types::SheetPos::new(row, col))
-                    && let Some(entry) = sheet_mirror.cells.get(cell_id)
+                if let Some(cell_id) = sheet_mirror.cell_id_at(SheetPos::new(row, col))
+                    && let Some(entry) = sheet_mirror.cells.get(&cell_id)
                 {
                     match &entry.value {
                         CellValue::Number(n) => {
@@ -218,8 +216,7 @@ mod tests {
             formula: None,
         };
         sheet.cells.insert(cell_id, entry);
-        sheet.pos_to_id.insert(SheetPos::new(row, col), cell_id);
-        sheet.id_to_pos.insert(cell_id, SheetPos::new(row, col));
+        sheet.insert_position_mapping(SheetPos::new(row, col), cell_id);
     }
 
     // -----------------------------------------------------------------------
@@ -489,8 +486,7 @@ mod tests {
                 formula: None,
             };
             sheet.cells.insert(cell_id, entry);
-            sheet.pos_to_id.insert(SheetPos::new(row, 0), cell_id);
-            sheet.id_to_pos.insert(cell_id, SheetPos::new(row, 0));
+            sheet.insert_position_mapping(SheetPos::new(row, 0), cell_id);
         }
 
         let mut cache = DenseColumnCache::new();

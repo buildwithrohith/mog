@@ -20,58 +20,58 @@ fn test_insert_rows_shifts_positions() {
 
     // Row 0 cells unchanged
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(0, 0)),
-        Some(&make_cell_id(100))
+        sheet.cell_id_at(SheetPos::new(0, 0)),
+        Some(make_cell_id(100))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(0, 1)),
-        Some(&make_cell_id(101))
+        sheet.cell_id_at(SheetPos::new(0, 1)),
+        Some(make_cell_id(101))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(0, 2)),
-        Some(&make_cell_id(102))
+        sheet.cell_id_at(SheetPos::new(0, 2)),
+        Some(make_cell_id(102))
     );
 
     // Old row 1 -> now row 3
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(3, 0)),
-        Some(&make_cell_id(110))
+        sheet.cell_id_at(SheetPos::new(3, 0)),
+        Some(make_cell_id(110))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(3, 1)),
-        Some(&make_cell_id(111))
+        sheet.cell_id_at(SheetPos::new(3, 1)),
+        Some(make_cell_id(111))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(3, 2)),
-        Some(&make_cell_id(112))
+        sheet.cell_id_at(SheetPos::new(3, 2)),
+        Some(make_cell_id(112))
     );
 
     // Old row 2 -> now row 4
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(4, 0)),
-        Some(&make_cell_id(120))
+        sheet.cell_id_at(SheetPos::new(4, 0)),
+        Some(make_cell_id(120))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(4, 1)),
-        Some(&make_cell_id(121))
+        sheet.cell_id_at(SheetPos::new(4, 1)),
+        Some(make_cell_id(121))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(4, 2)),
-        Some(&make_cell_id(122))
+        sheet.cell_id_at(SheetPos::new(4, 2)),
+        Some(make_cell_id(122))
     );
 
     // Rows 1-2 are empty (newly inserted)
-    assert!(sheet.pos_to_id.get(&SheetPos::new(1, 0)).is_none());
-    assert!(sheet.pos_to_id.get(&SheetPos::new(2, 0)).is_none());
+    assert!(sheet.cell_id_at(SheetPos::new(1, 0)).is_none());
+    assert!(sheet.cell_id_at(SheetPos::new(2, 0)).is_none());
 
     // Reverse index also updated
     assert_eq!(
-        sheet.id_to_pos.get(&make_cell_id(110)),
-        Some(&SheetPos::new(3, 0))
+        sheet.position_of(&make_cell_id(110)),
+        Some(SheetPos::new(3, 0))
     );
     assert_eq!(
-        sheet.id_to_pos.get(&make_cell_id(120)),
-        Some(&SheetPos::new(4, 0))
+        sheet.position_of(&make_cell_id(120)),
+        Some(SheetPos::new(4, 0))
     );
 
     // Sheet rows updated
@@ -96,8 +96,8 @@ fn test_delete_rows_removes_and_shifts() {
 
     // Row 0 unchanged
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(0, 0)),
-        Some(&make_cell_id(100))
+        sheet.cell_id_at(SheetPos::new(0, 0)),
+        Some(make_cell_id(100))
     );
 
     // Old row 1 cells gone
@@ -107,22 +107,22 @@ fn test_delete_rows_removes_and_shifts() {
 
     // Old row 2 -> now row 1
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(1, 0)),
-        Some(&make_cell_id(120))
+        sheet.cell_id_at(SheetPos::new(1, 0)),
+        Some(make_cell_id(120))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(1, 1)),
-        Some(&make_cell_id(121))
+        sheet.cell_id_at(SheetPos::new(1, 1)),
+        Some(make_cell_id(121))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(1, 2)),
-        Some(&make_cell_id(122))
+        sheet.cell_id_at(SheetPos::new(1, 2)),
+        Some(make_cell_id(122))
     );
 
     // Reverse index
     assert_eq!(
-        sheet.id_to_pos.get(&make_cell_id(120)),
-        Some(&SheetPos::new(1, 0))
+        sheet.position_of(&make_cell_id(120)),
+        Some(SheetPos::new(1, 0))
     );
 
     // Sheet rows updated
@@ -149,40 +149,40 @@ fn test_insert_cols_shifts_positions() {
 
     // Col 0 unchanged for all rows
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(0, 0)),
-        Some(&make_cell_id(100))
+        sheet.cell_id_at(SheetPos::new(0, 0)),
+        Some(make_cell_id(100))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(1, 0)),
-        Some(&make_cell_id(110))
+        sheet.cell_id_at(SheetPos::new(1, 0)),
+        Some(make_cell_id(110))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(2, 0)),
-        Some(&make_cell_id(120))
+        sheet.cell_id_at(SheetPos::new(2, 0)),
+        Some(make_cell_id(120))
     );
 
     // Old col 1 -> now col 2
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(0, 2)),
-        Some(&make_cell_id(101))
+        sheet.cell_id_at(SheetPos::new(0, 2)),
+        Some(make_cell_id(101))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(1, 2)),
-        Some(&make_cell_id(111))
+        sheet.cell_id_at(SheetPos::new(1, 2)),
+        Some(make_cell_id(111))
     );
 
     // Old col 2 -> now col 3
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(0, 3)),
-        Some(&make_cell_id(102))
+        sheet.cell_id_at(SheetPos::new(0, 3)),
+        Some(make_cell_id(102))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(1, 3)),
-        Some(&make_cell_id(112))
+        sheet.cell_id_at(SheetPos::new(1, 3)),
+        Some(make_cell_id(112))
     );
 
     // Col 1 is empty (newly inserted)
-    assert!(sheet.pos_to_id.get(&SheetPos::new(0, 1)).is_none());
+    assert!(sheet.cell_id_at(SheetPos::new(0, 1)).is_none());
 
     // Sheet cols updated
     assert_eq!(sheet.cols, 6);
@@ -211,30 +211,30 @@ fn test_delete_cols_removes_and_shifts() {
 
     // Old col 1 -> now col 0
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(0, 0)),
-        Some(&make_cell_id(101))
+        sheet.cell_id_at(SheetPos::new(0, 0)),
+        Some(make_cell_id(101))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(1, 0)),
-        Some(&make_cell_id(111))
+        sheet.cell_id_at(SheetPos::new(1, 0)),
+        Some(make_cell_id(111))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(2, 0)),
-        Some(&make_cell_id(121))
+        sheet.cell_id_at(SheetPos::new(2, 0)),
+        Some(make_cell_id(121))
     );
 
     // Old col 2 -> now col 1
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(0, 1)),
-        Some(&make_cell_id(102))
+        sheet.cell_id_at(SheetPos::new(0, 1)),
+        Some(make_cell_id(102))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(1, 1)),
-        Some(&make_cell_id(112))
+        sheet.cell_id_at(SheetPos::new(1, 1)),
+        Some(make_cell_id(112))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(2, 1)),
-        Some(&make_cell_id(122))
+        sheet.cell_id_at(SheetPos::new(2, 1)),
+        Some(make_cell_id(122))
     );
 
     // Sheet cols updated
@@ -260,20 +260,20 @@ fn test_remap_positions() {
 
     let sheet = mirror.get_sheet(&sheet_id).unwrap();
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(2, 0)),
-        Some(&make_cell_id(100))
+        sheet.cell_id_at(SheetPos::new(2, 0)),
+        Some(make_cell_id(100))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(0, 0)),
-        Some(&make_cell_id(120))
+        sheet.cell_id_at(SheetPos::new(0, 0)),
+        Some(make_cell_id(120))
     );
     assert_eq!(
-        sheet.id_to_pos.get(&make_cell_id(100)),
-        Some(&SheetPos::new(2, 0))
+        sheet.position_of(&make_cell_id(100)),
+        Some(SheetPos::new(2, 0))
     );
     assert_eq!(
-        sheet.id_to_pos.get(&make_cell_id(120)),
-        Some(&SheetPos::new(0, 0))
+        sheet.position_of(&make_cell_id(120)),
+        Some(SheetPos::new(0, 0))
     );
 }
 #[test]
@@ -307,20 +307,20 @@ fn test_insert_rows_at_beginning() {
 
     // All original cells shifted down by 1
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(1, 0)),
-        Some(&make_cell_id(100))
+        sheet.cell_id_at(SheetPos::new(1, 0)),
+        Some(make_cell_id(100))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(2, 0)),
-        Some(&make_cell_id(110))
+        sheet.cell_id_at(SheetPos::new(2, 0)),
+        Some(make_cell_id(110))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(3, 0)),
-        Some(&make_cell_id(120))
+        sheet.cell_id_at(SheetPos::new(3, 0)),
+        Some(make_cell_id(120))
     );
 
     // Row 0 is empty
-    assert!(sheet.pos_to_id.get(&SheetPos::new(0, 0)).is_none());
+    assert!(sheet.cell_id_at(SheetPos::new(0, 0)).is_none());
 }
 #[test]
 fn test_insert_rows_at_end() {
@@ -340,16 +340,16 @@ fn test_insert_rows_at_end() {
 
     // All positions unchanged
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(0, 0)),
-        Some(&make_cell_id(100))
+        sheet.cell_id_at(SheetPos::new(0, 0)),
+        Some(make_cell_id(100))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(1, 0)),
-        Some(&make_cell_id(110))
+        sheet.cell_id_at(SheetPos::new(1, 0)),
+        Some(make_cell_id(110))
     );
     assert_eq!(
-        sheet.pos_to_id.get(&SheetPos::new(2, 0)),
-        Some(&make_cell_id(120))
+        sheet.cell_id_at(SheetPos::new(2, 0)),
+        Some(make_cell_id(120))
     );
 
     assert_eq!(sheet.rows, 12);
@@ -374,7 +374,7 @@ fn test_delete_all_rows_with_cells() {
 
     let sheet = mirror.get_sheet(&sheet_id).unwrap();
     assert_eq!(sheet.cells.len(), 0);
-    assert_eq!(sheet.pos_to_id.len(), 0);
-    assert_eq!(sheet.id_to_pos.len(), 0);
+    assert!(sheet.cell_id_at(SheetPos::new(0, 0)).is_none());
+    assert!(sheet.position_of(&make_cell_id(100)).is_none());
     assert_eq!(sheet.rows, 7);
 }

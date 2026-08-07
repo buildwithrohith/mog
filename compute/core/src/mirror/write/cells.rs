@@ -16,7 +16,7 @@ impl CellMirror {
         let mut invalidate_col: Option<u32> = None;
         if let Some(sheet) = self.sheets.get_mut(&sheet_id) {
             if sheet.cells.contains_key(cell_id) {
-                if let Some(&pos) = sheet.id_to_pos.get(cell_id) {
+                if let Some(pos) = sheet.position_of(cell_id) {
                     let (row, col) = (pos.row(), pos.col());
                     #[cfg(feature = "journal")]
                     let old_val_for_journal = write_col_value(sheet, pos, value.clone());
@@ -118,8 +118,7 @@ impl CellMirror {
         if let Some(s) = self.sheets.get_mut(sheet) {
             write_col_value(s, pos, entry.value.clone());
             s.cells.insert(cell_id, entry);
-            s.pos_to_id.insert(pos, cell_id);
-            s.id_to_pos.insert(cell_id, pos);
+            s.insert_position_mapping(pos, cell_id);
             self.cell_to_sheet.insert(cell_id, *sheet);
             s.expand_extent(pos);
         }
@@ -135,8 +134,7 @@ impl CellMirror {
             && let Some(sheet) = self.sheets.get_mut(&sheet_id)
             && sheet.cells.remove(cell_id).is_some()
         {
-            if let Some(pos) = sheet.id_to_pos.remove(cell_id) {
-                sheet.pos_to_id.remove(&pos);
+            if let Some(pos) = sheet.remove_cell_mapping(cell_id) {
                 clear_col_value(sheet, pos);
                 // If this column has Range-backed data, rebuild col_data so
                 // the payload value is restored instead of leaving Null.
@@ -169,8 +167,7 @@ impl CellMirror {
         };
         if let Some(s) = self.sheets.get_mut(sheet_id) {
             s.cells.insert(cell_id, entry);
-            s.pos_to_id.insert(pos, cell_id);
-            s.id_to_pos.insert(cell_id, pos);
+            s.insert_position_mapping(pos, cell_id);
             self.cell_to_sheet.insert(cell_id, *sheet_id);
             write_col_value(s, pos, value);
             s.expand_extent(pos);

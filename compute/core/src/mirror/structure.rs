@@ -40,10 +40,12 @@ impl CellMirror {
                 .get(sheet)
                 .map(|s| {
                     let end = at.saturating_add(*count);
-                    s.id_to_pos
-                        .iter()
-                        .filter(|&(_, pos)| pos.row() >= *at && pos.row() < end)
-                        .map(|(&id, _)| id)
+                    s.cell_ids()
+                        .filter_map(|id| {
+                            s.position_of(id)
+                                .filter(|pos| pos.row() >= *at && pos.row() < end)
+                                .map(|_| *id)
+                        })
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -52,10 +54,12 @@ impl CellMirror {
                 .get(sheet)
                 .map(|s| {
                     let end = at.saturating_add(*count);
-                    s.id_to_pos
-                        .iter()
-                        .filter(|&(_, pos)| pos.col() >= *at && pos.col() < end)
-                        .map(|(&id, _)| id)
+                    s.cell_ids()
+                        .filter_map(|id| {
+                            s.position_of(id)
+                                .filter(|pos| pos.col() >= *at && pos.col() < end)
+                                .map(|_| *id)
+                        })
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -148,9 +152,7 @@ impl CellMirror {
             if let Some(s) = self.sheets.get_mut(sheet) {
                 for vid in &virtual_to_remove {
                     s.cells.remove(vid);
-                    if let Some(pos) = s.id_to_pos.remove(vid) {
-                        s.pos_to_id.remove(&pos);
-                    }
+                    s.remove_cell_mapping(vid);
                 }
             }
         }
@@ -184,9 +186,7 @@ impl CellMirror {
             } => {
                 for cell_id in deleted_cell_ids.iter().chain(extra_doomed.iter()) {
                     s.cells.remove(cell_id);
-                    if let Some(pos) = s.id_to_pos.remove(cell_id) {
-                        s.pos_to_id.remove(&pos);
-                    }
+                    s.remove_cell_mapping(cell_id);
                 }
                 shift_positions(s, at + count, *count, true, false);
                 remap_positional_metadata(s, at + count, *count, true, false);
@@ -224,9 +224,7 @@ impl CellMirror {
             } => {
                 for cell_id in deleted_cell_ids.iter().chain(extra_doomed.iter()) {
                     s.cells.remove(cell_id);
-                    if let Some(pos) = s.id_to_pos.remove(cell_id) {
-                        s.pos_to_id.remove(&pos);
-                    }
+                    s.remove_cell_mapping(cell_id);
                 }
                 shift_positions(s, at + count, *count, false, false);
                 remap_positional_metadata(s, at + count, *count, false, false);
@@ -242,14 +240,11 @@ impl CellMirror {
             }
             StructureChange::RemapPositions { updates } => {
                 for (cell_id, _, _) in updates {
-                    if let Some(old_pos) = s.id_to_pos.remove(cell_id) {
-                        s.pos_to_id.remove(&old_pos);
-                    }
+                    s.remove_cell_mapping(cell_id);
                 }
                 for (cell_id, new_row, new_col) in updates {
                     let pos = SheetPos::new(*new_row, *new_col);
-                    s.pos_to_id.insert(pos, *cell_id);
-                    s.id_to_pos.insert(*cell_id, pos);
+                    s.insert_position_mapping(pos, *cell_id);
                 }
             }
         }
@@ -372,13 +367,15 @@ impl CellMirror {
             // Fold removed Ranges into per-cell entries.
             for range_id in &removed_range_ids {
                 if let Some(rv) = s.range_views.remove(range_id) {
+                    let (cells, pos_to_id, id_to_pos, row_to_index, col_to_index) =
+                        s.range_fold_parts();
                     let folded = fold_range_to_cells(
                         &rv,
-                        &mut s.cells,
-                        &mut s.pos_to_id,
-                        &mut s.id_to_pos,
-                        &s.row_to_index,
-                        &s.col_to_index,
+                        cells,
+                        pos_to_id,
+                        id_to_pos,
+                        row_to_index,
+                        col_to_index,
                         sheet,
                     );
                     for vid in folded {
@@ -495,12 +492,11 @@ fn populate_virtual_cells_for_insert(
                 None => continue,
             };
             let pos = SheetPos::new(row_idx, col_idx);
-            if s.pos_to_id.contains_key(&pos) {
+            if s.cell_id_at(pos).is_some() {
                 continue;
             }
             let vid = CellId::virtual_at(*sheet, rid, cid);
-            s.pos_to_id.insert(pos, vid);
-            s.id_to_pos.insert(vid, pos);
+            s.insert_position_mapping(pos, vid);
             cell_to_sheet.insert(vid, *sheet);
         }
     }
@@ -559,12 +555,11 @@ fn populate_virtual_cells_for_col_insert(
                 None => continue,
             };
             let pos = SheetPos::new(row_idx, col_idx);
-            if s.pos_to_id.contains_key(&pos) {
+            if s.cell_id_at(pos).is_some() {
                 continue;
             }
             let vid = CellId::virtual_at(*sheet, rid, cid);
-            s.pos_to_id.insert(pos, vid);
-            s.id_to_pos.insert(vid, pos);
+            s.insert_position_mapping(pos, vid);
             cell_to_sheet.insert(vid, *sheet);
         }
     }
@@ -577,8 +572,12 @@ fn populate_virtual_cells_for_col_insert(
 fn rebuild_col_data(s: &mut SheetMirror) {
     s.col_data.clear();
     s.col_data_state.clear();
-    for (cell_id, &pos) in &s.id_to_pos {
-        if let Some(entry) = s.cells.get(cell_id) {
+    let entries: Vec<(SheetPos, CellId)> = s
+        .position_entries()
+        .map(|(&pos, &cell_id)| (pos, cell_id))
+        .collect();
+    for (pos, cell_id) in entries {
+        if let Some(entry) = s.cells.get(&cell_id) {
             let col_vec = s.col_data.entry(pos.col()).or_default();
             let ri = pos.row() as usize;
             if ri >= col_vec.len() {
@@ -597,21 +596,19 @@ fn rebuild_col_data(s: &mut SheetMirror) {
 /// - `forward`: if true, shift forward (insert); if false, shift backward (delete).
 fn shift_positions(s: &mut SheetMirror, threshold: u32, amount: u32, is_row: bool, forward: bool) {
     let to_shift: Vec<(SheetPos, CellId)> = s
-        .pos_to_id
-        .iter()
-        .filter(|&(&pos, _)| {
+        .position_entries()
+        .map(|(&pos, &id)| (pos, id))
+        .filter(|(pos, _)| {
             if is_row {
                 pos.row() >= threshold
             } else {
                 pos.col() >= threshold
             }
         })
-        .map(|(&pos, &id)| (pos, id))
         .collect();
 
-    for &(pos, cell_id) in &to_shift {
-        s.pos_to_id.remove(&pos);
-        s.id_to_pos.remove(&cell_id);
+    for &(pos, _cell_id) in &to_shift {
+        s.remove_position_mapping(pos);
     }
 
     for &(pos, cell_id) in &to_shift {
@@ -626,8 +623,7 @@ fn shift_positions(s: &mut SheetMirror, threshold: u32, amount: u32, is_row: boo
         } else {
             SheetPos::new(pos.row(), pos.col() - amount)
         };
-        s.pos_to_id.insert(new_pos, cell_id);
-        s.id_to_pos.insert(cell_id, new_pos);
+        s.insert_position_mapping(new_pos, cell_id);
     }
 }
 

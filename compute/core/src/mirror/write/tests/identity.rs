@@ -63,8 +63,8 @@ fn register_identity_only_does_not_write_col_data() {
 
     let sheet = mirror.get_sheet(&sheet_id).unwrap();
     // Identity mappings present.
-    assert_eq!(sheet.pos_to_id.get(&SheetPos::new(200, 5)), Some(&cell_id));
-    assert_eq!(sheet.id_to_pos.get(&cell_id), Some(&SheetPos::new(200, 5)));
+    assert_eq!(sheet.cell_id_at(SheetPos::new(200, 5)), Some(cell_id));
+    assert_eq!(sheet.position_of(&cell_id), Some(SheetPos::new(200, 5)));
     assert!(sheet.cells.contains_key(&cell_id));
     // col_data must NOT have been touched at column 5 (no Null write).
     // The original sheet has no col_data for col 5 -> still none.
@@ -119,7 +119,7 @@ fn register_identity_only_is_noop_when_cell_already_present() {
     mirror.register_identity_only(&sheet_id, pos, phantom);
 
     let sheet = mirror.get_sheet(&sheet_id).unwrap();
-    assert_eq!(sheet.pos_to_id.get(&pos), Some(&real_id));
+    assert_eq!(sheet.cell_id_at(pos), Some(real_id));
     // Phantom must not have been registered.
     assert!(!sheet.cells.contains_key(&phantom));
 }

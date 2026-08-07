@@ -38,7 +38,7 @@ impl CellMirror {
 
                 for r in 0..total_rows {
                     let pos = SheetPos::new(anchor_row + r, col);
-                    if let Some(cell_id) = sheet_mirror.pos_to_id.get(&pos).copied()
+                    if let Some(cell_id) = sheet_mirror.cell_id_at(pos)
                         && let Some(entry) = sheet_mirror.cells.get_mut(&cell_id)
                     {
                         entry.value = CellValue::Null;

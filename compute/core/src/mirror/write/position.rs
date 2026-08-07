@@ -19,7 +19,7 @@ impl CellMirror {
         if let Some(s) = self.sheets.get_mut(sheet_id) {
             // Drop the position->id mapping. Don't touch id_to_pos / cells:
             // those already point at the moved cell's new position.
-            if s.pos_to_id.remove(&pos).is_some() {
+            if s.remove_forward_position(pos).is_some() {
                 invalidate_col = Some(pos.col());
             }
             if clear_col_value(s, pos) {
@@ -45,7 +45,7 @@ impl CellMirror {
     /// stale pos_to_id / col_data slot at the former position.
     pub fn update_id_to_pos(&mut self, sheet_id: &SheetId, cell_id: CellId, new_pos: SheetPos) {
         if let Some(s) = self.sheets.get_mut(sheet_id) {
-            s.id_to_pos.insert(cell_id, new_pos);
+            s.update_reverse_position(cell_id, new_pos);
         }
     }
 
@@ -61,8 +61,7 @@ impl CellMirror {
     ) {
         let mut invalidate_col = false;
         if let Some(s) = self.sheets.get_mut(sheet_id) {
-            s.pos_to_id.insert(pos, cell_id);
-            s.id_to_pos.insert(cell_id, pos);
+            s.insert_position_mapping(pos, cell_id);
             self.cell_to_sheet.insert(cell_id, *sheet_id);
 
             if let Some(value) = s.cells.get(&cell_id).map(|entry| entry.value.clone()) {

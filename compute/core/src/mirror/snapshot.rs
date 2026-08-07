@@ -244,8 +244,7 @@ impl CellMirror {
 
             let cell_id = CellId::from_uuid_str(&cell_data.cell_id)?;
             let pos = SheetPos::new(cell_data.row, cell_data.col);
-            sheet_mirror.pos_to_id.insert(pos, cell_id);
-            sheet_mirror.id_to_pos.insert(cell_id, pos);
+            sheet_mirror.insert_position_mapping(pos, cell_id);
             sheet_mirror.cells.insert(cell_id, entry);
             self.cell_to_sheet.insert(cell_id, sheet_id);
 

@@ -44,8 +44,7 @@ impl CellMirror {
         {
             if let Some(s) = self.sheets.get_mut(sheet_id) {
                 s.cells.insert(new_id, entry);
-                s.pos_to_id.insert(pos, new_id);
-                s.id_to_pos.insert(new_id, pos);
+                s.insert_position_mapping(pos, new_id);
                 self.cell_to_sheet.insert(new_id, *sheet_id);
                 s.expand_identity_extent(pos);
             }
@@ -79,8 +78,7 @@ impl CellMirror {
         };
         if let Some(s) = self.sheets.get_mut(sheet_id) {
             s.cells.insert(new_id, entry);
-            s.pos_to_id.insert(pos, new_id);
-            s.id_to_pos.insert(new_id, pos);
+            s.insert_position_mapping(pos, new_id);
             self.cell_to_sheet.insert(new_id, *sheet_id);
             s.expand_identity_extent(pos);
         }
@@ -112,8 +110,7 @@ impl CellMirror {
         {
             if let Some(s) = self.sheets.get_mut(sheet_id) {
                 s.cells.insert(cell_id, entry);
-                s.pos_to_id.insert(pos, cell_id);
-                s.id_to_pos.insert(cell_id, pos);
+                s.insert_position_mapping(pos, cell_id);
                 self.cell_to_sheet.insert(cell_id, *sheet_id);
                 s.expand_identity_extent(pos);
             }
@@ -158,8 +155,7 @@ impl CellMirror {
         };
         if let Some(s) = self.sheets.get_mut(sheet_id) {
             s.cells.insert(cell_id, entry);
-            s.pos_to_id.insert(pos, cell_id);
-            s.id_to_pos.insert(cell_id, pos);
+            s.insert_position_mapping(pos, cell_id);
             self.cell_to_sheet.insert(cell_id, *sheet_id);
             s.expand_identity_extent(pos);
         }

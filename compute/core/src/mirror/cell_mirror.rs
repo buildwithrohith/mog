@@ -494,7 +494,7 @@ impl CellMirror {
                                 && let Some(&col_idx) = sheet.col_to_index.get(&col_id)
                             {
                                 let pos = SheetPos::new(row_idx, col_idx);
-                                if !sheet.pos_to_id.contains_key(&pos) {
+                                if sheet.cell_id_at(pos).is_none() {
                                     let vid = CellId::virtual_at(*sheet_id, row_id, col_id);
                                     virtual_registrations.push((pos, vid));
                                 }
@@ -543,8 +543,7 @@ impl CellMirror {
         // Apply virtual CellId registrations
         if let Some(sheet) = self.sheets.get_mut(sheet_id) {
             for (pos, vid) in &virtual_registrations {
-                sheet.pos_to_id.insert(*pos, *vid);
-                sheet.id_to_pos.insert(*vid, *pos);
+                sheet.insert_position_mapping(*pos, *vid);
             }
             sheet.range_spatial_index = IntervalTree::build(&extents);
             sheet.rebuild_range_columns_data(&range_cols);

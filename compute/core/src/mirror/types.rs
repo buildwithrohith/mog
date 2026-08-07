@@ -402,6 +402,61 @@ impl SheetMirror {
         Some(CellId::virtual_at(self.id, row_id, col_id))
     }
 
+    /// Insert a position mapping in both directions.
+    pub(super) fn insert_position_mapping(&mut self, pos: SheetPos, cell_id: CellId) {
+        self.pos_to_id.insert(pos, cell_id);
+        self.id_to_pos.insert(cell_id, pos);
+    }
+
+    /// Remove a position mapping from both directions.
+    pub(super) fn remove_position_mapping(&mut self, pos: SheetPos) -> Option<CellId> {
+        let cell_id = self.pos_to_id.remove(&pos)?;
+        self.id_to_pos.remove(&cell_id);
+        Some(cell_id)
+    }
+
+    /// Remove the position mapping for a CellId from both directions.
+    pub(super) fn remove_cell_mapping(&mut self, cell_id: &CellId) -> Option<SheetPos> {
+        let pos = self.id_to_pos.remove(cell_id)?;
+        self.pos_to_id.remove(&pos);
+        Some(pos)
+    }
+
+    /// Remove only the position-keyed entry.
+    pub(super) fn remove_forward_position(&mut self, pos: SheetPos) -> Option<CellId> {
+        self.pos_to_id.remove(&pos)
+    }
+
+    /// Update the reverse-only entry used while a grid-index move is being
+    /// staged. The forward entry is intentionally left untouched.
+    pub(super) fn update_reverse_position(&mut self, cell_id: CellId, pos: SheetPos) {
+        self.id_to_pos.insert(cell_id, pos);
+    }
+
+    /// Borrow the range-folding storage fields.
+    pub(super) fn range_fold_parts(
+        &mut self,
+    ) -> (
+        &mut FxHashMap<CellId, CellEntry>,
+        &mut FxHashMap<SheetPos, CellId>,
+        &mut FxHashMap<CellId, SheetPos>,
+        &FxHashMap<RowId, u32>,
+        &FxHashMap<ColId, u32>,
+    ) {
+        (
+            &mut self.cells,
+            &mut self.pos_to_id,
+            &mut self.id_to_pos,
+            &self.row_to_index,
+            &self.col_to_index,
+        )
+    }
+
+    /// Iterate over the owned position mappings.
+    pub(super) fn position_entries(&self) -> hash_map::Iter<'_, SheetPos, CellId> {
+        self.pos_to_id.iter()
+    }
+
     /// Get a cell entry by CellId.
     pub fn get_cell(&self, cell_id: &CellId) -> Option<&CellEntry> {
         self.cells.get(cell_id)
@@ -418,7 +473,7 @@ impl SheetMirror {
     }
 
     pub fn position_for_diagnostics(&self, cell_id: &CellId) -> Option<SheetPos> {
-        self.id_to_pos.get(cell_id).copied()
+        self.position_of(cell_id)
     }
 
     /// Whether the column-major dense storage is empty.
@@ -639,7 +694,7 @@ impl SheetMirror {
             }
         }
 
-        for pos in self.pos_to_id.keys() {
+        for (pos, _) in self.position_entries() {
             if pos.col() == col {
                 max_row = max_row.max(pos.row() as usize + 1);
             }
@@ -653,7 +708,7 @@ impl SheetMirror {
         // ghost identities (Null with no formula) carry metadata/addressability
         // only and must not erase range payloads. User-authored blank range
         // overrides are virtual cells and still suppress the payload value.
-        for (pos, cell_id) in &self.pos_to_id {
+        for (pos, cell_id) in self.position_entries() {
             if pos.col() == col
                 && let Some(entry) = self.cells.get(cell_id)
             {

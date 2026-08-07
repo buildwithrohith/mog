@@ -197,8 +197,8 @@ fn test_apply_edit_stale_pos_to_id_after_move() {
 
     // Sanity: pos_a resolves to our cell_id
     let sheet = mirror.get_sheet(&sheet_id).unwrap();
-    assert_eq!(sheet.pos_to_id.get(&pos_a), Some(&cell_id));
-    assert_eq!(sheet.id_to_pos.get(&cell_id), Some(&pos_a));
+    assert_eq!(sheet.cell_id_at(pos_a), Some(cell_id));
+    assert_eq!(sheet.position_of(&cell_id), Some(pos_a));
 
     // Step 2: apply_edit with the SAME cell_id but at position B (row=15, col=12)
     let pos_b = SheetPos::new(15, 12);
@@ -206,13 +206,13 @@ fn test_apply_edit_stale_pos_to_id_after_move() {
 
     // id_to_pos correctly points to the new position B
     let sheet = mirror.get_sheet(&sheet_id).unwrap();
-    assert_eq!(sheet.id_to_pos.get(&cell_id), Some(&pos_b));
+    assert_eq!(sheet.position_of(&cell_id), Some(pos_b));
 
     // BUG: pos_to_id at position A still resolves to cell_id (stale entry).
     // The correct behavior would be: pos_to_id should NOT contain pos_a anymore.
     assert_eq!(
-        sheet.pos_to_id.get(&pos_a),
-        Some(&cell_id),
+        sheet.cell_id_at(pos_a),
+        Some(cell_id),
         "BUG: stale pos_to_id entry at old position A still points to the moved cell"
     );
 

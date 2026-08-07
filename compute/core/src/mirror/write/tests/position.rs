@@ -25,8 +25,8 @@ fn vacate_position_clears_position_state_without_deleting_cell() {
     mirror.vacate_position(&sheet_id, old_pos);
 
     let sheet = mirror.get_sheet(&sheet_id).unwrap();
-    assert!(!sheet.pos_to_id.contains_key(&old_pos));
-    assert_eq!(sheet.id_to_pos.get(&cell_id), Some(&new_pos));
+    assert!(sheet.cell_id_at(old_pos).is_none());
+    assert_eq!(sheet.position_of(&cell_id), Some(new_pos));
     assert!(sheet.cells.contains_key(&cell_id));
     assert_eq!(sheet.col_data[&4][2], CellValue::Null);
 }
@@ -49,7 +49,7 @@ fn sync_cell_position_mapping_restores_position_and_col_data() {
     mirror.sync_cell_position_mapping(&sheet_id, cell_id, pos);
 
     let sheet = mirror.get_sheet(&sheet_id).unwrap();
-    assert_eq!(sheet.pos_to_id.get(&pos), Some(&cell_id));
-    assert_eq!(sheet.id_to_pos.get(&cell_id), Some(&pos));
+    assert_eq!(sheet.cell_id_at(pos), Some(cell_id));
+    assert_eq!(sheet.position_of(&cell_id), Some(pos));
     assert_eq!(sheet.col_data[&8][6], CellValue::from("cached"));
 }

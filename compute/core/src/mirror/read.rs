@@ -86,7 +86,7 @@ impl CellMirror {
                 }
                 if entry.value.is_null()
                     && entry.formula.is_none()
-                    && let Some(pos) = sheet.id_to_pos.get(cell_id)
+                    && let Some(pos) = sheet.position_of(cell_id)
                     && let Some(col_vec) = sheet.col_data.get(&pos.col())
                     && let Some(val) = col_vec.get(pos.row() as usize)
                     && !val.is_null()
@@ -97,7 +97,7 @@ impl CellMirror {
             }
             // Virtual CellId not in cells: read from Range payload via col_data
             if cell_id.is_virtual()
-                && let Some(pos) = sheet.id_to_pos.get(cell_id)
+                && let Some(pos) = sheet.position_of(cell_id)
                 && let Some(col_vec) = sheet.col_data.get(&pos.col())
                 && let Some(val) = col_vec.get(pos.row() as usize)
                 && !val.is_null()
@@ -121,7 +121,7 @@ impl CellMirror {
         }
         // Virtual CellId not in cells: fall back to col_data
         if cell_id.is_virtual()
-            && let Some(pos) = sheet.id_to_pos.get(cell_id)
+            && let Some(pos) = sheet.position_of(cell_id)
             && let Some(col_vec) = sheet.col_data.get(&pos.col())
             && let Some(val) = col_vec.get(pos.row() as usize)
             && !val.is_null()
@@ -146,7 +146,7 @@ impl CellMirror {
             }
             if entry.value.is_null()
                 && entry.formula.is_none()
-                && let Some(pos) = s.id_to_pos.get(cell_id)
+                && let Some(pos) = s.position_of(cell_id)
                 && let Some(col_vec) = s.col_data.get(&pos.col())
                 && let Some(val) = col_vec.get(pos.row() as usize)
                 && !val.is_null()
@@ -157,7 +157,7 @@ impl CellMirror {
         }
         // Virtual CellId not in cells: read from col_data
         if cell_id.is_virtual()
-            && let Some(pos) = s.id_to_pos.get(cell_id)
+            && let Some(pos) = s.position_of(cell_id)
             && let Some(col_vec) = s.col_data.get(&pos.col())
             && let Some(val) = col_vec.get(pos.row() as usize)
             && !val.is_null()
@@ -179,8 +179,8 @@ impl CellMirror {
     pub fn get_cell_value_at(&self, sheet: &SheetId, pos: SheetPos) -> Option<&CellValue> {
         let s = self.sheets.get(sheet)?;
         // Step 1: sparse override or real cell with non-null value/formula
-        if let Some(cell_id) = s.pos_to_id.get(&pos)
-            && let Some(entry) = s.cells.get(cell_id)
+        if let Some(cell_id) = s.cell_id_at(pos)
+            && let Some(entry) = s.cells.get(&cell_id)
             && (!entry.value.is_null() || entry.formula.is_some())
         {
             if let CellValue::Array(ref arr) = entry.value {
@@ -218,8 +218,8 @@ impl CellMirror {
             return Some(val);
         }
         // Step 4: real-cell Null fallback
-        if let Some(cell_id) = s.pos_to_id.get(&pos) {
-            return s.cells.get(cell_id).map(|e| &e.value);
+        if let Some(cell_id) = s.cell_id_at(pos) {
+            return s.cells.get(&cell_id).map(|e| &e.value);
         }
         None
     }
@@ -243,23 +243,14 @@ impl CellMirror {
     /// that fall inside a Range.
     pub fn resolve_cell_id(&self, sheet: &SheetId, pos: SheetPos) -> Option<CellId> {
         let s = self.sheets.get(sheet)?;
-        if let Some(id) = s.pos_to_id.get(&pos).copied() {
-            return Some(id);
-        }
-        let hits = s.range_spatial_index.query(pos.row(), pos.col());
-        if hits.is_empty() {
-            return None;
-        }
-        let row_id = s.index_to_row.get(&pos.row()).copied()?;
-        let col_id = s.index_to_col.get(&pos.col()).copied()?;
-        Some(CellId::virtual_at(*sheet, row_id, col_id))
+        s.cell_id_at(pos)
     }
 
     /// Resolve a CellId to its position (across all sheets).
     pub fn resolve_position(&self, cell_id: &CellId) -> Option<SheetPos> {
         let sheet_id = self.cell_to_sheet.get(cell_id)?;
         let sheet = self.sheets.get(sheet_id)?;
-        sheet.id_to_pos.get(cell_id).copied()
+        sheet.position_of(cell_id)
     }
 
     /// Look up a sheet by name (case-insensitive).
