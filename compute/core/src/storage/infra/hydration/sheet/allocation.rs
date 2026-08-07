@@ -42,6 +42,11 @@ pub(crate) fn allocate_sheet_ids_with_sheet_id(
 /// Like `allocate_sheet_ids`, but reuses IDs from an earlier allocation where
 /// possible while still consuming allocator slots for the current sheet shape.
 ///
+/// The allocator may be a [`SharedIdAllocator`](super::super::SharedIdAllocator)
+/// adapter. Reused IDs preserve positional identity, while every slot for the
+/// current shape is still consumed from the shared monotonic counter so a
+/// later edit cannot hand out an ID that deferred hydration will reuse.
+///
 /// Deferred XLSX import first hydrates one critical worksheet and later reparses
 /// the whole workbook. If the critical worksheet is not sheet 0, earlier sheets
 /// gain cells during the full parse and would otherwise shift the critical

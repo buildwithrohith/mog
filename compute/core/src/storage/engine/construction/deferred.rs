@@ -5,7 +5,7 @@ pub(in crate::storage::engine) fn import_from_xlsx_bytes_deferred(
     xlsx_data: &[u8],
 ) -> Result<RecalcResult, ComputeError> {
     use crate::import;
-    use crate::storage::infra::hydration::{DefaultIdAllocator, allocate_sheet_ids};
+    use crate::storage::infra::hydration::{SharedIdAllocator, allocate_sheet_ids};
 
     // Pass 1: Parse XLSX — only the initial active visible sheet's cells
     // (ZIP decompress + XML parse). Remaining sheets get metadata only. Full
@@ -55,7 +55,11 @@ pub(in crate::storage::engine) fn import_from_xlsx_bytes_deferred(
     let critical_sheet_index = xlsx_api::initial_active_visible_sheet_index(&parse_output)
         .filter(|idx| *idx < parse_output.sheets.len())
         .unwrap_or(0);
-    let mut allocator = DefaultIdAllocator::new();
+    // Keep the allocator used by initial allocation, snapshot lowering, and
+    // bootstrap Yrs hydration in one atomic authority. The same Arc becomes
+    // the engine's grid/compute allocator below, so any subsequent edit is
+    // automatically visible to deferred hydration.
+    let mut allocator = SharedIdAllocator::new();
     let allocations: Vec<_> = {
         let mut profile = crate::xlsx_profile::PhaseTimer::new("import_deferred", "id_allocation");
         let allocations: Vec<_> = parse_output
@@ -161,7 +165,6 @@ pub(in crate::storage::engine) fn import_from_xlsx_bytes_deferred(
         critical_range_style_positions.push(plan.range_style_positions);
         critical_range_styles_per_sheet.push(plan.range_styles);
     }
-    let mut critical_allocator = DefaultIdAllocator::new();
     {
         let mut profile = crate::xlsx_profile::PhaseTimer::new(
             "import_deferred",
@@ -177,7 +180,7 @@ pub(in crate::storage::engine) fn import_from_xlsx_bytes_deferred(
                 &critical_range_style_positions,
                 &critical_range_data_per_sheet,
                 &critical_range_styles_per_sheet,
-                &mut critical_allocator,
+                &mut allocator,
             )?;
         engine
             .stores
@@ -229,8 +232,7 @@ pub(in crate::storage::engine) fn import_from_xlsx_bytes_deferred(
     }
 
     // Pass 8: Build indexes from snapshot/parse_output.
-    let seed = snapshot_id_high_water_mark(&workbook_snap);
-    let shared_alloc = std::sync::Arc::new(cell_types::IdAllocator::with_seed(seed));
+    let shared_alloc = allocator.shared();
     engine.stores.grid_id_alloc = std::sync::Arc::clone(&shared_alloc);
     engine.stores.compute.set_id_alloc(shared_alloc);
     engine.stores.id_alloc =
@@ -418,10 +420,9 @@ fn materialize_deferred_sheet_inner(
         *cumulative_sheet = selected_sheet;
 
         use crate::storage::infra::hydration::{
-            DefaultIdAllocator, HydrationIdMap, allocate_sheet_ids_with_previous_allocation,
+            HydrationIdMap, SharedIdAllocator, allocate_sheet_ids_with_previous_allocation,
         };
-        let mut allocator =
-            DefaultIdAllocator::with_seed(seed_after_allocations(&deferred.allocations));
+        let mut allocator = SharedIdAllocator::from_shared(engine.stores.grid_id_alloc.clone());
         let allocations: Vec<_> = cumulative_parse
             .sheets
             .iter()
@@ -529,8 +530,7 @@ fn materialize_deferred_sheet_inner(
         // buffer, so clear the style transaction's observer payload now.
         engine.update_buffer.clear();
 
-        let seed = snapshot_id_high_water_mark(&cumulative_snap);
-        let shared_alloc = std::sync::Arc::new(cell_types::IdAllocator::with_seed(seed));
+        let shared_alloc = engine.stores.grid_id_alloc.clone();
         let all_sheets = 0..cumulative_snap.sheets.len();
         let grid_indexes = build_grid_indexes_from_allocations_range(
             &cumulative_snap,
@@ -642,10 +642,10 @@ pub(in crate::storage::engine) fn stage_deferred_hydration(
         // Pass 1: Re-allocate IDs for ALL sheets, reusing any IDs assigned by
         // the first-paint parse while still consuming allocator slots for the
         // full workbook shape.
-        use crate::storage::infra::hydration::allocate_sheet_ids_with_previous_allocation;
-        let mut allocator = crate::storage::infra::hydration::DefaultIdAllocator::with_seed(
-            seed_after_allocations(&data.allocations),
-        );
+        use crate::storage::infra::hydration::{
+            SharedIdAllocator, allocate_sheet_ids_with_previous_allocation,
+        };
+        let mut allocator = SharedIdAllocator::from_shared(engine.stores.grid_id_alloc.clone());
         let allocations: Vec<_> = {
             let mut profile = crate::xlsx_profile::PhaseTimer::new(
                 "complete_deferred_hydration",
@@ -807,8 +807,7 @@ pub(in crate::storage::engine) fn stage_deferred_hydration(
 
         dh_log!("phase 2 done: YrsStorage hydrated");
 
-        let seed = snapshot_id_high_water_mark(&full_snap);
-        let shared_alloc = std::sync::Arc::new(cell_types::IdAllocator::with_seed(seed));
+        let shared_alloc = engine.stores.grid_id_alloc.clone();
         let layout_metrics = engine.stores.layout_metrics;
         let grid_indexes =
             build_grid_indexes_from_yrs(&new_storage, &full_snap, shared_alloc.clone())?;
@@ -908,33 +907,6 @@ pub(in crate::storage::engine) fn stage_deferred_hydration(
     Ok(Some(completion))
 }
 
-fn seed_after_allocations(
-    allocations: &[crate::storage::infra::hydration::SheetIdAllocation],
-) -> u64 {
-    let mut max_id = 0_u128;
-
-    for allocation in allocations {
-        max_id = max_id.max(allocation.sheet_id.as_u128());
-        for row_id in allocation.row_ids.iter() {
-            max_id = max_id.max(row_id.as_u128());
-        }
-        for col_id in allocation.col_ids.iter() {
-            max_id = max_id.max(col_id.as_u128());
-        }
-        for cell_id in allocation.cell_ids.iter() {
-            max_id = max_id.max(cell_id.as_u128());
-        }
-        for identity in &allocation.identity_only_cells {
-            max_id = max_id.max(identity.cell_id.as_u128());
-        }
-    }
-
-    u64::try_from(max_id)
-        .unwrap_or(u64::MAX.saturating_sub(1))
-        .saturating_add(1)
-        .max(1)
-}
-
 fn merge_import_reports(
     target: &mut domain_types::ImportReport,
     source: domain_types::ImportReport,
@@ -958,7 +930,7 @@ fn build_deferred_critical_sheet_range_plan(
     sheet_data: &domain_types::SheetData,
     snap_sheet: &SheetSnapshot,
     allocation: &crate::storage::infra::hydration::SheetIdAllocation,
-    allocator: &mut crate::storage::infra::hydration::DefaultIdAllocator,
+    allocator: &mut crate::storage::infra::hydration::SharedIdAllocator,
 ) -> DeferredCriticalSheetRangePlan {
     let snap_positions: std::collections::HashSet<(u32, u32)> =
         snap_sheet.cells.iter().map(|c| (c.row, c.col)).collect();
