@@ -379,6 +379,52 @@ fn deferred_xlsx_preview_materializes_only_the_requested_sheet_without_yrs_compl
 }
 
 #[test]
+fn deferred_xlsx_incremental_lowering_does_not_relower_prior_sheets() {
+    let bytes = three_sheet_deferred_fixture_xlsx();
+    crate::import::parse_output_to_snapshot::sheet_lowering::reset_sheet_lowering_counts();
+
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(simple_snapshot()).unwrap();
+    engine
+        .import_from_xlsx_bytes_deferred(&bytes)
+        .expect("deferred XLSX import should succeed");
+
+    let ids = engine.get_all_sheet_ids();
+    assert_eq!(ids.len(), 3, "fixture should import three sheets");
+    let sheet_a = SheetId::from_uuid_str(&ids[0]).unwrap();
+    let sheet_b = SheetId::from_uuid_str(&ids[1]).unwrap();
+    let sheet_c = SheetId::from_uuid_str(&ids[2]).unwrap();
+
+    // The one-shot import lowers A, B, and C once. Materializing A is a
+    // no-op because it is the critical first-paint sheet; B and C must each
+    // lower only their requested sheet rather than the cumulative workbook.
+    engine
+        .materialize_deferred_sheet(sheet_a)
+        .expect("sheet A materialization should be idempotent");
+    engine
+        .materialize_deferred_sheet(sheet_b)
+        .expect("sheet B materialization should succeed");
+    engine
+        .materialize_deferred_sheet(sheet_c)
+        .expect("sheet C materialization should succeed");
+
+    assert_eq!(
+        crate::import::parse_output_to_snapshot::sheet_lowering::sheet_lowering_count(0),
+        1,
+        "sheet A should be lowered only by the initial pass, not by B or C"
+    );
+    assert_eq!(
+        crate::import::parse_output_to_snapshot::sheet_lowering::sheet_lowering_count(1),
+        2,
+        "sheet B should be lowered once initially and once when requested"
+    );
+    assert_eq!(
+        crate::import::parse_output_to_snapshot::sheet_lowering::sheet_lowering_count(2),
+        2,
+        "sheet C should be lowered once initially and once when requested"
+    );
+}
+
+#[test]
 fn deferred_xlsx_materialization_shares_retained_id_vectors() {
     let bytes = three_sheet_deferred_fixture_xlsx();
     let (mut engine, _) = YrsComputeEngine::from_snapshot(simple_snapshot()).unwrap();
