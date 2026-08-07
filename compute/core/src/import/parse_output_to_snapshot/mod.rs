@@ -31,6 +31,7 @@
 //! - [`view_lowering`] — SheetPane (1.15) [W4 landing pad]
 
 use domain_types::ParseOutput;
+use rustc_hash::FxHashMap;
 use snapshot_types::{SheetSnapshot, WorkbookSnapshot};
 
 use crate::storage::infra::hydration::HydrationIdMap;
@@ -148,6 +149,179 @@ pub fn parse_output_to_workbook_snapshot(
         max_change,
         calculation_settings: Some(output.calculation.clone().into()),
     }
+}
+
+/// Lower one newly parsed sheet into an existing cumulative snapshot.
+///
+/// The deferred preview and hydration paths replace exactly one entry in
+/// `ParseOutput.sheets` on each request. This entry point keeps every other
+/// lowered `SheetSnapshot` (including its `RangeData` identities) intact, then
+/// runs the classifier only for `sheet_index` before refreshing the small
+/// workbook-level metadata pieces affected by that replacement.
+///
+/// `previous` is the authoritative cumulative lowered form. The caller must
+/// pass the same sheet inventory and identity map that were used to allocate
+/// the current cumulative parse. The full lowering entry point above remains
+/// the one-shot path for initial import and complete deferred hydration.
+pub fn parse_output_to_workbook_snapshot_incremental(
+    output: &ParseOutput,
+    sheet_index: usize,
+    id_map: &HydrationIdMap,
+    previous: &WorkbookSnapshot,
+    allocator: &mut DefaultIdAllocator,
+) -> WorkbookSnapshot {
+    debug_assert_eq!(output.sheets.len(), previous.sheets.len());
+    debug_assert!(sheet_index < output.sheets.len());
+    debug_assert_eq!(id_map.sheet_ids.len(), output.sheets.len());
+    debug_assert_eq!(id_map.row_ids.len(), output.sheets.len());
+    debug_assert_eq!(id_map.col_ids.len(), output.sheets.len());
+
+    // Resolver metadata needs only stable IDs, names, and positions. Building
+    // headers avoids lowering cells from every already-visited sheet merely to
+    // resolve a table or pivot's sheet target.
+    let resolver_sheets = sheet_lowering::convert_sheet_headers(&output.sheets, id_map);
+    let resolver = SheetResolver::new(&resolver_sheets);
+    let target_sheet_id = resolver
+        .by_index(sheet_index)
+        .expect("incremental snapshot target sheet must have an allocated ID");
+
+    // Named ranges and data-table definitions come from workbook-level parse
+    // metadata, which is unchanged when the caller replaces only one sheet.
+    // Named-range linkage is refreshed below because the target sheet's
+    // classifier ranges may have changed.
+    let mut named_ranges = previous.named_ranges.clone();
+    for named_range in &mut named_ranges {
+        named_range.linked_range_id = None;
+    }
+    let tables = incremental_tables(output, sheet_index, &resolver, previous);
+    let pivot_tables = incremental_pivot_tables(
+        output,
+        &resolver,
+        target_sheet_id,
+        &output.sheets[sheet_index].name,
+        previous,
+    );
+    let data_table_regions = previous.data_table_regions.clone();
+    let (iterative_calc, max_iterations, max_change) =
+        sheet_lowering::convert_iterative_calc(&output.calculation);
+
+    // The classifier's cross-sheet anchor inputs are workbook metadata, not
+    // lowered sheet cells. It does need a reverse identity lookup for named
+    // ranges, so carry forward the previous sparse cells and replace only the
+    // target's entries in that lookup.
+    let mut target_sheet =
+        sheet_lowering::convert_sheet(sheet_index, &output.sheets[sheet_index], Some(id_map));
+    let cell_id_to_pos = if named_ranges.is_empty() {
+        None
+    } else {
+        let mut map = FxHashMap::default();
+        for (existing_index, sheet) in previous.sheets.iter().enumerate() {
+            if existing_index == sheet_index {
+                continue;
+            }
+            for cell in &sheet.cells {
+                map.insert(cell.cell_id.clone(), (cell.row, cell.col));
+            }
+        }
+        for cell in &target_sheet.cells {
+            map.insert(cell.cell_id.clone(), (cell.row, cell.col));
+        }
+        Some(map)
+    };
+
+    let snapshot_so_far = WorkbookSnapshot {
+        named_ranges: named_ranges.clone(),
+        tables: tables.clone(),
+        pivot_tables: pivot_tables.clone(),
+        data_table_regions: data_table_regions.clone(),
+        iterative_calc,
+        max_iterations,
+        max_change,
+        ..WorkbookSnapshot::default()
+    };
+    classifier::classify_sheet_ranges(
+        &mut target_sheet,
+        &output.sheets[sheet_index],
+        &snapshot_so_far,
+        cell_id_to_pos.as_ref(),
+        &id_map.row_ids[sheet_index],
+        &id_map.col_ids[sheet_index],
+        allocator,
+    );
+
+    let mut sheets = previous.sheets.clone();
+    sheets[sheet_index] = target_sheet;
+    name_lowering::link_named_ranges_to_data_ranges(
+        &mut named_ranges,
+        &sheets,
+        &id_map.row_ids,
+        &id_map.col_ids,
+    );
+
+    WorkbookSnapshot {
+        sheets,
+        named_ranges,
+        tables,
+        pivot_tables,
+        data_table_regions,
+        iterative_calc,
+        max_iterations,
+        max_change,
+        calculation_settings: Some(output.calculation.clone().into()),
+    }
+}
+
+fn incremental_tables(
+    output: &ParseOutput,
+    sheet_index: usize,
+    resolver: &SheetResolver<'_>,
+    previous: &WorkbookSnapshot,
+) -> Vec<formula_types::TableDef> {
+    let mut tables = Vec::new();
+    for (index, sheet_data) in output.sheets.iter().enumerate() {
+        if index == sheet_index {
+            tables.extend(table_lowering::convert_tables_for_sheet(
+                index, sheet_data, resolver,
+            ));
+            continue;
+        }
+
+        let Some(sheet_uuid) = resolver
+            .by_index(index)
+            .and_then(|uuid| cell_types::SheetId::from_uuid_str(uuid).ok())
+        else {
+            continue;
+        };
+        tables.extend(
+            previous
+                .tables
+                .iter()
+                .filter(|table| table.sheet == sheet_uuid)
+                .cloned(),
+        );
+    }
+    tables
+}
+
+fn incremental_pivot_tables(
+    output: &ParseOutput,
+    resolver: &SheetResolver<'_>,
+    target_sheet_id: &str,
+    target_sheet_name: &str,
+    previous: &WorkbookSnapshot,
+) -> Vec<snapshot_types::PivotTableDef> {
+    let mut pivots: Vec<_> = previous
+        .pivot_tables
+        .iter()
+        .filter(|pivot| pivot.sheet != target_sheet_id)
+        .cloned()
+        .collect();
+    pivots.extend(pivot_lowering::convert_pivot_tables_for_sheet(
+        output,
+        resolver,
+        target_sheet_name,
+    ));
+    pivots
 }
 
 // =============================================================================

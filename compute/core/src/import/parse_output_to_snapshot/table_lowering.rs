@@ -33,40 +33,54 @@ pub(crate) fn convert_tables_from_sheets(
     sheet_data
         .iter()
         .enumerate()
-        .flat_map(|(sheet_idx, sd)| {
-            let sheet_id = resolver
-                .by_index(sheet_idx)
-                .and_then(|uuid| cell_types::SheetId::from_uuid_str(uuid).ok())
-                .unwrap_or_else(|| cell_types::SheetId::from_raw(0));
+        .flat_map(|(sheet_idx, sd)| convert_tables_for_sheet(sheet_idx, sd, resolver))
+        .collect()
+}
 
-            sd.tables.iter().filter_map(move |table| {
-                // Typed range refs: typed pass. Strip optional sheet prefix via
-                // `split_sheet_prefix` (the W1-consolidated A1 entry point,
-                // UTF-8-safe and handling `'Quoted Sheet'!` forms correctly),
-                // then parse once into a typed `RangeRef`.
-                let (_sheet, rest) = compute_parser::split_sheet_prefix(&table.range_ref);
-                let range = compute_parser::parse_a1_range(rest)?;
+/// Convert only one sheet's table definitions.
+///
+/// Deferred snapshot lowering replaces one parsed sheet at a time. Keeping
+/// this boundary sheet-scoped lets the caller retain table definitions from
+/// every other already-lowered sheet without walking their table metadata.
+pub(crate) fn convert_tables_for_sheet(
+    sheet_idx: usize,
+    sd: &SheetData,
+    resolver: &SheetResolver<'_>,
+) -> Vec<TableDef> {
+    let sheet_id = resolver
+        .by_index(sheet_idx)
+        .and_then(|uuid| cell_types::SheetId::from_uuid_str(uuid).ok())
+        .unwrap_or_else(|| cell_types::SheetId::from_raw(0));
 
-                let (start_row, start_col) = match range.start {
-                    formula_types::CellRef::Positional { row, col, .. } => (row, col),
-                    formula_types::CellRef::Resolved(_) => return None,
-                };
-                let (end_row, end_col) = match range.end {
-                    formula_types::CellRef::Positional { row, col, .. } => (row, col),
-                    formula_types::CellRef::Resolved(_) => return None,
-                };
+    sd.tables
+        .iter()
+        .filter_map(|table| {
+            // Typed range refs: typed pass. Strip optional sheet prefix via
+            // `split_sheet_prefix` (the W1-consolidated A1 entry point,
+            // UTF-8-safe and handling `'Quoted Sheet'!` forms correctly),
+            // then parse once into a typed `RangeRef`.
+            let (_sheet, rest) = compute_parser::split_sheet_prefix(&table.range_ref);
+            let range = compute_parser::parse_a1_range(rest)?;
 
-                Some(TableDef {
-                    name: table.name.clone(),
-                    sheet: sheet_id,
-                    start_row,
-                    start_col,
-                    end_row,
-                    end_col,
-                    columns: table.columns.iter().map(|c| c.name.clone()).collect(),
-                    has_headers: table.has_headers,
-                    has_totals: table.has_totals,
-                })
+            let (start_row, start_col) = match range.start {
+                formula_types::CellRef::Positional { row, col, .. } => (row, col),
+                formula_types::CellRef::Resolved(_) => return None,
+            };
+            let (end_row, end_col) = match range.end {
+                formula_types::CellRef::Positional { row, col, .. } => (row, col),
+                formula_types::CellRef::Resolved(_) => return None,
+            };
+
+            Some(TableDef {
+                name: table.name.clone(),
+                sheet: sheet_id,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                columns: table.columns.iter().map(|c| c.name.clone()).collect(),
+                has_headers: table.has_headers,
+                has_totals: table.has_totals,
             })
         })
         .collect()

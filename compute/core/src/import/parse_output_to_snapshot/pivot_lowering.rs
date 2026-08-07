@@ -17,9 +17,32 @@ pub(crate) fn convert_pivot_tables(
     output: &ParseOutput,
     resolver: &SheetResolver<'_>,
 ) -> Vec<PivotTableDef> {
+    convert_pivot_tables_filtered(output, resolver, None)
+}
+
+/// Convert only pivots whose output is on one sheet.
+///
+/// When the deferred path replaces a sheet parse, only that sheet's fallback
+/// pivot extent scan can change. Pivots with an authored `ref_range` do not
+/// scan cells, but keeping the filter here also avoids revisiting unrelated
+/// pivot configurations.
+pub(crate) fn convert_pivot_tables_for_sheet(
+    output: &ParseOutput,
+    resolver: &SheetResolver<'_>,
+    output_sheet_name: &str,
+) -> Vec<PivotTableDef> {
+    convert_pivot_tables_filtered(output, resolver, Some(output_sheet_name))
+}
+
+fn convert_pivot_tables_filtered(
+    output: &ParseOutput,
+    resolver: &SheetResolver<'_>,
+    output_sheet_name: Option<&str>,
+) -> Vec<PivotTableDef> {
     output
         .pivot_tables
         .iter()
+        .filter(|pt| output_sheet_name.map_or(true, |name| pt.config.output_sheet_name == name))
         .filter_map(|pt| {
             let config = &pt.config;
 

@@ -2,6 +2,9 @@
 
 use std::collections::{HashMap, HashSet};
 
+#[cfg(test)]
+use std::cell::RefCell;
+
 use domain_types::{CalculationProperties, ImportedCellProjectionRole, SheetData};
 use snapshot_types::{CellData as SnapshotCellData, SheetSnapshot};
 use value_types::CellValue;
@@ -16,6 +19,32 @@ fn col_style_range_at(sheet: &SheetData, col: u32) -> Option<u32> {
         .rev()
         .find(|range| col >= range.start_col && col <= range.end_col)
         .map(|range| range.style_id)
+}
+
+#[cfg(test)]
+thread_local! {
+    static SHEET_LOWERING_COUNTS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_sheet_lowering_counts() {
+    SHEET_LOWERING_COUNTS.with(|counts| counts.borrow_mut().clear());
+}
+
+#[cfg(test)]
+pub(crate) fn sheet_lowering_count(sheet_idx: usize) -> usize {
+    SHEET_LOWERING_COUNTS.with(|counts| counts.borrow().get(sheet_idx).copied().unwrap_or(0))
+}
+
+#[cfg(test)]
+fn record_sheet_lowered(sheet_idx: usize) {
+    SHEET_LOWERING_COUNTS.with(|counts| {
+        let mut counts = counts.borrow_mut();
+        if counts.len() <= sheet_idx {
+            counts.resize(sheet_idx + 1, 0);
+        }
+        counts[sheet_idx] += 1;
+    });
 }
 
 #[inline]
@@ -35,112 +64,141 @@ pub(crate) fn convert_sheets(
     sheets
         .iter()
         .enumerate()
-        .map(|(sheet_idx, sheet)| {
-            // Use hydration-allocated SheetId when available, otherwise
-            // generate a fast monotonic ID (no getentropy syscall).
-            let sheet_uuid = match id_map {
-                Some(map) => u128_to_hex32(map.sheet_ids[sheet_idx].as_u128()),
-                None => u128_to_hex32(crate::storage::STORAGE_ID_ALLOC.next_u128()),
-            };
+        .map(|(sheet_idx, sheet)| convert_sheet(sheet_idx, sheet, id_map))
+        .collect()
+}
 
-            // Build row/col default style lookups for redundancy filtering.
-            let row_default_style: HashMap<u32, u32> = sheet
-                .row_styles
-                .iter()
-                .map(|rs| (rs.row, rs.style_id))
-                .collect();
-            let col_default_style: HashMap<u32, u32> = sheet
-                .col_styles
-                .iter()
-                .map(|cs| (cs.col, cs.style_id))
-                .collect();
+/// Convert the sheet that the incremental deferred path just parsed.
+pub(crate) fn convert_sheet(
+    sheet_idx: usize,
+    sheet: &SheetData,
+    id_map: Option<&HydrationIdMap>,
+) -> SheetSnapshot {
+    #[cfg(test)]
+    record_sheet_lowered(sheet_idx);
 
-            let mut cells: Vec<SnapshotCellData> = sheet
-                .cells
-                .iter()
-                .enumerate()
-                .filter_map(|(cell_idx, cell)| {
-                    // Skip only parser-proven dynamic array spill targets.
-                    if cell.projection_role == ImportedCellProjectionRole::DynamicArraySpillTarget {
-                        return None;
-                    }
+    // Use hydration-allocated SheetId when available, otherwise
+    // generate a fast monotonic ID (no getentropy syscall).
+    let sheet_uuid = match id_map {
+        Some(map) => u128_to_hex32(map.sheet_ids[sheet_idx].as_u128()),
+        None => u128_to_hex32(crate::storage::STORAGE_ID_ALLOC.next_u128()),
+    };
 
-                    // Skip empty cells whose style is redundant with row/col
-                    // defaults. Cells with a style that differs from the
-                    // positional default must be kept so their CellId is
-                    // allocated and cell-level properties are hydrated.
-                    if cell.formula().is_none()
-                        && matches!(cell.value, CellValue::Null)
-                        && cell.original_value().is_none()
-                    {
-                        let cell_sid = cell.style_id.unwrap_or(0);
-                        let row_sid = row_default_style.get(&cell.row).copied().unwrap_or(0);
-                        let col_sid = col_default_style
-                            .get(&cell.col)
-                            .copied()
-                            .or_else(|| col_style_range_at(sheet, cell.col))
-                            .unwrap_or(0);
-                        let positional_sid = if row_sid != 0 { row_sid } else { col_sid };
-                        if cell_sid == positional_sid {
-                            return None;
-                        }
-                    }
+    // Build row/col default style lookups for redundancy filtering.
+    let row_default_style: HashMap<u32, u32> = sheet
+        .row_styles
+        .iter()
+        .map(|rs| (rs.row, rs.style_id))
+        .collect();
+    let col_default_style: HashMap<u32, u32> = sheet
+        .col_styles
+        .iter()
+        .map(|cs| (cs.col, cs.style_id))
+        .collect();
 
-                    let cell_uuid = match id_map {
-                        Some(map) => u128_to_hex32(map.cell_ids[sheet_idx][cell_idx].as_u128()),
-                        None => u128_to_hex32(crate::storage::STORAGE_ID_ALLOC.next_u128()),
-                    };
-                    Some(SnapshotCellData {
-                        cell_id: cell_uuid,
-                        row: cell.row,
-                        col: cell.col,
-                        value: cell.value.clone(),
-                        formula: cell.formula().cloned(),
-                        identity_formula: None,
-                        array_ref: cell.array_ref().cloned(),
-                    })
-                })
-                .collect();
+    let mut cells: Vec<SnapshotCellData> = sheet
+        .cells
+        .iter()
+        .enumerate()
+        .filter_map(|(cell_idx, cell)| {
+            // Skip only parser-proven dynamic array spill targets.
+            if cell.projection_role == ImportedCellProjectionRole::DynamicArraySpillTarget {
+                return None;
+            }
 
-            // Inject synthetic cells for comment targets on empty positions.
-            // Comments in XLSX reference a cell_ref (A1 notation). If the target
-            // cell has no data, it won't appear in ParseOutput.cells, and the
-            // comment will be orphaned during hydration. We create a Null-valued
-            // placeholder cell so the comment has something to attach to.
-            //
-            // Skip injection when id_map is present (hydration path) — hydration
-            // preallocates metadata-only identities for comment targets, and we
-            // must not introduce a second CellId for the same position.
-            if id_map.is_none() {
-                let mut occupied: HashSet<(u32, u32)> =
-                    cells.iter().map(|c| (c.row, c.col)).collect();
-                for comment in &sheet.comments {
-                    if let Some((row, col)) = parse_cell_ref(&comment.cell_ref)
-                        && occupied.insert((row, col))
-                    {
-                        let cell_uuid =
-                            format!("{:032x}", crate::storage::STORAGE_ID_ALLOC.next_u128());
-                        cells.push(SnapshotCellData {
-                            cell_id: cell_uuid,
-                            row,
-                            col,
-                            value: CellValue::Null,
-                            formula: None,
-                            identity_formula: None,
-                            array_ref: None,
-                        });
-                    }
+            // Skip empty cells whose style is redundant with row/col
+            // defaults. Cells with a style that differs from the
+            // positional default must be kept so their CellId is
+            // allocated and cell-level properties are hydrated.
+            if cell.formula().is_none()
+                && matches!(cell.value, CellValue::Null)
+                && cell.original_value().is_none()
+            {
+                let cell_sid = cell.style_id.unwrap_or(0);
+                let row_sid = row_default_style.get(&cell.row).copied().unwrap_or(0);
+                let col_sid = col_default_style
+                    .get(&cell.col)
+                    .copied()
+                    .or_else(|| col_style_range_at(sheet, cell.col))
+                    .unwrap_or(0);
+                let positional_sid = if row_sid != 0 { row_sid } else { col_sid };
+                if cell_sid == positional_sid {
+                    return None;
                 }
             }
 
-            SheetSnapshot {
-                id: sheet_uuid,
-                name: sheet.name.clone(),
-                rows: sheet.rows,
-                cols: sheet.cols,
-                cells,
-                ranges: vec![],
+            let cell_uuid = match id_map {
+                Some(map) => u128_to_hex32(map.cell_ids[sheet_idx][cell_idx].as_u128()),
+                None => u128_to_hex32(crate::storage::STORAGE_ID_ALLOC.next_u128()),
+            };
+            Some(SnapshotCellData {
+                cell_id: cell_uuid,
+                row: cell.row,
+                col: cell.col,
+                value: cell.value.clone(),
+                formula: cell.formula().cloned(),
+                identity_formula: None,
+                array_ref: cell.array_ref().cloned(),
+            })
+        })
+        .collect();
+
+    // Inject synthetic cells for comment targets on empty positions.
+    // Comments in XLSX reference a cell_ref (A1 notation). If the target
+    // cell has no data, it won't appear in ParseOutput.cells, and the
+    // comment will be orphaned during hydration. We create a Null-valued
+    // placeholder cell so the comment has something to attach to.
+    //
+    // Skip injection when id_map is present (hydration path) — hydration
+    // preallocates metadata-only identities for comment targets, and we
+    // must not introduce a second CellId for the same position.
+    if id_map.is_none() {
+        let mut occupied: HashSet<(u32, u32)> = cells.iter().map(|c| (c.row, c.col)).collect();
+        for comment in &sheet.comments {
+            if let Some((row, col)) = parse_cell_ref(&comment.cell_ref)
+                && occupied.insert((row, col))
+            {
+                let cell_uuid = format!("{:032x}", crate::storage::STORAGE_ID_ALLOC.next_u128());
+                cells.push(SnapshotCellData {
+                    cell_id: cell_uuid,
+                    row,
+                    col,
+                    value: CellValue::Null,
+                    formula: None,
+                    identity_formula: None,
+                    array_ref: None,
+                });
             }
+        }
+    }
+
+    SheetSnapshot {
+        id: sheet_uuid,
+        name: sheet.name.clone(),
+        rows: sheet.rows,
+        cols: sheet.cols,
+        cells,
+        ranges: vec![],
+    }
+}
+
+/// Build sheet headers without lowering cells. The incremental orchestrator
+/// uses these headers to resolve cross-sheet metadata while retaining the
+/// already-lowered sheets in its cumulative snapshot.
+pub(crate) fn convert_sheet_headers(
+    sheets: &[SheetData],
+    id_map: &HydrationIdMap,
+) -> Vec<SheetSnapshot> {
+    sheets
+        .iter()
+        .enumerate()
+        .map(|(sheet_idx, sheet)| SheetSnapshot {
+            id: u128_to_hex32(id_map.sheet_ids[sheet_idx].as_u128()),
+            name: sheet.name.clone(),
+            rows: sheet.rows,
+            cols: sheet.cols,
+            cells: vec![],
+            ranges: vec![],
         })
         .collect()
 }
