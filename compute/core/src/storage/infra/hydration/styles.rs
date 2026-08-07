@@ -407,6 +407,86 @@ pub(crate) fn remap_sheet_style_ids(sheet: &mut SheetData, remap: &HashMap<u32, 
     }
 }
 
+/// Hydrate only the style projections for an already-created sheet.
+///
+/// Findings from the full hydration path:
+/// - `hydrate_cell_styles` writes compact cell properties keyed by the
+///   position-derived cell hex and only needs `KEY_CELL_PROPERTIES`; it does
+///   not require a corresponding entry in the sheet's Yrs `cells` map, so
+///   styled blanks are supported.
+/// - Row and column styles require the pre-allocated row/column hex arrays;
+///   column-style ranges, authored style runs, and imported range styles write
+///   sheet-level format maps.
+/// - The workbook palette is indexed by the source style id. Materialization
+///   must add only missing indices so repeated sheet switches do not append
+///   duplicate palette entries or change existing style references.
+pub(crate) fn hydrate_sheet_styles_only(
+    txn: &mut yrs::TransactionMut,
+    workbook: &MapRef,
+    sheet_map: &MapRef,
+    sheet: &SheetData,
+    style_palette: &[DocumentFormat],
+    row_id_hexes: &[SmallHex],
+    col_id_hexes: &[SmallHex],
+    pos_map: &std::collections::HashMap<(u32, u32), String>,
+    range_style_positions: &std::collections::HashSet<(u32, u32)>,
+    imported_range_styles: &[ImportedRangeStyle],
+) {
+    let palette_map = match workbook.get(txn, KEY_STYLE_PALETTE) {
+        Some(Out::YMap(map)) => map,
+        _ => workbook.insert(
+            txn,
+            KEY_STYLE_PALETTE,
+            MapPrelim::from([] as [(&str, Any); 0]),
+        ),
+    };
+    for (style_id, doc_fmt) in style_palette.iter().enumerate() {
+        let key = style_id.to_string();
+        if palette_map.get(txn, &key).is_some() {
+            continue;
+        }
+        let cell_fmt = document_format_to_cell_format(doc_fmt);
+        let json =
+            serde_json::to_string(&cell_fmt).expect("CellFormat serialization should not fail");
+        palette_map.insert(txn, &*key, Any::String(Arc::from(json.as_str())));
+    }
+
+    let row_formats_map = match sheet_map.get(txn, KEY_ROW_FORMATS) {
+        Some(Out::YMap(map)) => map,
+        _ => sheet_map.insert(
+            txn,
+            KEY_ROW_FORMATS,
+            MapPrelim::from([] as [(&str, Any); 0]),
+        ),
+    };
+    let col_formats_map = match sheet_map.get(txn, KEY_COL_FORMATS) {
+        Some(Out::YMap(map)) => map,
+        _ => sheet_map.insert(
+            txn,
+            KEY_COL_FORMATS,
+            MapPrelim::from([] as [(&str, Any); 0]),
+        ),
+    };
+    hydrate_row_styles(
+        txn,
+        &row_formats_map,
+        row_id_hexes,
+        &sheet.row_styles,
+        style_palette,
+    );
+    hydrate_col_styles(
+        txn,
+        &col_formats_map,
+        col_id_hexes,
+        &sheet.col_styles,
+        style_palette,
+    );
+    hydrate_col_style_ranges(txn, sheet_map, &sheet.col_style_ranges, style_palette);
+    hydrate_authored_style_runs(txn, sheet_map, &sheet.authored_style_runs, style_palette);
+    hydrate_imported_range_styles(txn, sheet_map, imported_range_styles, style_palette);
+    hydrate_cell_styles(txn, pos_map, sheet_map, &sheet.cells, range_style_positions);
+}
+
 pub(super) fn hydrate_imported_range_styles(
     txn: &mut yrs::TransactionMut,
     sheet_map: &MapRef,

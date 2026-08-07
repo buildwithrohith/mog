@@ -53,7 +53,8 @@ pub(crate) use self::sheet::{
     allocate_sheet_ids_with_sheet_id,
 };
 pub(crate) use self::styles::{
-    ImportedRangeStyle, merge_style_palette_incremental, remap_sheet_style_ids,
+    ImportedRangeStyle, hydrate_sheet_styles_only, merge_style_palette_incremental,
+    remap_sheet_style_ids,
 };
 pub use self::workbook::write_theme_data_to_yrs;
 

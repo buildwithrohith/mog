@@ -86,6 +86,67 @@ pub(super) fn basic_import_fixture_xlsx() -> Vec<u8> {
         .expect("basic import fixture should be writable")
 }
 
+pub(super) fn materialized_style_deferred_fixture_xlsx() -> Vec<u8> {
+    let output = domain_types::ParseOutput {
+        style_palette: vec![
+            domain_types::DocumentFormat::default(),
+            domain_types::DocumentFormat {
+                number_format: Some("$#,##0.00".to_string()),
+                fill: Some(domain_types::FillFormat {
+                    background_color: Some("#00CC99".to_string()),
+                    pattern_type: Some("solid".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        ],
+        sheets: vec![
+            domain_types::SheetData {
+                name: "Landing".to_string(),
+                rows: 1,
+                cols: 1,
+                cells: vec![domain_types::CellData {
+                    row: 0,
+                    col: 0,
+                    value: CellValue::number(1.0),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            domain_types::SheetData {
+                name: "Formatted A".to_string(),
+                rows: 1,
+                cols: 1,
+                cells: vec![domain_types::CellData {
+                    row: 0,
+                    col: 0,
+                    value: CellValue::number(1234.5),
+                    style_id: Some(1),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            domain_types::SheetData {
+                name: "Formatted B".to_string(),
+                rows: 1,
+                cols: 1,
+                cells: vec![domain_types::CellData {
+                    row: 0,
+                    col: 0,
+                    value: CellValue::number(6789.25),
+                    style_id: Some(1),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+
+    xlsx_parser::write::write_xlsx_from_parse_output(&output)
+        .expect("materialized style deferred fixture should be writable")
+}
+
 pub(super) fn assert_viewport_empty_cell_fill(
     engine: &YrsComputeEngine,
     sheet_id: &SheetId,

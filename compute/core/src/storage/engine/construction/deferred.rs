@@ -447,6 +447,72 @@ fn materialize_deferred_sheet_inner(
                 Some(&id_map),
                 &mut allocator,
             );
+
+        // Materialization adds only style projections to the existing Yrs
+        // sheet. Values remain snapshot/mirror-backed, and this transaction
+        // deliberately does not touch cells or gridIndex.
+        let (range_style_positions, imported_range_styles) = if range_style_formats_enabled() {
+            build_imported_range_style_plan(
+                &cumulative_parse.sheets[sheet_index],
+                &allocations[sheet_index],
+                &cumulative_snap.sheets[sheet_index].ranges,
+                &mut allocator,
+            )
+        } else {
+            (std::collections::HashSet::new(), Vec::new())
+        };
+        let mut pos_map = std::collections::HashMap::with_capacity(
+            cumulative_parse.sheets[sheet_index].cells.len(),
+        );
+        for (cell_index, cell) in cumulative_parse.sheets[sheet_index]
+            .cells
+            .iter()
+            .enumerate()
+        {
+            if let Some(cell_id) = allocations[sheet_index].cell_ids.get(cell_index) {
+                pos_map.insert(
+                    (cell.row, cell.col),
+                    compute_document::hex::id_to_hex(cell_id.as_u128()).to_string(),
+                );
+            }
+        }
+        {
+            // Materialized styles are preview state, not a user mutation.
+            // Suppress the normal mutation observer while the style-only
+            // transaction writes the existing sheet maps.
+            let _guard = engine.mutation.suppress_guard();
+            let mut txn = engine.stores.storage.doc().transact_mut();
+            let workbook = engine.stores.storage.workbook_map().clone();
+            let sheets = engine.stores.storage.sheets().clone();
+            let sheet_hex =
+                compute_document::hex::id_to_hex(allocations[sheet_index].sheet_id.as_u128());
+            let sheet_map = match sheets.get(&txn, &sheet_hex) {
+                Some(yrs::Out::YMap(map)) => map,
+                _ => {
+                    return Err(ComputeError::InvalidInput {
+                        message: format!("materialized sheet {sheet_id} is missing from Yrs"),
+                    });
+                }
+            };
+            crate::storage::infra::hydration::hydrate_sheet_styles_only(
+                &mut txn,
+                &workbook,
+                &sheet_map,
+                &cumulative_parse.sheets[sheet_index],
+                &selected.output.style_palette,
+                &allocations[sheet_index].row_id_hexes,
+                &allocations[sheet_index].col_id_hexes,
+                &pos_map,
+                &range_style_positions,
+                &imported_range_styles,
+            );
+        }
+        // As in commit_deferred_hydration below, pre-full-hydration update
+        // bytes are not causally valid for providers. Materialization restores
+        // the deferred guard and the read-only path does not drain this
+        // buffer, so clear the style transaction's observer payload now.
+        engine.update_buffer.clear();
+
         let seed = snapshot_id_high_water_mark(&cumulative_snap);
         let shared_alloc = std::sync::Arc::new(cell_types::IdAllocator::with_seed(seed));
         let all_sheets = 0..cumulative_snap.sheets.len();

@@ -2,6 +2,17 @@ use super::support::*;
 use super::*;
 use crate::snapshot::{RuntimeDiagnosticsOptions, RuntimeOperationDiagnostic, WorkbookSettings};
 use value_types::CellValue;
+use yrs::{Map, Out, Transact};
+
+fn style_palette_len(engine: &YrsComputeEngine) -> u32 {
+    let doc = engine.stores.storage.doc();
+    let workbook = engine.stores.storage.workbook_map();
+    let txn = doc.transact();
+    match workbook.get(&txn, compute_document::schema::KEY_STYLE_PALETTE) {
+        Some(Out::YMap(map)) => map.len(&txn),
+        _ => 0,
+    }
+}
 
 #[test]
 fn deferred_xlsx_import_exposes_first_sheet_formatting_before_full_hydration() {
@@ -54,6 +65,80 @@ fn deferred_xlsx_import_exposes_first_sheet_formatting_before_full_hydration() {
         c2_format_after.background_color.is_some()
             || c2_format_after.pattern_foreground_color.is_some(),
         "C2 imported fill should remain visible after full deferred hydration; got {c2_format_after:?}"
+    );
+}
+
+#[test]
+fn deferred_xlsx_materialization_hydrates_non_landing_styles_idempotently() {
+    let bytes = materialized_style_deferred_fixture_xlsx();
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(simple_snapshot()).unwrap();
+    engine
+        .import_from_xlsx_bytes_deferred(&bytes)
+        .expect("deferred XLSX import should succeed");
+
+    let ids = engine.get_all_sheet_ids();
+    assert_eq!(ids.len(), 3, "fixture should import three sheets");
+    let formatted_a = SheetId::from_uuid_str(&ids[1]).unwrap();
+    let formatted_b = SheetId::from_uuid_str(&ids[2]).unwrap();
+    assert!(
+        engine.get_cell_id_at(&formatted_a, 0, 0).is_none(),
+        "non-landing sheet should start metadata-only"
+    );
+
+    engine
+        .materialize_deferred_sheet(formatted_a)
+        .expect("first formatted sheet should materialize");
+    let formatted_a_id = engine
+        .get_cell_id_at(&formatted_a, 0, 0)
+        .expect("formatted A1 should receive an allocated identity");
+    let formatted_a_format = engine.get_cell_format(
+        &formatted_a,
+        &CellId::from_uuid_str(&formatted_a_id).unwrap(),
+        0,
+        0,
+    );
+    assert_eq!(
+        formatted_a_format.number_format.as_deref(),
+        Some("$#,##0.00"),
+        "materialized cell should use the source currency format, not General"
+    );
+    assert!(
+        formatted_a_format.pattern_type.is_some(),
+        "materialized cell should retain the source solid fill"
+    );
+    assert!(
+        formatted_a_format.pattern_foreground_color.as_deref() == Some("#00CC99")
+            || formatted_a_format.background_color.as_deref() == Some("#00CC99"),
+        "materialized cell should retain the source fill color: {formatted_a_format:?}"
+    );
+    let palette_after_first = style_palette_len(&engine);
+
+    engine
+        .materialize_deferred_sheet(formatted_b)
+        .expect("second formatted sheet should materialize");
+    let formatted_b_id = engine
+        .get_cell_id_at(&formatted_b, 0, 0)
+        .expect("formatted B1 should receive an allocated identity");
+    let formatted_b_format = engine.get_cell_format(
+        &formatted_b,
+        &CellId::from_uuid_str(&formatted_b_id).unwrap(),
+        0,
+        0,
+    );
+    assert_eq!(
+        formatted_b_format.number_format.as_deref(),
+        Some("$#,##0.00"),
+        "a later materialized sheet should use the same source currency format"
+    );
+    assert!(
+        formatted_b_format.pattern_foreground_color.as_deref() == Some("#00CC99")
+            || formatted_b_format.background_color.as_deref() == Some("#00CC99"),
+        "a later materialized sheet should use the same source fill color: {formatted_b_format:?}"
+    );
+    assert_eq!(
+        style_palette_len(&engine),
+        palette_after_first,
+        "materializing another sheet must not duplicate existing palette entries"
     );
 }
 
