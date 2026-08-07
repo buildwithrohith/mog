@@ -605,10 +605,18 @@ pub(in crate::storage::engine) fn validate_and_clean_comments(
     stores: &mut EngineStores,
     sheet_id: &SheetId,
 ) -> Result<(Vec<u8>, MutationResult), ComputeError> {
+    let grid_index =
+        stores
+            .grid_indexes
+            .get(sheet_id)
+            .ok_or_else(|| ComputeError::SheetNotFound {
+                sheet_id: sheet_id.to_uuid_string(),
+            })?;
     let removed_count = comments::validate_and_clean_comments(
         stores.storage.doc(),
         stores.storage.sheets(),
         sheet_id,
+        grid_index,
     );
     let patches = compute_wire::mutation::serialize_multi_viewport_patches(&[]);
     Ok((patches, MutationResult::empty().with_data(&removed_count)?))

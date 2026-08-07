@@ -367,7 +367,6 @@ pub(in crate::storage::engine) fn mutation_copy_sheet(
     source_sheet_id: &SheetId,
     new_name: &str,
 ) -> Result<(String, MutationResult), ComputeError> {
-    use crate::identity::GridIndex;
     use crate::storage::engine::construction;
 
     // 1 + 2. Copy in yrs Doc and mirror (mirror gets an empty cells snapshot)
@@ -381,28 +380,24 @@ pub(in crate::storage::engine) fn mutation_copy_sheet(
 
     // 2b. Re-populate mirror from Yrs — copy_sheet creates an empty mirror entry,
     // but the cells were written to Yrs. Read them back to populate the mirror.
-    if let Some(snap) = construction::build_sheet_snapshot_from_yrs(&stores.storage, &new_id)? {
-        mirror.remove_sheet(&new_id);
-        mirror.add_sheet(snap)?;
-    }
+    let snap = construction::build_sheet_snapshot_from_yrs(&stores.storage, &new_id)?.ok_or_else(
+        || ComputeError::SheetNotFound {
+            sheet_id: hex.clone(),
+        },
+    )?;
+    let rows = snap.rows;
+    let cols = snap.cols;
+    let new_grid = crate::storage::engine::build_grid_from_yrs_for_sheet(
+        &stores.storage,
+        new_id,
+        &snap,
+        stores.grid_id_alloc.clone(),
+    )?;
+    mirror.remove_sheet(&new_id);
+    mirror.add_sheet(snap)?;
 
-    // 3. Build GridIndex for the new sheet
-    let (rows, cols) = stores
-        .grid_indexes
-        .get(source_sheet_id)
-        .map(|g| (g.row_count(), g.col_count()))
-        .unwrap_or((100, 26));
-
-    let mut new_grid = GridIndex::new(new_id, rows, cols, stores.grid_id_alloc.clone());
-
-    // Register cells from mirror data for the new sheet
-    if let Some(sheet) = mirror.get_sheet(&new_id) {
-        for (cell_id, _entry) in sheet.cells_iter() {
-            if let Some(pos) = mirror.resolve_position(cell_id) {
-                new_grid.register_cell(*cell_id, pos.row(), pos.col());
-            }
-        }
-    }
+    // 3. Install the GridIndex rebuilt from authoritative remapped posToId,
+    // including identities that only back comments/properties on blank cells.
     stores.grid_indexes.insert(new_id, new_grid);
 
     // 3b. Build merge spatial index for the new sheet, and sync into mirror.

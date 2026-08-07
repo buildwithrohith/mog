@@ -181,3 +181,207 @@ fn copy_sheet_preserves_existing_cross_sheet_dependency_edges() {
         "copied sheet formula must also depend on Sheet2 A1"
     );
 }
+
+#[test]
+fn cross_sheet_relocation_persists_identity_and_removes_displaced_binding() {
+    let source_sheet = sid(SHEET1_ID);
+    let target_sheet = sid(SHEET2_ID);
+    let moved_cell = cid(SHEET1_A1_ID);
+    let displaced_cell = cid(SHEET2_A1_ID);
+    let snapshot = WorkbookSnapshot {
+        sheets: vec![
+            SheetSnapshot {
+                id: SHEET1_ID.to_string(),
+                name: "Source".to_string(),
+                rows: 10,
+                cols: 10,
+                cells: vec![CellData {
+                    cell_id: SHEET1_A1_ID.to_string(),
+                    row: 0,
+                    col: 0,
+                    value: text("moved payload"),
+                    formula: None,
+                    identity_formula: None,
+                    array_ref: None,
+                }],
+                ranges: vec![],
+            },
+            SheetSnapshot {
+                id: SHEET2_ID.to_string(),
+                name: "Target".to_string(),
+                rows: 10,
+                cols: 10,
+                cells: vec![CellData {
+                    cell_id: SHEET2_A1_ID.to_string(),
+                    row: 2,
+                    col: 2,
+                    value: text("displaced payload"),
+                    formula: None,
+                    identity_formula: None,
+                    array_ref: None,
+                }],
+                ranges: vec![],
+            },
+        ],
+        named_ranges: vec![],
+        tables: vec![],
+        pivot_tables: vec![],
+        data_table_regions: vec![],
+        iterative_calc: false,
+        max_iterations: 100,
+        max_change: FiniteF64::must(0.001),
+        calculation_settings: None,
+    };
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(snapshot).unwrap();
+
+    engine
+        .relocate_cells_yrs(&source_sheet, 0, 0, 0, 0, &target_sheet, 2, 2)
+        .expect("cross-sheet relocate");
+    assert_eq!(
+        engine
+            .grid_index(&source_sheet)
+            .and_then(|grid| grid.cell_position(&moved_cell)),
+        None
+    );
+    assert_eq!(
+        engine
+            .grid_index(&target_sheet)
+            .and_then(|grid| grid.cell_position(&moved_cell)),
+        Some((2, 2))
+    );
+    assert_eq!(
+        engine
+            .grid_index(&target_sheet)
+            .and_then(|grid| grid.cell_position(&displaced_cell)),
+        None
+    );
+    assert_eq!(
+        cell_value_at(&engine, &target_sheet, 2, 2),
+        text("moved payload")
+    );
+
+    let state = compute_collab::encode_full_state(engine.storage().doc());
+    let (reloaded, _) = YrsComputeEngine::from_yrs_state(&state).expect("reload relocated state");
+    assert_eq!(
+        reloaded
+            .grid_index(&source_sheet)
+            .and_then(|grid| grid.cell_position(&moved_cell)),
+        None
+    );
+    assert_eq!(
+        reloaded
+            .grid_index(&target_sheet)
+            .and_then(|grid| grid.cell_position(&moved_cell)),
+        Some((2, 2))
+    );
+    assert_eq!(
+        reloaded
+            .grid_index(&target_sheet)
+            .and_then(|grid| grid.cell_position(&displaced_cell)),
+        None
+    );
+    assert_eq!(
+        cell_value_at(&reloaded, &target_sheet, 2, 2),
+        text("moved payload")
+    );
+    assert_eq!(
+        cell_value_at(&reloaded, &source_sheet, 0, 0),
+        CellValue::Null
+    );
+}
+
+#[test]
+fn relocation_beyond_current_axes_persists_same_and_cross_sheet_identity() {
+    fn compact_snapshot() -> WorkbookSnapshot {
+        WorkbookSnapshot {
+            sheets: vec![
+                SheetSnapshot {
+                    id: SHEET1_ID.to_string(),
+                    name: "Source".to_string(),
+                    rows: 2,
+                    cols: 2,
+                    cells: vec![CellData {
+                        cell_id: SHEET1_A1_ID.to_string(),
+                        row: 0,
+                        col: 0,
+                        value: text("payload"),
+                        formula: None,
+                        identity_formula: None,
+                        array_ref: None,
+                    }],
+                    ranges: vec![],
+                },
+                SheetSnapshot {
+                    id: SHEET2_ID.to_string(),
+                    name: "Target".to_string(),
+                    rows: 2,
+                    cols: 2,
+                    cells: vec![],
+                    ranges: vec![],
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    let source_sheet = sid(SHEET1_ID);
+    let target_sheet = sid(SHEET2_ID);
+    let moved_cell = cid(SHEET1_A1_ID);
+
+    let (mut same_sheet, _) = YrsComputeEngine::from_snapshot(compact_snapshot()).unwrap();
+    same_sheet
+        .relocate_cells_yrs(&source_sheet, 0, 0, 0, 0, &source_sheet, 19, 4)
+        .expect("same-sheet relocate beyond axes");
+    let state = compute_collab::encode_full_state(same_sheet.storage().doc());
+    let (same_reloaded, _) = YrsComputeEngine::from_yrs_state(&state).unwrap();
+    assert_eq!(
+        same_reloaded
+            .grid_index(&source_sheet)
+            .and_then(|grid| grid.cell_position(&moved_cell)),
+        Some((19, 4))
+    );
+    assert_eq!(
+        cell_value_at(&same_reloaded, &source_sheet, 19, 4),
+        text("payload")
+    );
+
+    let (mut cross_sheet, _) = YrsComputeEngine::from_snapshot(compact_snapshot()).unwrap();
+    cross_sheet
+        .relocate_cells_yrs(&source_sheet, 0, 0, 0, 0, &target_sheet, 19, 4)
+        .expect("cross-sheet relocate beyond axes");
+    let state = compute_collab::encode_full_state(cross_sheet.storage().doc());
+    let (cross_reloaded, _) = YrsComputeEngine::from_yrs_state(&state).unwrap();
+    assert_eq!(
+        cross_reloaded
+            .grid_index(&target_sheet)
+            .and_then(|grid| grid.cell_position(&moved_cell)),
+        Some((19, 4))
+    );
+    assert_eq!(
+        cell_value_at(&cross_reloaded, &target_sheet, 19, 4),
+        text("payload")
+    );
+
+    let mut empty_snapshot = compact_snapshot();
+    empty_snapshot.sheets[0].cells.clear();
+    let (mut empty_source, _) = YrsComputeEngine::from_snapshot(empty_snapshot).unwrap();
+    let before_state = compute_collab::encode_full_state(empty_source.storage().doc());
+    let before_dims = empty_source
+        .grid_index(&target_sheet)
+        .map(|grid| (grid.row_count(), grid.col_count()))
+        .unwrap();
+    empty_source
+        .relocate_cells_yrs(&source_sheet, 0, 0, 0, 0, &target_sheet, 9_999, 99)
+        .expect("empty relocation remains a no-op");
+    assert_eq!(
+        empty_source
+            .grid_index(&target_sheet)
+            .map(|grid| (grid.row_count(), grid.col_count())),
+        Some(before_dims)
+    );
+    assert_eq!(
+        compute_collab::encode_full_state(empty_source.storage().doc()),
+        before_state,
+        "empty relocation must not create a durable dimension mutation"
+    );
+}

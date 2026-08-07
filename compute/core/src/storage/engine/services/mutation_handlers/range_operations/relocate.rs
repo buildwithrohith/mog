@@ -8,9 +8,60 @@ use crate::snapshot::{ChangeKind, PivotTableChange, TableChange};
 use crate::storage::engine::mutation_coordinator::MutationCoordinator;
 use crate::storage::engine::services::metadata_shift;
 use crate::storage::engine::stores::EngineStores;
-use yrs::{Origin, Transact};
+use yrs::{Map, Origin, Out, Transact};
 
 use super::patches::{merge_recalc_results, synthetic_null_change};
+
+fn ensure_relocation_target_capacity(
+    stores: &mut EngineStores,
+    target_sheet_id: &SheetId,
+    target_end_row: u32,
+    target_end_col: u32,
+) -> Result<(), ComputeError> {
+    use compute_document::schema::{KEY_GRID_COL_AXIS, KEY_GRID_INDEX, KEY_GRID_ROW_AXIS};
+    use compute_document::undo::ORIGIN_USER_EDIT;
+
+    let EngineStores {
+        storage,
+        grid_indexes,
+        ..
+    } = stores;
+    let sheet_hex = id_to_hex(target_sheet_id.as_u128());
+    let sheets = storage.sheets();
+    let mut txn = storage
+        .doc()
+        .transact_mut_with(Origin::from(ORIGIN_USER_EDIT));
+    let compact_axes = match sheets.get(&txn, sheet_hex.as_ref()) {
+        Some(Out::YMap(sheet_map)) => match sheet_map.get(&txn, KEY_GRID_INDEX) {
+            Some(Out::YMap(grid_index)) => {
+                grid_index.get(&txn, KEY_GRID_ROW_AXIS).is_some()
+                    || grid_index.get(&txn, KEY_GRID_COL_AXIS).is_some()
+            }
+            _ => false,
+        },
+        _ => {
+            return Err(ComputeError::SheetNotFound {
+                sheet_id: target_sheet_id.to_uuid_string(),
+            });
+        }
+    };
+    let grid =
+        grid_indexes
+            .get_mut(target_sheet_id)
+            .ok_or_else(|| ComputeError::SheetNotFound {
+                sheet_id: target_sheet_id.to_uuid_string(),
+            })?;
+    let mut dims = crate::storage::sheet_dimensions::SheetDimensionsMut::from_grid_index(
+        storage.doc(),
+        sheets,
+        grid,
+    );
+    dims.ensure_capacity(&mut txn, *target_sheet_id, target_end_row, target_end_col)?;
+    if compact_axes {
+        dims.materialize_dense_axes_and_remove_compact_keys(&mut txn, *target_sheet_id)?;
+    }
+    Ok(())
+}
 
 // ---------------------------------------------------------------------------
 // mutation_relocate_cells
@@ -51,6 +102,42 @@ pub(in crate::storage::engine) fn mutation_relocate_cells(
             sheet_id: source_sheet_id.to_uuid_string(),
             operation: "relocate_cells".to_string(),
         });
+    }
+
+    let row_span =
+        src_end_row
+            .checked_sub(src_start_row)
+            .ok_or_else(|| ComputeError::InvalidInput {
+                message: "relocate source row range is inverted".to_string(),
+            })?;
+    let col_span =
+        src_end_col
+            .checked_sub(src_start_col)
+            .ok_or_else(|| ComputeError::InvalidInput {
+                message: "relocate source column range is inverted".to_string(),
+            })?;
+    let target_end_row =
+        target_row
+            .checked_add(row_span)
+            .ok_or_else(|| ComputeError::InvalidInput {
+                message: "relocate target row range overflows".to_string(),
+            })?;
+    let target_end_col =
+        target_col
+            .checked_add(col_span)
+            .ok_or_else(|| ComputeError::InvalidInput {
+                message: "relocate target column range overflows".to_string(),
+            })?;
+    let source_has_cells = stores
+        .grid_indexes
+        .get(source_sheet_id)
+        .is_some_and(|grid| {
+            grid.cells_in_range(src_start_row, src_start_col, src_end_row, src_end_col)
+                .next()
+                .is_some()
+        });
+    if source_has_cells {
+        ensure_relocation_target_capacity(stores, target_sheet_id, target_end_row, target_end_col)?;
     }
 
     let source_range = RangePos::new(

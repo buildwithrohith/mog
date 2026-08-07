@@ -153,17 +153,20 @@ pub(in crate::storage::engine) fn mutation_clear_cells(
     mutation.observer.set_suppressed(true);
 
     for &cell_id in &cell_ids {
-        let sheet_id = stores
-            .grid_indexes
-            .iter()
-            .find_map(|(sid, grid)| grid.cell_position(&cell_id).map(|_| *sid));
+        let sheet_and_pos_key = stores.grid_indexes.iter().find_map(|(sid, grid)| {
+            let (row, col) = grid.cell_position(&cell_id)?;
+            let row_hex = grid.row_id_hex(row)?;
+            let col_hex = grid.col_id_hex(col)?;
+            Some((*sid, format!("{row_hex}:{col_hex}")))
+        });
 
-        if let Some(sheet_id) = sheet_id {
+        if let Some((sheet_id, pos_key)) = sheet_and_pos_key {
             let preserve_identity = stores
                 .storage
                 .remove_cell_value_with_origin_preserving_metadata(
                     &sheet_id,
                     &cell_id,
+                    &pos_key,
                     Some(ORIGIN_USER_EDIT),
                 );
 

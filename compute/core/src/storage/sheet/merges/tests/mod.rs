@@ -5,7 +5,7 @@ use super::yrs_io::get_merges_map;
 use super::*;
 use crate::storage::YrsStorage;
 use crate::storage::infra::grid_helpers::get_cells_map;
-use cell_types::{CellId, SheetId, SheetPos};
+use cell_types::{CellId, SheetId};
 use compute_document::hex::{hex_to_id, id_to_hex};
 use compute_document::identity::GridIndex;
 use compute_document::schema::KEY_VALUE;
@@ -88,14 +88,8 @@ fn test_merge_range_basic() {
 
     let top_left = CellId::from_raw(hex_to_id(&region.top_left_id).unwrap());
     let bottom_right = CellId::from_raw(hex_to_id(&region.bottom_right_id).unwrap());
-    assert_eq!(
-        storage.read_cell_position_from_yrs(&sid, &top_left),
-        Some(SheetPos::new(0, 0))
-    );
-    assert_eq!(
-        storage.read_cell_position_from_yrs(&sid, &bottom_right),
-        Some(SheetPos::new(2, 2))
-    );
+    assert_eq!(grid.cell_position(&top_left), Some((0, 0)));
+    assert_eq!(grid.cell_position(&bottom_right), Some((2, 2)));
 }
 
 // -------------------------------------------------------------------

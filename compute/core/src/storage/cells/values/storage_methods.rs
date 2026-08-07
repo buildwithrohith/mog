@@ -85,71 +85,6 @@ impl YrsStorage {
         Some((value, formula, identity_formula, array_ref))
     }
 
-    /// Read a cell's position from the yrs document.
-    ///
-    /// Reads `gridIndex/idToPos` (the authoritative yrs-side identity
-    /// store post-GridIndex migration), decomposes the `"rowHex:colHex"` value, and
-    /// resolves the row/column indices via the `rowOrder` / `colOrder`
-    /// YArrays. Returns `None` when the mapping is absent (cell never
-    /// written, or written before the yrs-side mirror was introduced).
-    ///
-    /// Used by observer-driven paths (`apply_cell_changes`) during
-    /// undo/redo when the in-memory `GridIndex` has been cleared and
-    /// must be re-populated from yrs.
-    pub fn read_cell_position_from_yrs(
-        &self,
-        sheet_id: &SheetId,
-        cell_id: &CellId,
-    ) -> Option<SheetPos> {
-        use crate::storage::infra::grid_helpers;
-        use compute_document::schema::KEY_GRID_INDEX;
-
-        let sheet_hex = id_to_hex(sheet_id.as_u128());
-        let cell_hex = id_to_hex(cell_id.as_u128());
-        let txn = self.doc.transact();
-
-        let sheet_map = match self.sheets.get(&txn, &sheet_hex) {
-            Some(yrs::Out::YMap(m)) => m,
-            _ => return None,
-        };
-        let gi_map = match sheet_map.get(&txn, KEY_GRID_INDEX) {
-            Some(yrs::Out::YMap(m)) => m,
-            _ => return None,
-        };
-        let id_to_pos = match gi_map.get(&txn, "idToPos") {
-            Some(yrs::Out::YMap(m)) => m,
-            _ => return None,
-        };
-        let pos_key = match id_to_pos.get(&txn, &cell_hex) {
-            Some(yrs::Out::Any(yrs::Any::String(s))) => s.to_string(),
-            _ => return None,
-        };
-        let (row_hex, col_hex) = pos_key.split_once(':')?;
-
-        // Resolve row/col indices via rowOrder / colOrder arrays.
-        let row_arr = grid_helpers::get_row_order_array(&sheet_map, &txn)?;
-        let col_arr = grid_helpers::get_col_order_array(&sheet_map, &txn)?;
-        let mut row_idx: Option<u32> = None;
-        for i in 0..row_arr.len(&txn) {
-            if let Some(yrs::Out::Any(yrs::Any::String(s))) = row_arr.get(&txn, i)
-                && s.as_ref() == row_hex
-            {
-                row_idx = Some(i);
-                break;
-            }
-        }
-        let mut col_idx: Option<u32> = None;
-        for i in 0..col_arr.len(&txn) {
-            if let Some(yrs::Out::Any(yrs::Any::String(s))) = col_arr.get(&txn, i)
-                && s.as_ref() == col_hex
-            {
-                col_idx = Some(i);
-                break;
-            }
-        }
-        Some(SheetPos::new(row_idx?, col_idx?))
-    }
-
     /// Read which CellId currently owns a position in the yrs document.
     ///
     /// Reads `gridIndex/posToId` by constructing the `"rowHex:colHex"` key
@@ -194,6 +129,28 @@ impl YrsStorage {
             _ => return None,
         };
         hex_to_id(&cell_hex).map(CellId::from_raw)
+    }
+
+    fn read_position_key_at(&self, sheet_id: &SheetId, row: u32, col: u32) -> Option<String> {
+        use crate::storage::infra::grid_helpers;
+
+        let sheet_hex = id_to_hex(sheet_id.as_u128());
+        let txn = self.doc.transact();
+        let sheet_map = match self.sheets.get(&txn, &sheet_hex) {
+            Some(yrs::Out::YMap(m)) => m,
+            _ => return None,
+        };
+        let row_arr = grid_helpers::get_row_order_array(&sheet_map, &txn)?;
+        let col_arr = grid_helpers::get_col_order_array(&sheet_map, &txn)?;
+        let row_hex = match row_arr.get(&txn, row) {
+            Some(yrs::Out::Any(yrs::Any::String(s))) => s,
+            _ => return None,
+        };
+        let col_hex = match col_arr.get(&txn, col) {
+            Some(yrs::Out::Any(yrs::Any::String(s))) => s,
+            _ => return None,
+        };
+        Some(format!("{row_hex}:{col_hex}"))
     }
 
     /// Write a cell value + optional formula. Updates both yrs doc and mirror.
@@ -254,6 +211,20 @@ impl YrsStorage {
         cell_id: &CellId,
         origin: Option<&[u8]>,
     ) {
+        let pos_key = mirror
+            .resolve_position(cell_id)
+            .and_then(|pos| self.read_position_key_at(sheet_id, pos.row(), pos.col()));
+        self.remove_cell_with_origin_at(mirror, sheet_id, cell_id, pos_key.as_deref(), origin);
+    }
+
+    pub(crate) fn remove_cell_with_origin_at(
+        &mut self,
+        mirror: &mut CellMirror,
+        sheet_id: &SheetId,
+        cell_id: &CellId,
+        pos_key: Option<&str>,
+        origin: Option<&[u8]>,
+    ) {
         let sheet_hex = id_to_hex(sheet_id.as_u128());
         let cell_hex = id_to_hex(cell_id.as_u128());
 
@@ -268,9 +239,15 @@ impl YrsStorage {
             {
                 cells_map.remove(&mut txn, &cell_hex);
             }
-            // Also drop the yrs-side identity mapping so stale entries
-            // don't leak into `read_cell_position_from_yrs` / CRDT sync.
-            remove_cell_position_from_yrs(&mut txn, &self.sheets, &sheet_hex, &cell_hex);
+            if let Some(pos_key) = pos_key {
+                remove_cell_position_from_yrs(
+                    &mut txn,
+                    &self.sheets,
+                    &sheet_hex,
+                    &cell_hex,
+                    pos_key,
+                );
+            }
         }
 
         mirror.remove_cell(cell_id);
@@ -286,6 +263,7 @@ impl YrsStorage {
         &mut self,
         sheet_id: &SheetId,
         cell_id: &CellId,
+        pos_key: &str,
         origin: Option<&[u8]>,
     ) -> bool {
         let sheet_hex = id_to_hex(sheet_id.as_u128());
@@ -306,7 +284,7 @@ impl YrsStorage {
         let preserve_identity =
             cell_has_identity_backing_metadata(&txn, &self.sheets, &sheet_hex, &cell_hex);
         if !preserve_identity {
-            remove_cell_position_from_yrs(&mut txn, &self.sheets, &sheet_hex, &cell_hex);
+            remove_cell_position_from_yrs(&mut txn, &self.sheets, &sheet_hex, &cell_hex, pos_key);
         }
         preserve_identity
     }

@@ -83,25 +83,16 @@ pub(in crate::storage::engine) fn apply_cell_changes(
                 if let Some((value, formula, identity_formula, array_ref)) =
                     stores.storage.read_cell_from_yrs_full(sheet_id, cell_id)
                 {
-                    // Find position from mirror, in-memory grid index,
-                    // or yrs grid index (fallback for redo after undo).
-                    let pos = mirror
-                        .resolve_position(cell_id)
-                        .or_else(|| {
-                            stores
-                                .grid_indexes
-                                .get(sheet_id)
-                                .and_then(|g| g.cell_position(cell_id))
-                                .map(|(r, c)| SheetPos::new(r, c))
-                        })
-                        .or_else(|| {
-                            // Fallback: read from yrs grid index (idToPos).
-                            // Needed when redo re-adds a cell whose position
-                            // was cleared from mirror/grid_indexes during undo.
-                            stores
-                                .storage
-                                .read_cell_position_from_yrs(sheet_id, cell_id)
-                        });
+                    // Find position from the mirror or the transient GridIndex.
+                    // Observed posToId changes are applied to GridIndex before
+                    // cell changes, including redo of a newly-created cell.
+                    let pos = mirror.resolve_position(cell_id).or_else(|| {
+                        stores
+                            .grid_indexes
+                            .get(sheet_id)
+                            .and_then(|g| g.cell_position(cell_id))
+                            .map(|(r, c)| SheetPos::new(r, c))
+                    });
 
                     if let Some(pos) = pos {
                         // In collaborative mode, multiple engines may create

@@ -81,3 +81,20 @@ fn sort_rows_empty_permutation_is_noop() {
     assert_eq!(grid.row_id(0), Some(rid0));
     assert_invariants(&grid);
 }
+
+#[test]
+fn sort_rows_in_columns_leaves_outside_identity_unchanged() {
+    let mut grid = make_grid(2, 3);
+    let a1 = grid.ensure_cell_id(0, 0);
+    let b1 = grid.ensure_cell_id(0, 1);
+    let c1 = grid.ensure_cell_id(0, 2);
+    let c2 = grid.ensure_cell_id(1, 2);
+
+    grid.sort_rows_in_columns(&[(0, 1), (1, 0)], 0, 1);
+
+    assert_eq!(grid.cell_position(&a1), Some((1, 0)));
+    assert_eq!(grid.cell_position(&b1), Some((1, 1)));
+    assert_eq!(grid.cell_position(&c1), Some((0, 2)));
+    assert_eq!(grid.cell_position(&c2), Some((1, 2)));
+    assert_invariants(&grid);
+}

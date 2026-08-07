@@ -220,6 +220,7 @@ impl YrsComputeEngine {
             return Ok(RecalcResult::empty());
         }
 
+        let old_position_keys = self.old_position_keys_for_updates(sheet_id, &updates)?;
         let change = StructureChange::RemapPositions { updates };
         self.mutation.undo_manager.begin_undo_group();
         let _guard = self.mutation.suppress_guard();
@@ -237,6 +238,7 @@ impl YrsComputeEngine {
                     StructureChange::RemapPositions { updates } => updates,
                     _ => unreachable!(),
                 },
+                &old_position_keys,
             )?;
             Ok(recalc)
         });
@@ -255,6 +257,9 @@ impl YrsComputeEngine {
             return Ok(RecalcResult::empty());
         }
 
+        let old_position_keys = self.old_position_keys_for_updates(sheet_id, &updates)?;
+        let deleted_position_keys =
+            self.old_position_keys_for_cell_ids(sheet_id, &deleted_cell_ids)?;
         self.mutation.undo_manager.begin_undo_group();
         let _guard = self.mutation.suppress_guard();
 
@@ -265,7 +270,7 @@ impl YrsComputeEngine {
                 &mut self.stores,
                 &mut self.mirror,
                 sheet_id,
-                &deleted_cell_ids,
+                &deleted_position_keys,
             )
         };
 
@@ -289,6 +294,7 @@ impl YrsComputeEngine {
                         StructureChange::RemapPositions { updates } => updates,
                         _ => unreachable!(),
                     },
+                    &old_position_keys,
                 )?;
                 Ok(recalc)
             }
@@ -299,18 +305,74 @@ impl YrsComputeEngine {
         recalc_result
     }
 
+    fn old_position_keys_for_updates(
+        &self,
+        sheet_id: &SheetId,
+        updates: &[(CellId, u32, u32)],
+    ) -> Result<Vec<(CellId, String)>, ComputeError> {
+        let grid =
+            self.stores
+                .grid_indexes
+                .get(sheet_id)
+                .ok_or_else(|| ComputeError::SheetNotFound {
+                    sheet_id: sheet_id.to_uuid_string(),
+                })?;
+        updates
+            .iter()
+            .map(|(cell_id, _, _)| {
+                let (row, col) =
+                    grid.cell_position(cell_id)
+                        .ok_or_else(|| ComputeError::InvalidInput {
+                            message: format!(
+                                "missing current position for remapped cell {}",
+                                cell_id.to_uuid_string()
+                            ),
+                        })?;
+                let row_hex = grid
+                    .row_id_hex(row)
+                    .ok_or_else(|| ComputeError::InvalidInput {
+                        message: format!("missing row identity for remapped row {row}"),
+                    })?;
+                let col_hex = grid
+                    .col_id_hex(col)
+                    .ok_or_else(|| ComputeError::InvalidInput {
+                        message: format!("missing column identity for remapped column {col}"),
+                    })?;
+                Ok((*cell_id, format!("{row_hex}:{col_hex}")))
+            })
+            .collect()
+    }
+
+    fn old_position_keys_for_cell_ids(
+        &self,
+        sheet_id: &SheetId,
+        cell_ids: &[CellId],
+    ) -> Result<Vec<(CellId, String)>, ComputeError> {
+        let updates: Vec<(CellId, u32, u32)> = cell_ids
+            .iter()
+            .copied()
+            .map(|cell_id| (cell_id, 0, 0))
+            .collect();
+        self.old_position_keys_for_updates(sheet_id, &updates)
+    }
+
     fn clear_cells_for_partial_structural_delete(
         stores: &mut super::super::stores::EngineStores,
         mirror: &mut CellMirror,
         sheet_id: &SheetId,
-        cell_ids: &[CellId],
+        cell_position_keys: &[(CellId, String)],
     ) -> Result<(), ComputeError> {
-        stores.compute.clear_cells(mirror, cell_ids)?;
-        for cell_id in cell_ids {
-            stores.storage.remove_cell_with_origin(
+        let cell_ids: Vec<CellId> = cell_position_keys
+            .iter()
+            .map(|(cell_id, _)| *cell_id)
+            .collect();
+        stores.compute.clear_cells(mirror, &cell_ids)?;
+        for (cell_id, pos_key) in cell_position_keys {
+            stores.storage.remove_cell_with_origin_at(
                 mirror,
                 sheet_id,
                 cell_id,
+                Some(pos_key),
                 Some(ORIGIN_STRUCTURAL),
             );
             let grid = stores.grid_indexes.get_mut(sheet_id).ok_or_else(|| {

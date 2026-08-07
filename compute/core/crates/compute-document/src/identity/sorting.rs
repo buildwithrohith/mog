@@ -10,6 +10,20 @@ impl GridIndex {
     /// to `new_row`. RowIds intentionally remain unchanged; only cell positions in
     /// affected rows are updated.
     pub fn sort_rows(&mut self, permutation: &[(u32, u32)]) {
+        self.sort_rows_in_columns(permutation, 0, u32::MAX);
+    }
+
+    /// Sort rows for identities whose columns fall inside an inclusive range.
+    ///
+    /// Per-cell range sorts use this so sorting `A:B` does not move identities
+    /// in column `C`. Row-order sorts continue to use [`Self::sort_rows`]
+    /// because reordering the row axis intentionally affects every column.
+    pub fn sort_rows_in_columns(
+        &mut self,
+        permutation: &[(u32, u32)],
+        start_col: u32,
+        end_col: u32,
+    ) {
         if permutation.is_empty() {
             return;
         }
@@ -52,7 +66,9 @@ impl GridIndex {
         let cells_to_remap: Vec<((u32, u32), CellId)> = self
             .cell_at_pos
             .iter()
-            .filter(|&(&(row, _), _)| affected_rows.contains(&row))
+            .filter(|&(&(row, col), _)| {
+                affected_rows.contains(&row) && (start_col..=end_col).contains(&col)
+            })
             .map(|(&pos, &id)| (pos, id))
             .collect();
 

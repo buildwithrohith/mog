@@ -1,9 +1,9 @@
-use std::{collections::HashSet, sync::Arc};
+use std::collections::HashSet;
 
 use cell_types::SheetId;
 use compute_document::hex::id_to_hex;
 use compute_document::identity::GridIndex;
-use compute_document::schema::{KEY_CELLS, KEY_GRID_ID_TO_POS, KEY_GRID_INDEX, KEY_GRID_POS_TO_ID};
+use compute_document::schema::{KEY_CELLS, KEY_GRID_INDEX, KEY_GRID_POS_TO_ID};
 use compute_document::undo::ORIGIN_REMOTE;
 use value_types::ComputeError;
 use yrs::{Any, Map, MapRef, Origin, Out, ReadTxn, Transact};
@@ -16,7 +16,6 @@ pub(super) fn repair_orphaned_cell_bindings_after_sync(
     engine: &YrsComputeEngine,
 ) -> Result<(), ComputeError> {
     let mut removals = HashSet::new();
-    let mut repairs = Vec::new();
 
     for sheet_id in engine.stores.storage.sheet_order() {
         let Some(axes) =
@@ -26,16 +25,10 @@ pub(super) fn repair_orphaned_cell_bindings_after_sync(
         };
         let axis_grid = axes.into_grid(sheet_id, engine.stores.grid_id_alloc.clone());
 
-        collect_repairs_for_sheet(
-            &engine.stores.storage,
-            sheet_id,
-            &axis_grid,
-            &mut removals,
-            &mut repairs,
-        );
+        collect_repairs_for_sheet(&engine.stores.storage, sheet_id, &axis_grid, &mut removals);
     }
 
-    if removals.is_empty() && repairs.is_empty() {
+    if removals.is_empty() {
         return Ok(());
     }
 
@@ -63,65 +56,10 @@ pub(super) fn repair_orphaned_cell_bindings_after_sync(
             {
                 pos_to_id.remove(&mut txn, pos_key.as_str());
             }
-
-            if let Some(Out::YMap(id_to_pos)) = grid_index.get(&txn, KEY_GRID_ID_TO_POS)
-                && matches!(
-                    id_to_pos.get(&txn, cell_hex.as_str()),
-                    Some(Out::Any(Any::String(existing))) if existing.as_ref() == pos_key
-                )
-            {
-                id_to_pos.remove(&mut txn, cell_hex.as_str());
-            }
         }
 
         if let Some(Out::YMap(cells)) = sheet_map.get(&txn, KEY_CELLS) {
             cells.remove(&mut txn, cell_hex.as_str());
-        }
-    }
-
-    for Binding {
-        sheet_id,
-        pos_key,
-        cell_hex,
-    } in repairs
-    {
-        let sheet_hex = id_to_hex(sheet_id.as_u128());
-        let Some(Out::YMap(sheet_map)) = sheets.get(&txn, sheet_hex.as_ref()) else {
-            continue;
-        };
-        let Some(Out::YMap(grid_index)) = sheet_map.get(&txn, KEY_GRID_INDEX) else {
-            continue;
-        };
-        let Some(Out::YMap(pos_to_id)) = grid_index.get(&txn, KEY_GRID_POS_TO_ID) else {
-            continue;
-        };
-        let cells = match sheet_map.get(&txn, KEY_CELLS) {
-            Some(Out::YMap(cells)) => Some(cells),
-            _ => None,
-        };
-
-        let should_repair = match pos_to_id.get(&txn, pos_key.as_str()) {
-            Some(Out::Any(Any::String(existing))) if existing.as_ref() == cell_hex => false,
-            Some(Out::Any(Any::String(existing)))
-                if cell_identity_exists(
-                    cells.as_ref(),
-                    &txn,
-                    sheets,
-                    sheet_hex.as_ref(),
-                    existing.as_ref(),
-                ) =>
-            {
-                false
-            }
-            _ => cell_identity_exists(cells.as_ref(), &txn, sheets, sheet_hex.as_ref(), &cell_hex),
-        };
-
-        if should_repair {
-            pos_to_id.insert(
-                &mut txn,
-                pos_key.as_str(),
-                Any::String(Arc::from(cell_hex.as_str())),
-            );
         }
     }
 
@@ -140,7 +78,6 @@ fn collect_repairs_for_sheet(
     sheet_id: SheetId,
     axis_grid: &GridIndex,
     removals: &mut HashSet<Binding>,
-    repairs: &mut Vec<Binding>,
 ) {
     let sheet_hex = id_to_hex(sheet_id.as_u128());
     let txn = storage.doc().transact();
@@ -174,61 +111,6 @@ fn collect_repairs_for_sheet(
                     pos_key: pos_key.to_string(),
                     cell_hex: cell_hex.to_string(),
                 });
-            }
-        }
-    }
-
-    if let Some(Out::YMap(id_to_pos)) = grid_index.get(&txn, KEY_GRID_ID_TO_POS) {
-        let pos_to_id = match grid_index.get(&txn, KEY_GRID_POS_TO_ID) {
-            Some(Out::YMap(pos_to_id)) => Some(pos_to_id),
-            _ => None,
-        };
-        for (cell_hex, value) in id_to_pos.iter(&txn) {
-            let Out::Any(Any::String(pos_key)) = value else {
-                continue;
-            };
-            let cell_hex_str: &str = &cell_hex;
-            let pos_key_str: &str = &pos_key;
-            let binding = Binding {
-                sheet_id,
-                pos_key: pos_key_str.to_string(),
-                cell_hex: cell_hex_str.to_string(),
-            };
-
-            if !position_resolves(axis_grid, pos_key_str)
-                || !cell_identity_exists(
-                    cells.as_ref(),
-                    &txn,
-                    storage.sheets(),
-                    sheet_hex.as_ref(),
-                    cell_hex_str,
-                )
-            {
-                removals.insert(binding);
-                continue;
-            }
-
-            let needs_repair = match pos_to_id
-                .as_ref()
-                .and_then(|map| map.get(&txn, pos_key_str))
-            {
-                Some(Out::Any(Any::String(existing))) if existing.as_ref() == cell_hex_str => false,
-                Some(Out::Any(Any::String(existing)))
-                    if cell_identity_exists(
-                        cells.as_ref(),
-                        &txn,
-                        storage.sheets(),
-                        sheet_hex.as_ref(),
-                        existing.as_ref(),
-                    ) =>
-                {
-                    false
-                }
-                _ => true,
-            };
-
-            if needs_repair {
-                repairs.push(binding);
             }
         }
     }

@@ -173,8 +173,9 @@ fn write_cells_remapped(
 
 /// Write the `gridIndex` sub-map with CellId-hex remapping.
 ///
-/// Shape: `{ posToId: Y.Map<"row:col", cell_hex>, idToPos: Y.Map<cell_hex, "row:col"> }`.
-/// `posToId` keeps its keys and remaps values; `idToPos` remaps its keys.
+/// `posToId` keeps its keys and remaps values. While schema v19 still
+/// dual-writes, the copied `idToPos` is freshly derived from those remapped
+/// authoritative entries; source inverse entries are never consulted.
 fn write_grid_index_remapped(
     new_sheet: &MapRef,
     txn: &mut yrs::TransactionMut,
@@ -189,6 +190,7 @@ fn write_grid_index_remapped(
         match (sub_key.as_str(), sub_val) {
             (KEY_GRID_POS_TO_ID, YValue::Map(pos_entries)) => {
                 let new_pos: MapRef = new_gi.insert(txn, KEY_GRID_POS_TO_ID, MapPrelim::default());
+                let new_id: MapRef = new_gi.insert(txn, KEY_GRID_ID_TO_POS, MapPrelim::default());
                 for (pos, v) in pos_entries {
                     if let YValue::Any(Any::String(old_hex)) = v {
                         let new_val = remap
@@ -196,21 +198,13 @@ fn write_grid_index_remapped(
                             .cloned()
                             .unwrap_or_else(|| old_hex.to_string());
                         new_pos.insert(txn, pos.as_str(), Any::String(Arc::from(new_val.as_str())));
+                        new_id.insert(txn, new_val, Any::String(Arc::from(pos.as_str())));
                     } else {
                         write_y_value_into_map(&new_pos, txn, pos, v);
                     }
                 }
             }
-            (KEY_GRID_ID_TO_POS, YValue::Map(id_entries)) => {
-                let new_id: MapRef = new_gi.insert(txn, KEY_GRID_ID_TO_POS, MapPrelim::default());
-                for (old_hex, v) in id_entries {
-                    let new_key = remap
-                        .get(old_hex)
-                        .cloned()
-                        .unwrap_or_else(|| old_hex.clone());
-                    write_y_value_into_map(&new_id, txn, &new_key, v);
-                }
-            }
+            (KEY_GRID_ID_TO_POS, _) => {}
             _ => write_y_value_into_map(&new_gi, txn, sub_key, sub_val),
         }
     }
@@ -463,11 +457,6 @@ impl YrsStorage {
                         if let Out::Any(Any::String(old_hex)) = value {
                             ensure_cell_id_remap(&mut cell_id_remap, old_hex.as_ref(), id_alloc);
                         }
-                    }
-                }
-                if let Some(Out::YMap(id_to_pos)) = grid_index.get(&txn, KEY_GRID_ID_TO_POS) {
-                    for (old_hex, _) in id_to_pos.iter(&txn) {
-                        ensure_cell_id_remap(&mut cell_id_remap, &old_hex, id_alloc);
                     }
                 }
             }

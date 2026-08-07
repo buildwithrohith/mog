@@ -345,6 +345,18 @@ fn apply_sync_update_syncs_remote_runtime_calculation_settings_before_cell_recal
             true,
         )
         .expect("batch set circular formulas");
+    let b1_id = engine_a
+        .grid_index(&sid)
+        .and_then(|grid| grid.cell_id_at(0, 1))
+        .expect("B1 identity after batch write");
+    assert_eq!(
+        engine_a
+            .storage()
+            .read_cell_from_yrs_full(&sid, &b1_id)
+            .and_then(|(_, formula, _, _)| formula),
+        Some("=A1*0.5".to_string()),
+        "formula normalization must not strand B1's payload under a losing CellId"
+    );
 
     let delta = engine_a
         .encode_diff(&engine_b_state_vector)
@@ -353,6 +365,14 @@ fn apply_sync_update_syncs_remote_runtime_calculation_settings_before_cell_recal
         .apply_sync_update_legacy(&delta)
         .expect("apply A to B diff");
 
+    assert_eq!(
+        engine_b
+            .grid_index(&sid)
+            .and_then(|grid| grid.cell_id_at(0, 1)),
+        Some(b1_id),
+        "authoritative B1 identity must survive sync/rebuild"
+    );
+
     assert!(
         result.recalc.metrics.iterative_iterations > 1,
         "remote settings must sync before remote formulas recalc; metrics = {:?}",
@@ -360,4 +380,54 @@ fn apply_sync_update_syncs_remote_runtime_calculation_settings_before_cell_recal
     );
     assert_close(number_at(&engine_b, 0, 0), 2.0, 0.01, "A1");
     assert_close(number_at(&engine_b, 0, 1), 1.0, 0.01, "B1");
+}
+
+#[test]
+fn formula_batch_rebinds_existing_position_to_supplied_payload_identity() {
+    let mut engine = build_engine();
+    let sid = sheet_id();
+    engine.set_cell_value_parsed(&sid, 0, 1, "7").unwrap();
+    let losing_b1_id = engine
+        .grid_index(&sid)
+        .and_then(|grid| grid.cell_id_at(0, 1))
+        .expect("existing B1 identity");
+
+    let mut settings = engine.get_workbook_settings();
+    settings.calculation_settings = Some(CalculationSettings {
+        enable_iterative_calculation: true,
+        max_iterations: 100,
+        ..CalculationSettings::default()
+    });
+    engine.set_workbook_settings(settings).unwrap();
+
+    let a1_id = cell_types::CellId::from_raw(u128::MAX - 1);
+    let winning_b1_id = cell_types::CellId::from_raw(u128::MAX - 2);
+    engine
+        .batch_set_cells(
+            vec![
+                (sid, a1_id, 0, 0, parse_input("=B1+1")),
+                (sid, winning_b1_id, 0, 1, parse_input("=A1*0.5")),
+            ],
+            true,
+        )
+        .expect("resolved formula batch");
+
+    assert_eq!(
+        engine
+            .grid_index(&sid)
+            .and_then(|grid| grid.cell_id_at(0, 1)),
+        Some(winning_b1_id)
+    );
+    assert_eq!(
+        engine.mirror().resolve_cell_id(&sid, SheetPos::new(0, 1)),
+        Some(winning_b1_id)
+    );
+    assert_eq!(engine.mirror().resolve_position(&losing_b1_id), None);
+    assert_eq!(
+        engine
+            .storage()
+            .read_cell_from_yrs_full(&sid, &winning_b1_id)
+            .and_then(|(_, formula, _, _)| formula),
+        Some("=A1*0.5".to_string())
+    );
 }

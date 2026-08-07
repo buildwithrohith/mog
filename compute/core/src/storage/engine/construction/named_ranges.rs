@@ -126,7 +126,7 @@ impl YrsIdentityFormulaLookup {
     }
 
     fn read_sheet(&mut self, storage: &YrsStorage, sheet_id: SheetId) {
-        use compute_document::schema::{KEY_GRID_ID_TO_POS, KEY_GRID_INDEX, KEY_GRID_POS_TO_ID};
+        use compute_document::schema::{KEY_GRID_INDEX, KEY_GRID_POS_TO_ID};
 
         let txn = storage.doc().transact();
         let sheet_hex = compute_document::hex::id_to_hex(sheet_id.as_u128());
@@ -168,7 +168,6 @@ impl YrsIdentityFormulaLookup {
             return;
         };
 
-        let mut inserted_from_pos_to_id = false;
         if let Some(yrs::Out::YMap(pos_to_id)) = grid_index.get(&txn, KEY_GRID_POS_TO_ID) {
             for (pos_key, value) in pos_to_id.iter(&txn) {
                 let Some((row_hex, col_hex)) = pos_key.split_once(':') else {
@@ -183,30 +182,6 @@ impl YrsIdentityFormulaLookup {
                     continue;
                 };
                 let Some(raw) = hex_to_id(&cell_hex) else {
-                    continue;
-                };
-                self.cell_positions
-                    .insert(CellId::from_raw(raw), (sheet_id, row, col));
-                inserted_from_pos_to_id = true;
-            }
-        }
-
-        if !inserted_from_pos_to_id
-            && let Some(yrs::Out::YMap(id_to_pos)) = grid_index.get(&txn, KEY_GRID_ID_TO_POS)
-        {
-            for (cell_hex, value) in id_to_pos.iter(&txn) {
-                let yrs::Out::Any(yrs::Any::String(pos_key)) = value else {
-                    continue;
-                };
-                let Some((row_hex, col_hex)) = pos_key.split_once(':') else {
-                    continue;
-                };
-                let (Some(&row), Some(&col)) =
-                    (row_index_by_hex.get(row_hex), col_index_by_hex.get(col_hex))
-                else {
-                    continue;
-                };
-                let Some(raw) = hex_to_id(cell_hex) else {
                     continue;
                 };
                 self.cell_positions

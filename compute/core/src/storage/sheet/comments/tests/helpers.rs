@@ -1,8 +1,10 @@
-use yrs::{Any, Map, Origin, Out, Transact};
+use yrs::{Any, Array, Map, Origin, Out, Transact};
 
 use cell_types::SheetId;
 use compute_document::hex::id_to_hex;
-use compute_document::schema::{KEY_CELLS, KEY_COMMENTS, KEY_GRID_ID_TO_POS, KEY_GRID_INDEX};
+use compute_document::schema::{
+    KEY_CELLS, KEY_COL_ORDER, KEY_COMMENTS, KEY_GRID_INDEX, KEY_GRID_POS_TO_ID, KEY_ROW_ORDER,
+};
 use compute_document::undo::ORIGIN_USER_EDIT;
 use domain_types::domain::comment::{Comment, RichTextRun};
 use domain_types::yrs_schema::comment as comment_schema;
@@ -60,12 +62,30 @@ pub(super) fn add_grid_index_cell(storage: &YrsStorage, sheet_id: &SheetId, cell
         Some(Out::YMap(m)) => m,
         _ => panic!("grid index not found"),
     };
-    let id_to_pos = match grid_index.get(&txn, KEY_GRID_ID_TO_POS) {
+    let pos_to_id = match grid_index.get(&txn, KEY_GRID_POS_TO_ID) {
         Some(Out::YMap(m)) => m,
-        _ => panic!("id_to_pos map not found"),
+        _ => panic!("pos_to_id map not found"),
     };
-    let cell_prelim = yrs::MapPrelim::from([("row", Any::Number(0.0)), ("col", Any::Number(0.0))]);
-    id_to_pos.insert(&mut txn, cell_id_key, cell_prelim);
+    let row_order = match sheet_map.get(&txn, KEY_ROW_ORDER) {
+        Some(Out::YArray(a)) => a,
+        _ => panic!("row order not found"),
+    };
+    let col_order = match sheet_map.get(&txn, KEY_COL_ORDER) {
+        Some(Out::YArray(a)) => a,
+        _ => panic!("column order not found"),
+    };
+    let Some(Out::Any(Any::String(row_hex))) = row_order.get(&txn, 0) else {
+        panic!("row identity not found");
+    };
+    let Some(Out::Any(Any::String(col_hex))) = col_order.get(&txn, 0) else {
+        panic!("column identity not found");
+    };
+    let pos_key = format!("{row_hex}:{col_hex}");
+    pos_to_id.insert(
+        &mut txn,
+        pos_key,
+        Any::String(std::sync::Arc::from(cell_id_key)),
+    );
 }
 
 pub(super) fn insert_comment_with_key(

@@ -4,12 +4,40 @@ use super::super::*;
 use super::helpers::*;
 use crate::snapshot::ChangeKind;
 use cell_types::CellId;
-use compute_document::hex::hex_to_id;
+use compute_document::hex::{hex_to_id, id_to_hex};
 use domain_types::{
     ParseOutput, SheetData,
     domain::comment::{Comment, CommentType, RichTextRun},
 };
 use value_types::CellValue;
+use yrs::{Any, Map, Out, Transact};
+
+fn persisted_cell_at_key(
+    engine: &YrsComputeEngine,
+    sheet_id: &SheetId,
+    pos_key: &str,
+) -> Option<String> {
+    use compute_document::schema::{KEY_GRID_INDEX, KEY_GRID_POS_TO_ID};
+
+    let sheet_hex = id_to_hex(sheet_id.as_u128());
+    let txn = engine.storage().doc().transact();
+    let sheet_map = match engine.storage().sheets().get(&txn, &sheet_hex) {
+        Some(Out::YMap(map)) => map,
+        _ => return None,
+    };
+    let grid_map = match sheet_map.get(&txn, KEY_GRID_INDEX) {
+        Some(Out::YMap(map)) => map,
+        _ => return None,
+    };
+    let pos_to_id = match grid_map.get(&txn, KEY_GRID_POS_TO_ID) {
+        Some(Out::YMap(map)) => map,
+        _ => return None,
+    };
+    match pos_to_id.get(&txn, pos_key) {
+        Some(Out::Any(Any::String(cell_hex))) => Some(cell_hex.to_string()),
+        _ => None,
+    }
+}
 
 #[test]
 fn set_thread_resolved_emits_comment_change_for_thread_cell() {
@@ -398,6 +426,39 @@ fn direct_clear_preserves_note_identity_on_blank_cell() {
 }
 
 #[test]
+fn copy_sheet_remaps_comment_identity_on_blank_cell() {
+    let snap = empty_bulk_snapshot();
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(snap).unwrap();
+    let source = sheet_id();
+
+    engine
+        .add_comment_by_position(
+            &source,
+            0,
+            0,
+            "Blank-cell note",
+            "User",
+            None,
+            None,
+            CommentType::Note,
+        )
+        .expect("add note");
+    let source_note = engine
+        .get_comments_for_cell_by_position(&source, 0, 0)
+        .into_iter()
+        .next()
+        .expect("source note");
+
+    let (copy_hex, _) = engine.copy_sheet(&source, "Copy").expect("copy sheet");
+    let copy = SheetId::from_raw(hex_to_id(&copy_hex).expect("copy sheet id"));
+    let copied = engine.get_comments_for_cell_by_position(&copy, 0, 0);
+
+    assert_eq!(copied.len(), 1);
+    assert_eq!(copied[0].runs[0].text, "Blank-cell note");
+    assert_ne!(copied[0].cell_ref, source_note.cell_ref);
+}
+
+#[test]
 fn batch_clear_preserves_note_identity_on_blank_cell() {
     let snap = empty_bulk_snapshot();
     let (mut engine, _) = YrsComputeEngine::from_snapshot(snap).unwrap();
@@ -434,4 +495,191 @@ fn batch_clear_preserves_note_identity_on_blank_cell() {
     assert_eq!(after_clear.len(), 1);
     assert_eq!(after_clear[0].id, note.id);
     assert_eq!(after_clear[0].comment_type, CommentType::Note);
+}
+
+#[test]
+fn partial_delete_removes_blank_note_identity_from_authoritative_positions() {
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(empty_bulk_snapshot()).unwrap();
+    let sid = sheet_id();
+
+    engine
+        .add_comment_by_position(
+            &sid,
+            0,
+            0,
+            "Delete-only note",
+            "User",
+            None,
+            None,
+            CommentType::Note,
+        )
+        .expect("add blank-cell note");
+    let note = engine
+        .get_comments_for_cell_by_position(&sid, 0, 0)
+        .into_iter()
+        .next()
+        .expect("note before delete");
+    let note_cell = CellId::from_raw(hex_to_id(&note.cell_ref).expect("note cell id"));
+    let grid = engine.grid_index(&sid).expect("source grid");
+    let pos_key = format!(
+        "{}:{}",
+        grid.row_id_hex(0).expect("row identity"),
+        grid.col_id_hex(0).expect("column identity")
+    );
+    assert_eq!(
+        persisted_cell_at_key(&engine, &sid, &pos_key),
+        Some(note.cell_ref)
+    );
+
+    engine
+        .delete_cells_with_shift(&sid, 0, 0, 1, 1, true)
+        .expect("delete blank comment cell");
+
+    assert_eq!(persisted_cell_at_key(&engine, &sid, &pos_key), None);
+    assert_eq!(
+        engine
+            .grid_index(&sid)
+            .and_then(|grid| grid.cell_position(&note_cell)),
+        None
+    );
+
+    let state = compute_collab::encode_full_state(engine.storage().doc());
+    let (reloaded, _) = YrsComputeEngine::from_yrs_state(&state).expect("reload deleted state");
+    assert_eq!(persisted_cell_at_key(&reloaded, &sid, &pos_key), None);
+    assert_eq!(
+        reloaded
+            .grid_index(&sid)
+            .and_then(|grid| grid.cell_position(&note_cell)),
+        None
+    );
+    assert!(
+        reloaded
+            .get_comments_for_cell_by_position(&sid, 0, 0)
+            .is_empty()
+    );
+}
+
+#[test]
+fn sort_moves_blank_note_identity_across_reload_and_undo() {
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(empty_bulk_snapshot()).unwrap();
+    let sid = sheet_id();
+    engine.set_cell_value_parsed(&sid, 0, 0, "2").unwrap();
+    engine.set_cell_value_parsed(&sid, 1, 0, "1").unwrap();
+    engine.set_cell_value_parsed(&sid, 0, 2, "top-c").unwrap();
+    engine
+        .set_cell_value_parsed(&sid, 1, 2, "bottom-c")
+        .unwrap();
+    engine
+        .add_comment_by_position(
+            &sid,
+            0,
+            1,
+            "Moves with row 2",
+            "User",
+            None,
+            None,
+            CommentType::Note,
+        )
+        .expect("add blank-cell note");
+    let note = engine
+        .get_comments_for_cell_by_position(&sid, 0, 1)
+        .into_iter()
+        .next()
+        .expect("note before sort");
+    let note_id = note.id.clone();
+    let note_cell = CellId::from_raw(hex_to_id(&note.cell_ref).expect("note cell id"));
+
+    let options = crate::storage::engine::mutation::BridgeSortOptions {
+        criteria: vec![crate::storage::engine::mutation::BridgeSortCriterion {
+            column: 0,
+            direction: domain_types::domain::filter::SortOrder::Asc,
+            case_sensitive: false,
+            mode: crate::storage::engine::mutation::BridgeSortMode::Value { custom_list: None },
+        }],
+        has_headers: false,
+        visible_rows_only: false,
+    };
+    engine.sort_range(&sid, 0, 0, 1, 1, options).unwrap();
+    assert!(
+        engine
+            .get_comments_for_cell_by_position(&sid, 0, 1)
+            .is_empty()
+    );
+    assert_eq!(
+        engine.get_comments_for_cell_by_position(&sid, 1, 1)[0].id,
+        note_id
+    );
+    assert_eq!(
+        engine
+            .grid_index(&sid)
+            .and_then(|grid| grid.cell_position(&note_cell)),
+        Some((1, 1))
+    );
+    assert_eq!(
+        engine.mirror().resolve_position(&note_cell),
+        Some(SheetPos::new(1, 1))
+    );
+    assert_eq!(
+        cell_value_at(&engine, &sid, 0, 2),
+        CellValue::Text("top-c".into())
+    );
+    assert_eq!(
+        cell_value_at(&engine, &sid, 1, 2),
+        CellValue::Text("bottom-c".into())
+    );
+
+    let state = compute_collab::encode_full_state(engine.storage().doc());
+    let (reloaded, _) = YrsComputeEngine::from_yrs_state(&state).expect("reload sorted state");
+    assert!(
+        reloaded
+            .get_comments_for_cell_by_position(&sid, 0, 1)
+            .is_empty()
+    );
+    assert_eq!(
+        reloaded.get_comments_for_cell_by_position(&sid, 1, 1)[0].id,
+        note_id
+    );
+    assert_eq!(
+        reloaded
+            .grid_index(&sid)
+            .and_then(|grid| grid.cell_position(&note_cell)),
+        Some((1, 1))
+    );
+    assert_eq!(
+        cell_value_at(&reloaded, &sid, 0, 2),
+        CellValue::Text("top-c".into())
+    );
+    assert_eq!(
+        cell_value_at(&reloaded, &sid, 1, 2),
+        CellValue::Text("bottom-c".into())
+    );
+
+    engine.undo().expect("undo sort");
+    assert_eq!(
+        engine.get_comments_for_cell_by_position(&sid, 0, 1)[0].id,
+        note_id
+    );
+    assert!(
+        engine
+            .get_comments_for_cell_by_position(&sid, 1, 1)
+            .is_empty()
+    );
+    assert_eq!(
+        engine
+            .grid_index(&sid)
+            .and_then(|grid| grid.cell_position(&note_cell)),
+        Some((0, 1))
+    );
+    assert_eq!(
+        engine.mirror().resolve_position(&note_cell),
+        Some(SheetPos::new(0, 1))
+    );
+    assert_eq!(
+        cell_value_at(&engine, &sid, 0, 2),
+        CellValue::Text("top-c".into())
+    );
+    assert_eq!(
+        cell_value_at(&engine, &sid, 1, 2),
+        CellValue::Text("bottom-c".into())
+    );
 }

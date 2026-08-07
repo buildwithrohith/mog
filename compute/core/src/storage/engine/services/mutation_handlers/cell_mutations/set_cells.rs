@@ -332,6 +332,19 @@ pub(in crate::storage::engine) fn mutation_set_cells(
                 value.clone(),
                 None,
             );
+        } else {
+            // The batch Yrs write has already made `cell_id` authoritative for
+            // this position in GridIndex. Make that identity visible to formula
+            // normalization before any formula in the batch is parsed, without
+            // replacing the mirror's converged value with the formula's Null
+            // placeholder. Otherwise an earlier formula such as A1=B1+1 can
+            // mint a ghost ID for a later B1 edit and rebind posToId away from
+            // B1's actual payload.
+            mirror.register_authoritative_identity_only(
+                sheet_id,
+                SheetPos::new(*row, *col),
+                *cell_id,
+            );
         }
     }
 

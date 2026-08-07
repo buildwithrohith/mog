@@ -51,14 +51,13 @@ use value_types::CellValue;
 // yrs-side identity sub-map writes (gridIndex/{posToId, idToPos})
 // ---------------------------------------------------------------------------
 //
-// GridIndex migration designated `gridIndex/{posToId, idToPos}` as the authoritative
-// yrs-side identity store, but the value-write paths
+// `gridIndex/posToId` is the authoritative persisted identity store. Schema
+// v19 still requires the inverse `idToPos` dual-write until the v20 cutover,
+// but no runtime consumer may use that inverse to discover a position. The value-write paths
 // (`set_cell_value`, `set_cell_values`, `import_values`, `set_cell`) were
 // only writing identity into the in-memory `GridIndex`. Undo/redo (and
 // structural-rebuild via `build_sheet_snapshot_from_yrs`) need to recover
-// a cell's (row, col) from yrs after the in-memory GridIndex has been
-// cleared — the read-side fallback `read_cell_position_from_yrs` returns
-// `None` unless the yrs sub-maps were populated at write time.
+// positions by rebuilding the transient `GridIndex` from `posToId`.
 //
 // These helpers mirror the writes performed by the hydration paths in
 // `storage/infra/hydration/{snapshot,sheet}.rs` so every cell write into
@@ -97,7 +96,7 @@ pub(crate) fn write_cell_position_to_yrs(
     if let Some(Out::YMap(id_to_pos)) = gi_map.get(txn, KEY_GRID_ID_TO_POS) {
         let already_current = matches!(
             id_to_pos.get(txn, cell_hex),
-            Some(Out::Any(Any::String(existing))) if existing.as_ref() == pos_key.as_str()
+            Some(Out::Any(Any::String(existing))) if existing.as_ref() == pos_key
         );
         if !already_current {
             id_to_pos.insert(txn, cell_hex, Any::String(Arc::from(pos_key.as_str())));
@@ -111,6 +110,7 @@ pub(crate) fn remove_cell_position_from_yrs(
     sheets: &MapRef,
     sheet_hex: &str,
     cell_hex: &str,
+    pos_key: &str,
 ) {
     let Some(Out::YMap(sheet_map)) = sheets.get(txn, sheet_hex) else {
         return;
@@ -118,23 +118,21 @@ pub(crate) fn remove_cell_position_from_yrs(
     let Some(Out::YMap(gi_map)) = sheet_map.get(txn, KEY_GRID_INDEX) else {
         return;
     };
-    // Read the existing pos_key before removing so we can also drop the
-    // reverse posToId entry.
-    let pos_key = match gi_map.get(txn, KEY_GRID_ID_TO_POS) {
-        Some(Out::YMap(id_to_pos)) => match id_to_pos.get(txn, cell_hex) {
-            Some(Out::Any(Any::String(s))) => {
-                let k = s.to_string();
-                id_to_pos.remove(txn, cell_hex);
-                Some(k)
-            }
-            _ => None,
-        },
-        _ => None,
-    };
-    if let Some(pos_key) = pos_key
-        && let Some(Out::YMap(pos_to_id)) = gi_map.get(txn, KEY_GRID_POS_TO_ID)
+    if let Some(Out::YMap(pos_to_id)) = gi_map.get(txn, KEY_GRID_POS_TO_ID)
+        && matches!(
+            pos_to_id.get(txn, pos_key),
+            Some(Out::Any(Any::String(existing))) if existing.as_ref() == cell_hex
+        )
     {
-        pos_to_id.remove(txn, pos_key.as_str());
+        pos_to_id.remove(txn, pos_key);
+    }
+    if let Some(Out::YMap(id_to_pos)) = gi_map.get(txn, KEY_GRID_ID_TO_POS)
+        && matches!(
+            id_to_pos.get(txn, cell_hex),
+            Some(Out::Any(Any::String(existing))) if existing.as_ref() == pos_key
+        )
+    {
+        id_to_pos.remove(txn, cell_hex);
     }
 }
 
@@ -296,7 +294,12 @@ fn yrs_remove_cell(
     if cell_has_identity_backing_metadata(txn, sheets, sheet_hex, &cell_hex) {
         MirrorAction::Apply(cell_id, CellValue::Null)
     } else {
-        remove_cell_position_from_yrs(txn, sheets, sheet_hex, &cell_hex);
+        if let (Some(row_hex), Some(col_hex)) =
+            (grid_index.row_id_hex(row), grid_index.col_id_hex(col))
+        {
+            let pos_key = format!("{row_hex}:{col_hex}");
+            remove_cell_position_from_yrs(txn, sheets, sheet_hex, &cell_hex, &pos_key);
+        }
         grid_index.remove_cell(&cell_id);
         MirrorAction::Remove(cell_id)
     }

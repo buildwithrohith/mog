@@ -337,38 +337,67 @@ pub(in crate::storage::engine) fn mutation_sort_range(
     );
     mutation.observer.set_suppressed(false);
 
+    let mut old_position_keys: std::collections::HashMap<CellId, String> =
+        std::collections::HashMap::new();
+    let mut old_mirror_positions: std::collections::HashMap<CellId, SheetPos> =
+        std::collections::HashMap::new();
+    if let Some(grid) = stores.grid_indexes.get(sheet_id) {
+        for (cell_id, row, col) in grid.cells_in_range(data_start, start_col, end_row, end_col) {
+            let row_hex = grid
+                .row_id_hex(row)
+                .ok_or_else(|| ComputeError::InvalidInput {
+                    message: format!("missing row identity for sorted row {row}"),
+                })?;
+            let col_hex = grid
+                .col_id_hex(col)
+                .ok_or_else(|| ComputeError::InvalidInput {
+                    message: format!("missing column identity for sorted column {col}"),
+                })?;
+            old_position_keys.insert(cell_id, format!("{row_hex}:{col_hex}"));
+            old_mirror_positions.insert(cell_id, SheetPos::new(row, col));
+        }
+    }
+
     if let Some(grid) = stores.grid_indexes.get_mut(sheet_id) {
-        grid.sort_rows(&permutation);
+        grid.sort_rows_in_columns(&permutation, start_col, end_col);
     }
 
     let mut edits: Vec<(SheetId, CellId, u32, u32, CellValue, Option<String>)> = Vec::new();
 
-    // Pass 1: update mirror positions for every cell in the sort range,
+    // Pass 1: update mirror positions for every identity in the sort range,
     // preserving the pre-sort IdentityFormula. XLSX hydration leaves
     // KEY_FORMULA_TEMPLATE empty in yrs, so `identity_formula` coming
     // back from `read_cell_from_yrs` is typically `None`;
     // `bulk_parse_and_register` populated the identity in the mirror
     // at hydration, which we must keep so refs still point at the cells
     // that moved with them.
-    for new_row in data_start..=end_row {
-        for col in start_col..=end_col {
-            if let Some(cell_id) = stores
-                .grid_indexes
-                .get(sheet_id)
-                .and_then(|g| g.cell_id_at(new_row, col))
-                && let Some((value, _, identity_formula)) =
-                    stores.storage.read_cell_from_yrs(sheet_id, &cell_id)
-            {
-                let preserved_identity =
-                    identity_formula.or_else(|| mirror.get_formula(&cell_id).cloned());
-                mirror.apply_edit(
-                    sheet_id,
-                    cell_id,
-                    SheetPos::new(new_row, col),
-                    value.clone(),
-                    preserved_identity,
-                );
-            }
+    // Vacate every old slot first so row swaps cannot make an old mirror
+    // occupant win at another identity's new position.
+    for old_pos in old_mirror_positions.values() {
+        mirror.vacate_position(sheet_id, *old_pos);
+    }
+    let grid = stores
+        .grid_indexes
+        .get(sheet_id)
+        .ok_or_else(|| ComputeError::SheetNotFound {
+            sheet_id: sheet_id.to_uuid_string(),
+        })?;
+    for cell_id in old_position_keys.keys() {
+        let Some((new_row, new_col)) = grid.cell_position(cell_id) else {
+            continue;
+        };
+        let new_pos = SheetPos::new(new_row, new_col);
+        if let Some((value, _, identity_formula)) =
+            stores.storage.read_cell_from_yrs(sheet_id, cell_id)
+        {
+            let preserved_identity =
+                identity_formula.or_else(|| mirror.get_formula(cell_id).cloned());
+            mirror.apply_edit(sheet_id, *cell_id, new_pos, value, preserved_identity);
+        } else {
+            // Notes/properties can retain an identity without a cells payload.
+            // Register only the winning identity mapping; do not materialize a
+            // Null value into column data.
+            mirror.register_identity_only(sheet_id, new_pos, *cell_id);
         }
     }
 
@@ -410,7 +439,7 @@ pub(in crate::storage::engine) fn mutation_sort_range(
         }
     }
 
-    if edits.is_empty() {
+    if edits.is_empty() && old_position_keys.is_empty() {
         return Ok(RecalcResult::empty());
     }
 
@@ -438,29 +467,50 @@ pub(in crate::storage::engine) fn mutation_sort_range(
         let sheet_hex = id_to_hex(sheet_id.as_u128());
         let doc = stores.storage.doc();
         let sheets = stores.storage.sheets();
-        let position_writes: Vec<(String, String, String)> = stores
-            .grid_indexes
-            .get(sheet_id)
-            .map(|grid| {
-                edits
-                    .iter()
-                    .filter_map(|(_, cell_id, row, col, _, _)| {
-                        let row_hex = grid.row_id_hex(*row)?;
-                        let col_hex = grid.col_id_hex(*col)?;
-                        Some((
-                            String::from(id_to_hex(cell_id.as_u128())),
-                            String::from(row_hex),
-                            String::from(col_hex),
-                        ))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let grid =
+            stores
+                .grid_indexes
+                .get(sheet_id)
+                .ok_or_else(|| ComputeError::SheetNotFound {
+                    sheet_id: sheet_id.to_uuid_string(),
+                })?;
+        let mut position_writes = Vec::with_capacity(old_position_keys.len());
+        for cell_id in old_position_keys.keys() {
+            let (row, col) =
+                grid.cell_position(cell_id)
+                    .ok_or_else(|| ComputeError::InvalidInput {
+                        message: format!(
+                            "missing post-sort position for cell {}",
+                            cell_id.to_uuid_string()
+                        ),
+                    })?;
+            let row_hex = grid
+                .row_id_hex(row)
+                .ok_or_else(|| ComputeError::InvalidInput {
+                    message: format!("missing row identity for sorted row {row}"),
+                })?;
+            let col_hex = grid
+                .col_id_hex(col)
+                .ok_or_else(|| ComputeError::InvalidInput {
+                    message: format!("missing column identity for sorted column {col}"),
+                })?;
+            position_writes.push((
+                String::from(id_to_hex(cell_id.as_u128())),
+                String::from(row_hex),
+                String::from(col_hex),
+            ));
+        }
 
         mutation.observer.set_suppressed(true);
         let mut txn = doc.transact_mut_with(Origin::from(ORIGIN_USER_EDIT));
         for (cell_hex, _, _) in &position_writes {
-            remove_cell_position_from_yrs(&mut txn, sheets, &sheet_hex, cell_hex);
+            let Some(cell_raw) = compute_document::hex::hex_to_id(cell_hex) else {
+                continue;
+            };
+            let cell_id = CellId::from_raw(cell_raw);
+            if let Some(old_pos_key) = old_position_keys.get(&cell_id) {
+                remove_cell_position_from_yrs(&mut txn, sheets, &sheet_hex, cell_hex, old_pos_key);
+            }
         }
         for (cell_hex, row_hex, col_hex) in &position_writes {
             write_cell_position_to_yrs(&mut txn, sheets, &sheet_hex, cell_hex, row_hex, col_hex);

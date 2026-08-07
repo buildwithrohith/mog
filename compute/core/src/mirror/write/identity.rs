@@ -164,4 +164,41 @@ impl CellMirror {
             s.expand_identity_extent(pos);
         }
     }
+
+    /// Make `cell_id` the identity winner at `pos` without changing `col_data`.
+    ///
+    /// Batch persistence may have already rebound the authoritative GridIndex
+    /// position before formula normalization runs. This method mirrors that
+    /// winner even when a different, now-losing identity occupied the position,
+    /// so references parsed earlier in the batch cannot retain the loser.
+    pub fn register_authoritative_identity_only(
+        &mut self,
+        sheet_id: &SheetId,
+        pos: SheetPos,
+        cell_id: CellId,
+    ) {
+        if self.resolve_cell_id(sheet_id, pos) == Some(cell_id) {
+            return;
+        }
+
+        let Some(sheet) = self.sheets.get_mut(sheet_id) else {
+            return;
+        };
+
+        if let Some(losing_id) = sheet.pos_to_id.insert(pos, cell_id) {
+            sheet.id_to_pos.remove(&losing_id);
+        }
+        if let Some(old_pos) = sheet.id_to_pos.insert(cell_id, pos)
+            && old_pos != pos
+            && sheet.pos_to_id.get(&old_pos) == Some(&cell_id)
+        {
+            sheet.pos_to_id.remove(&old_pos);
+        }
+        sheet.cells.entry(cell_id).or_insert_with(|| CellEntry {
+            value: CellValue::Null,
+            formula: None,
+        });
+        self.cell_to_sheet.insert(cell_id, *sheet_id);
+        sheet.expand_identity_extent(pos);
+    }
 }

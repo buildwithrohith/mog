@@ -10,6 +10,7 @@ pub(super) fn persist_remapped_cell_positions(
     stores: &EngineStores,
     sheet_id: &SheetId,
     updates: &[(CellId, u32, u32)],
+    old_position_keys: &[(CellId, String)],
 ) -> Result<(), ComputeError> {
     if updates.is_empty() {
         return Ok(());
@@ -44,8 +45,9 @@ pub(super) fn persist_remapped_cell_positions(
     let doc = stores.storage.doc();
     let sheets = stores.storage.sheets();
     let mut txn = doc.transact_mut_with(Origin::from(ORIGIN_STRUCTURAL));
-    for (cell_hex, _, _) in &position_writes {
-        remove_cell_position_from_yrs(&mut txn, sheets, &sheet_hex, cell_hex);
+    for (cell_id, old_pos_key) in old_position_keys {
+        let cell_hex = id_to_hex(cell_id.as_u128());
+        remove_cell_position_from_yrs(&mut txn, sheets, &sheet_hex, &cell_hex, old_pos_key);
     }
     for (cell_hex, row_hex, col_hex) in &position_writes {
         write_cell_position_to_yrs(&mut txn, sheets, &sheet_hex, cell_hex, row_hex, col_hex);

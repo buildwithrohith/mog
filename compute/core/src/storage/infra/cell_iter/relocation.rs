@@ -83,6 +83,15 @@ pub fn relocate_cells(
     // --- 3. Build set of moving CellIds for exclude ---
     let moving_ids: HashSet<CellId> = source_cells.iter().map(|(id, _, _)| *id).collect();
 
+    let source_position_keys: Vec<(CellId, String)> = source_cells
+        .iter()
+        .filter_map(|(cell_id, row, col)| {
+            let row_hex = source_grid.row_id_hex(*row)?;
+            let col_hex = source_grid.col_id_hex(*col)?;
+            Some((*cell_id, format!("{row_hex}:{col_hex}")))
+        })
+        .collect();
+
     // --- 4. Clear target range (excluding cells being moved) ---
     let target_range = RangePos::new(
         target_sheet,
@@ -91,6 +100,31 @@ pub fn relocate_cells(
         (source_range.end_row() as i64 + row_delta) as u32,
         (source_range.end_col() as i64 + col_delta) as u32,
     );
+
+    // Capture the authoritative target bindings before clear removes them
+    // from the transient grid. A displaced blank cell may have no `cells`
+    // entry at all (for example, an identity retained only by a comment), so
+    // deriving this list from the payload maps would leave stale posToId keys.
+    let displaced_target_position_keys: Vec<(CellId, String)> = {
+        let grid_for_target: &GridIndex = match target_grid.as_deref() {
+            Some(tg) => tg,
+            None => &*source_grid,
+        };
+        grid_for_target
+            .cells_in_range(
+                target_range.start_row(),
+                target_range.start_col(),
+                target_range.end_row(),
+                target_range.end_col(),
+            )
+            .filter(|(cell_id, _, _)| !moving_ids.contains(cell_id))
+            .filter_map(|(cell_id, row, col)| {
+                let row_hex = grid_for_target.row_id_hex(row)?;
+                let col_hex = grid_for_target.col_id_hex(col)?;
+                Some((cell_id, format!("{row_hex}:{col_hex}")))
+            })
+            .collect()
+    };
 
     let cleared = {
         let grid_for_clear: &mut GridIndex = match target_grid.as_deref_mut() {
@@ -119,6 +153,36 @@ pub fn relocate_cells(
         let target_cells_map = get_cells_map(&txn, sheets, &target_hex);
         let source_props = get_properties_map(&txn, sheets, &source_hex);
         let target_props = get_properties_map(&txn, sheets, &target_hex);
+
+        for (cell_id, old_pos_key) in &displaced_target_position_keys {
+            let cell_hex = id_to_hex(cell_id.as_u128());
+            remove_cell_position_from_yrs(&mut txn, sheets, &target_hex, &cell_hex, old_pos_key);
+        }
+
+        for (cell_id, old_pos_key) in &source_position_keys {
+            let cell_hex = id_to_hex(cell_id.as_u128());
+            remove_cell_position_from_yrs(&mut txn, sheets, &source_hex, &cell_hex, old_pos_key);
+        }
+
+        if let Some(tg) = target_grid.as_deref() {
+            for (cell_id, old_row, old_col) in &source_cells {
+                let new_row = (*old_row as i64 + row_delta) as u32;
+                let new_col = (*old_col as i64 + col_delta) as u32;
+                if let (Some(row_hex), Some(col_hex)) =
+                    (tg.row_id_hex(new_row), tg.col_id_hex(new_col))
+                {
+                    let cell_hex = id_to_hex(cell_id.as_u128());
+                    write_cell_position_to_yrs(
+                        &mut txn,
+                        sheets,
+                        &target_hex,
+                        &cell_hex,
+                        row_hex.as_str(),
+                        col_hex.as_str(),
+                    );
+                }
+            }
+        }
 
         for (cell_id, _, _) in &source_cells {
             let cell_hex = id_to_hex(cell_id.as_u128());
@@ -191,16 +255,30 @@ pub fn relocate_cells(
             let sheet_hex = id_to_hex(source_sheet.as_u128());
             let mut txn = doc.transact_mut_with(Origin::from(ORIGIN_USER_EDIT));
             let cells_map = get_cells_map(&txn, sheets, &sheet_hex);
+            for (cell_id, old_pos_key) in &displaced_target_position_keys {
+                let cell_hex = id_to_hex(cell_id.as_u128());
+                remove_cell_position_from_yrs(&mut txn, sheets, &sheet_hex, &cell_hex, old_pos_key);
+            }
             for (cell_id, old_row, old_col) in &source_cells {
                 let new_row = (*old_row as i64 + row_delta) as u32;
                 let new_col = (*old_col as i64 + col_delta) as u32;
                 let cell_hex = id_to_hex(cell_id.as_u128());
 
                 // (a) Update yrs gridIndex for new position.
-                // `remove_cell_position_from_yrs` reads the current idToPos
-                // (still pointing at old_row/old_col since we haven't touched
-                // yrs yet) and removes both idToPos[cell_hex] and posToId[old_key].
-                remove_cell_position_from_yrs(&mut txn, sheets, &sheet_hex, &cell_hex);
+                // Remove the old persisted position using the transient
+                // source-grid coordinates captured before moving the cell.
+                if let Some((_, old_pos_key)) = source_position_keys
+                    .iter()
+                    .find(|(source_cell_id, _)| source_cell_id == cell_id)
+                {
+                    remove_cell_position_from_yrs(
+                        &mut txn,
+                        sheets,
+                        &sheet_hex,
+                        &cell_hex,
+                        old_pos_key,
+                    );
+                }
                 // Write new position: posToId[new_key] = cell_hex, idToPos[cell_hex] = new_key.
                 if let (Some(rh), Some(ch)) = (
                     source_grid.row_id_hex(new_row),
