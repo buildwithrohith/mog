@@ -167,7 +167,7 @@ pub fn parse_output_to_workbook_snapshot_incremental(
     output: &ParseOutput,
     sheet_index: usize,
     id_map: &HydrationIdMap,
-    previous: &WorkbookSnapshot,
+    mut previous: WorkbookSnapshot,
     allocator: &mut DefaultIdAllocator,
 ) -> WorkbookSnapshot {
     debug_assert_eq!(output.sheets.len(), previous.sheets.len());
@@ -193,13 +193,13 @@ pub fn parse_output_to_workbook_snapshot_incremental(
     for named_range in &mut named_ranges {
         named_range.linked_range_id = None;
     }
-    let tables = incremental_tables(output, sheet_index, &resolver, previous);
+    let tables = incremental_tables(output, sheet_index, &resolver, &previous);
     let pivot_tables = incremental_pivot_tables(
         output,
         &resolver,
         target_sheet_id,
         &output.sheets[sheet_index].name,
-        previous,
+        &previous,
     );
     let data_table_regions = previous.data_table_regions.clone();
     let (iterative_calc, max_iterations, max_change) =
@@ -214,6 +214,9 @@ pub fn parse_output_to_workbook_snapshot_incremental(
     let cell_id_to_pos = if named_ranges.is_empty() {
         None
     } else {
+        // A retained cell-id map could avoid cloning String keys across every
+        // sheet on each materialization; keep that future optimization out of
+        // this pass.
         let mut map = FxHashMap::default();
         for (existing_index, sheet) in previous.sheets.iter().enumerate() {
             if existing_index == sheet_index {
@@ -249,26 +252,23 @@ pub fn parse_output_to_workbook_snapshot_incremental(
         allocator,
     );
 
-    let mut sheets = previous.sheets.clone();
-    sheets[sheet_index] = target_sheet;
+    previous.sheets[sheet_index] = target_sheet;
     name_lowering::link_named_ranges_to_data_ranges(
         &mut named_ranges,
-        &sheets,
+        &previous.sheets,
         &id_map.row_ids,
         &id_map.col_ids,
     );
 
-    WorkbookSnapshot {
-        sheets,
-        named_ranges,
-        tables,
-        pivot_tables,
-        data_table_regions,
-        iterative_calc,
-        max_iterations,
-        max_change,
-        calculation_settings: Some(output.calculation.clone().into()),
-    }
+    previous.named_ranges = named_ranges;
+    previous.tables = tables;
+    previous.pivot_tables = pivot_tables;
+    previous.data_table_regions = data_table_regions;
+    previous.iterative_calc = iterative_calc;
+    previous.max_iterations = max_iterations;
+    previous.max_change = max_change;
+    previous.calculation_settings = Some(output.calculation.clone().into());
+    previous
 }
 
 fn incremental_tables(

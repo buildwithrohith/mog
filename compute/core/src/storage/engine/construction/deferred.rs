@@ -1,5 +1,89 @@
 use super::*;
 
+/// Rollback state for the one sheet and workbook metadata changed by an
+/// incremental lowering. Untouched sheets stay owned by the lowered snapshot;
+/// this bounded backup keeps retry safety without reintroducing a workbook
+/// clone on every materialization.
+struct DeferredSnapshotRollback {
+    sheet_index: usize,
+    snapshot: WorkbookSnapshot,
+}
+
+impl DeferredSnapshotRollback {
+    fn capture(snapshot: &WorkbookSnapshot, sheet_index: usize) -> Self {
+        let target_sheet = snapshot
+            .sheets
+            .get(sheet_index)
+            .cloned()
+            .expect("incremental snapshot target sheet must exist");
+        Self {
+            sheet_index,
+            snapshot: WorkbookSnapshot {
+                sheets: vec![target_sheet],
+                named_ranges: snapshot.named_ranges.clone(),
+                tables: snapshot.tables.clone(),
+                pivot_tables: snapshot.pivot_tables.clone(),
+                data_table_regions: snapshot.data_table_regions.clone(),
+                iterative_calc: snapshot.iterative_calc,
+                max_iterations: snapshot.max_iterations,
+                max_change: snapshot.max_change,
+                calculation_settings: snapshot.calculation_settings.clone(),
+            },
+        }
+    }
+
+    fn restore_into(self, snapshot: &mut WorkbookSnapshot) {
+        let WorkbookSnapshot {
+            mut sheets,
+            named_ranges,
+            tables,
+            pivot_tables,
+            data_table_regions,
+            iterative_calc,
+            max_iterations,
+            max_change,
+            calculation_settings,
+        } = self.snapshot;
+        snapshot.sheets[self.sheet_index] = sheets
+            .pop()
+            .expect("incremental snapshot rollback target sheet must exist");
+        snapshot.named_ranges = named_ranges;
+        snapshot.tables = tables;
+        snapshot.pivot_tables = pivot_tables;
+        snapshot.data_table_regions = data_table_regions;
+        snapshot.iterative_calc = iterative_calc;
+        snapshot.max_iterations = max_iterations;
+        snapshot.max_change = max_change;
+        snapshot.calculation_settings = calculation_settings;
+    }
+}
+
+struct DeferredSnapshotRollbackGuard<'a> {
+    snapshot: &'a mut WorkbookSnapshot,
+    rollback: Option<DeferredSnapshotRollback>,
+}
+
+impl<'a> DeferredSnapshotRollbackGuard<'a> {
+    fn new(snapshot: &'a mut WorkbookSnapshot, rollback: DeferredSnapshotRollback) -> Self {
+        Self {
+            snapshot,
+            rollback: Some(rollback),
+        }
+    }
+
+    fn commit(mut self) {
+        self.rollback = None;
+    }
+}
+
+impl Drop for DeferredSnapshotRollbackGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(rollback) = self.rollback.take() {
+            rollback.restore_into(self.snapshot);
+        }
+    }
+}
+
 pub(in crate::storage::engine) fn import_from_xlsx_bytes_deferred(
     engine: &mut YrsComputeEngine,
     xlsx_data: &[u8],
@@ -424,6 +508,8 @@ fn materialize_deferred_sheet_inner(
     // another sheet does not briefly retain both the old and cumulative copies.
     // The closure boundary restores it on every `?` path below.
     let mut cumulative_parse = std::mem::take(&mut deferred.parse_output);
+    let mut rollback = None;
+    let mut cumulative_snap = None;
     let result = (|| -> Result<(), ComputeError> {
         let cumulative_sheet = cumulative_parse
             .sheets
@@ -474,14 +560,20 @@ fn materialize_deferred_sheet_inner(
             }
         }
 
-        let cumulative_snap =
+        let previous = std::mem::take(&mut deferred.workbook_snap);
+        rollback = Some(DeferredSnapshotRollback::capture(&previous, sheet_index));
+        cumulative_snap = Some(
             crate::import::parse_output_to_snapshot::parse_output_to_workbook_snapshot_incremental(
                 &cumulative_parse,
                 sheet_index,
                 &id_map,
-                &deferred.workbook_snap,
+                previous,
                 &mut allocator,
-            );
+            ),
+        );
+        let cumulative_snap = cumulative_snap
+            .as_ref()
+            .expect("incremental snapshot must be available after lowering");
 
         // Materialization adds only style projections to the existing Yrs
         // sheet. Values remain snapshot/mirror-backed, and this transaction
@@ -624,10 +716,19 @@ fn materialize_deferred_sheet_inner(
 
         merge_import_reports(&mut engine.import_report, selected_import_report);
         deferred.allocations = allocations;
-        deferred.workbook_snap = cumulative_snap;
         deferred.mirror_materialized_sheets.insert(sheet_id);
         Ok(())
     })();
+
+    if let Some(mut cumulative_snap) = cumulative_snap {
+        if result.is_err() {
+            rollback
+                .take()
+                .expect("incremental snapshot rollback must be available")
+                .restore_into(&mut cumulative_snap);
+        }
+        deferred.workbook_snap = cumulative_snap;
+    }
 
     // Preserve the cumulative parse output even when rebuilding the engine
     // fails partway through, so a later materialization can retry safely.
@@ -737,17 +838,22 @@ fn hydrate_deferred_sheet_inner(
         }
     }
 
+    let previous = std::mem::take(&mut deferred.workbook_snap);
+    let rollback = DeferredSnapshotRollback::capture(&previous, sheet_index);
     let cumulative_snapshot = {
         use crate::import;
         import::parse_output_to_snapshot::parse_output_to_workbook_snapshot_incremental(
             &cumulative_parse,
             sheet_index,
             &id_map,
-            &deferred.workbook_snap,
+            previous,
             &mut allocator,
         )
     };
-    let target_snapshot = cumulative_snapshot
+    deferred.workbook_snap = cumulative_snapshot;
+    let snapshot_guard = DeferredSnapshotRollbackGuard::new(&mut deferred.workbook_snap, rollback);
+    let target_snapshot = snapshot_guard
+        .snapshot
         .sheets
         .get(sheet_index)
         .cloned()
@@ -769,7 +875,7 @@ fn hydrate_deferred_sheet_inner(
     // sheet behind; failures leave both the old subtree and the hydration set
     // untouched.
     let mut target_grid_indexes = build_grid_indexes_from_allocations_range(
-        &cumulative_snapshot,
+        snapshot_guard.snapshot,
         &allocations,
         sheet_index..sheet_index.saturating_add(1),
         shared_alloc.clone(),
@@ -783,12 +889,12 @@ fn hydrate_deferred_sheet_inner(
             })?;
     let target_merge_indexes = build_merge_indexes_from_parse_output_range(
         &cumulative_parse,
-        &cumulative_snapshot,
+        snapshot_guard.snapshot,
         sheet_index..sheet_index.saturating_add(1),
     )?;
     let mut target_layout_indexes = build_layout_indexes_from_parse_output_range(
         &cumulative_parse,
-        &cumulative_snapshot,
+        snapshot_guard.snapshot,
         &target_grid_for_layout,
         sheet_index..sheet_index.saturating_add(1),
         engine.stores.layout_metrics,
@@ -888,8 +994,8 @@ fn hydrate_deferred_sheet_inner(
     if let Some(selected_import_report) = selected_import_report {
         merge_import_reports(&mut engine.import_report, selected_import_report);
     }
+    snapshot_guard.commit();
     deferred.parse_output = cumulative_parse;
-    deferred.workbook_snap = cumulative_snapshot;
     deferred.allocations = allocations;
     deferred.mirror_materialized_sheets.insert(sheet_id);
     deferred.yrs_hydrated_sheets.insert(sheet_id);
