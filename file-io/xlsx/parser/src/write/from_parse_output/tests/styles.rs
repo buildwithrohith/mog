@@ -712,6 +712,48 @@ fn invalid_live_palette_style_ids_are_not_coerced_from_imported_stylesheet() {
 }
 
 #[test]
+fn invalid_authored_style_runs_are_reported_without_blocking_other_cells() {
+    let output = make_parse_output(vec![SheetData {
+        name: "Sheet1".to_string(),
+        cells: vec![DomainCellData {
+            row: 0,
+            col: 0,
+            value: DomainValue::Number(FiniteF64::new(42.0).unwrap()),
+            ..Default::default()
+        }],
+        authored_style_runs: vec![AuthoredStyleRun {
+            start_row: 0,
+            start_col: 1,
+            end_row: 0,
+            end_col: 1,
+            style_id: 1,
+        }],
+        ..Default::default()
+    }]);
+
+    let (bytes, report) = write_xlsx_from_parse_output_with_report(&output).unwrap();
+    let diagnostic = report
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == ExportDiagnosticCode::AuthoredStyleRunsDropped)
+        .expect("invalid authored style run should be reported");
+    assert_eq!(diagnostic.part.as_deref(), Some("xl/worksheets/sheet1.xml"));
+    assert!(diagnostic.message.contains("Dropped 1 authored style run"));
+
+    let archive = crate::XlsxArchive::new(&bytes).expect("exported XLSX should be readable");
+    let sheet_xml =
+        String::from_utf8(archive.read_file("xl/worksheets/sheet1.xml").unwrap()).unwrap();
+    assert!(
+        sheet_xml.contains(r#"<c r="A1"><v>42</v></c>"#),
+        "valid cells must still export: {sheet_xml}"
+    );
+    assert!(
+        !sheet_xml.contains(r#"<c r="B1""#),
+        "dropped run must stay dropped: {sheet_xml}"
+    );
+}
+
+#[test]
 fn test_style_mapping_border() {
     let palette = vec![DocumentFormat {
         border: Some(BorderFormat {

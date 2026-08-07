@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use domain_types::{ChartDefinition, ChartSpec, FormulaCacheState, ParseOutput};
 
+use super::differential_formats;
+use super::style_remap::build_style_export_plan;
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportReport {
@@ -25,6 +28,7 @@ pub enum ExportDiagnosticCode {
     ChartExOpaqueReplaySuppressed,
     ChartExRawAnchorReplaySuppressed,
     ChartPrintSettingsDropped,
+    AuthoredStyleRunsDropped,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,6 +54,9 @@ pub struct ExportDiagnostic {
 
 pub(super) fn build_export_report(output: &ParseOutput) -> ExportReport {
     let mut diagnostics = Vec::new();
+
+    let (style_remapped_output, _) = differential_formats::remap_for_export(output);
+    let style_export_plan = build_style_export_plan(&style_remapped_output);
 
     let calc_decision = crate::domain::workbook::write::calc_settings_for_export(
         &output.calculation,
@@ -100,9 +107,45 @@ pub(super) fn build_export_report(output: &ParseOutput) -> ExportReport {
         });
     }
 
+    append_authored_style_run_diagnostics(
+        &style_remapped_output,
+        &style_export_plan.remapper,
+        &mut diagnostics,
+    );
+
     append_chart_export_diagnostics(output, &mut diagnostics);
 
     ExportReport { diagnostics }
+}
+
+fn append_authored_style_run_diagnostics(
+    output: &ParseOutput,
+    style_remapper: &super::style_remap::StyleExportRemapper,
+    diagnostics: &mut Vec<ExportDiagnostic>,
+) {
+    for (sheet_idx, sheet) in output.sheets.iter().enumerate() {
+        let dropped_count = sheet
+            .authored_style_runs
+            .iter()
+            .filter(|run| {
+                run.style_id != 0 && style_remapper.emitted_cell_xf_id(run.style_id).is_none()
+            })
+            .count();
+        if dropped_count == 0 {
+            continue;
+        }
+
+        diagnostics.push(ExportDiagnostic {
+            code: ExportDiagnosticCode::AuthoredStyleRunsDropped,
+            artifact: "authoredStyleRuns".to_string(),
+            part: Some(format!("xl/worksheets/sheet{}.xml", sheet_idx + 1)),
+            cell: None,
+            semantic_impact: ExportSemanticImpact::PackagePreservationDropped,
+            message: format!(
+                "Dropped {dropped_count} authored style run(s) because their style IDs were not in the emitted palette."
+            ),
+        });
+    }
 }
 
 pub(super) fn requires_consumer_recalc(output: &ParseOutput) -> bool {
