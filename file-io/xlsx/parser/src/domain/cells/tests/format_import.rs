@@ -1,5 +1,6 @@
 use crate::domain::cells::{
-    CellData, ParseExtras, parse_worksheet_fast, parse_worksheet_fast_with_extras,
+    CellData, FastParseDiagnostics, ParseExtras, parse_worksheet_fast,
+    parse_worksheet_fast_with_extras,
 };
 use crate::domain::worksheet::read::parse_col_widths;
 use ooxml_types::worksheet::RowHeight;
@@ -176,6 +177,7 @@ fn test_cell_not_skipped_when_row_style_overrides_col() {
     let mut strings = Vec::new();
     let mut row_heights = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let count = parse_worksheet_fast_with_extras(
         xml,
@@ -184,6 +186,7 @@ fn test_cell_not_skipped_when_row_style_overrides_col() {
         &mut strings,
         &mut row_heights,
         &mut extras,
+        &mut diagnostics,
         &col_styles,
     );
     assert_eq!(count, 0);
@@ -201,6 +204,7 @@ fn test_open_close_style_only_cell_preserved_as_authored_run_input() {
     let mut strings = Vec::new();
     let mut row_heights = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let count = parse_worksheet_fast_with_extras(
         xml,
@@ -209,6 +213,7 @@ fn test_open_close_style_only_cell_preserved_as_authored_run_input() {
         &mut strings,
         &mut row_heights,
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 

@@ -1,8 +1,8 @@
 use super::super::adapters::find_byte;
 use super::super::types::{
     AuthoredStyleOnlyCell, CELL_TYPE_BOOL, CELL_TYPE_DATE, CELL_TYPE_ERROR,
-    CELL_TYPE_FORMULA_STRING, CELL_TYPE_NUMBER, CELL_TYPE_STRING, CellData, VALUE_TYPE_INLINE,
-    VALUE_TYPE_NONE, VALUE_TYPE_SHARED_STRING,
+    CELL_TYPE_FORMULA_STRING, CELL_TYPE_NUMBER, CELL_TYPE_STRING, CellData, FastParseDiagnostics,
+    VALUE_TYPE_INLINE, VALUE_TYPE_NONE, VALUE_TYPE_SHARED_STRING,
 };
 use super::a1::parse_a1_reference;
 use super::bytes::parse_u32;
@@ -50,6 +50,7 @@ pub(crate) fn scan_cell<'a>(
     fallback_row: u32,
     shared_strings: &'a [&'a str],
     strings: &mut Vec<u8>,
+    _diagnostics: &mut FastParseDiagnostics,
     _row_style_idx: Option<u32>,
     _col_styles: &[Option<u32>],
 ) -> Option<ScanResult> {

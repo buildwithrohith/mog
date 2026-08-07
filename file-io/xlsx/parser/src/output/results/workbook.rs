@@ -184,6 +184,9 @@ pub struct FullParsedSheet {
     pub state: crate::domain::workbook::types::SheetState,
     /// All cells in the sheet
     pub cells: Vec<FullCellData>,
+    /// Bounded diagnostics emitted by the worksheet fast path.
+    #[serde(skip)]
+    pub fast_parse_diagnostics: crate::domain::cells::FastParseDiagnostics,
     /// Compact authored blank cells with explicit `s` attributes.
     #[serde(skip)]
     pub authored_style_runs: Vec<domain_types::AuthoredStyleRun>,

@@ -567,7 +567,9 @@ fn test_dy_descent_no_namespaces_when_absent() {
 #[test]
 fn test_dy_descent_parse_and_write_roundtrip() {
     // Simulate parsing a sheet XML fragment with dyDescent attributes
-    use crate::domain::cells::{CellData, ParseExtras, parse_worksheet_fast_with_extras};
+    use crate::domain::cells::{
+        CellData, FastParseDiagnostics, ParseExtras, parse_worksheet_fast_with_extras,
+    };
 
     let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -586,6 +588,7 @@ fn test_dy_descent_parse_and_write_roundtrip() {
     let mut strings = Vec::new();
     let mut row_heights = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let count = parse_worksheet_fast_with_extras(
         xml,
@@ -594,6 +597,7 @@ fn test_dy_descent_parse_and_write_roundtrip() {
         &mut strings,
         &mut row_heights,
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 

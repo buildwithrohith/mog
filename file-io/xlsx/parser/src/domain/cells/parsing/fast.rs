@@ -2,7 +2,7 @@ use super::super::adapters::find_byte;
 use super::super::helpers::{
     ScanResult, find_sheet_data_bounds, parse_row_number, scan_cell, start_tag_at,
 };
-use super::super::types::{CellData, ParseExtras};
+use super::super::types::{CellData, FastParseDiagnostics, ParseExtras};
 use super::cell_extras::{CellExtrasInput, collect_cell_extras};
 use super::formula_extras::collect_formula_extras;
 use super::rows::apply_fast_row_attrs;
@@ -15,6 +15,7 @@ pub(super) fn parse_worksheet_core(
     strings: &mut Vec<u8>,
     row_heights: &mut Vec<RowHeight>,
     mut extras: Option<&mut ParseExtras>,
+    diagnostics: &mut FastParseDiagnostics,
     col_styles: &[Option<u32>],
 ) -> usize {
     let mut cell_idx = 0;
@@ -69,6 +70,7 @@ pub(super) fn parse_worksheet_core(
                     current_row,
                     shared_strings,
                     strings,
+                    diagnostics,
                     current_row_style,
                     col_styles,
                 ) {

@@ -1,7 +1,8 @@
 use crate::domain::cells::{
     CELL_TYPE_BOOL, CELL_TYPE_ERROR, CELL_TYPE_FORMULA_STRING, CELL_TYPE_NUMBER, CELL_TYPE_STRING,
-    CellData, ParseExtras, VALUE_TYPE_CACHED_FORMULA, VALUE_TYPE_FORMULA, VALUE_TYPE_INLINE,
-    VALUE_TYPE_SHARED_STRING, parse_worksheet_fast, parse_worksheet_fast_with_extras,
+    CellData, FastParseDiagnostics, ParseExtras, VALUE_TYPE_CACHED_FORMULA, VALUE_TYPE_FORMULA,
+    VALUE_TYPE_INLINE, VALUE_TYPE_SHARED_STRING, parse_worksheet_fast,
+    parse_worksheet_fast_with_extras,
 };
 
 fn value_bytes<'a>(cell: &CellData, strings: &'a [u8]) -> &'a [u8] {
@@ -115,6 +116,7 @@ fn test_parse_worksheet_fast_with_extras_prefixed_formula_tags() {
     let mut strings = Vec::new();
     let mut row_heights = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let count = parse_worksheet_fast_with_extras(
         xml,
@@ -123,6 +125,7 @@ fn test_parse_worksheet_fast_with_extras_prefixed_formula_tags() {
         &mut strings,
         &mut row_heights,
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 
@@ -165,6 +168,7 @@ fn self_closing_shared_formula_without_cached_value_does_not_read_next_cell_valu
     let mut strings = Vec::new();
     let mut row_heights = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let count = parse_worksheet_fast_with_extras(
         xml,
@@ -173,6 +177,7 @@ fn self_closing_shared_formula_without_cached_value_does_not_read_next_cell_valu
         &mut strings,
         &mut row_heights,
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 
@@ -202,6 +207,7 @@ fn prefixed_self_closing_shared_formula_without_cached_value_stays_empty() {
     let mut strings = Vec::new();
     let mut row_heights = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let count = parse_worksheet_fast_with_extras(
         xml,
@@ -210,6 +216,7 @@ fn prefixed_self_closing_shared_formula_without_cached_value_stays_empty() {
         &mut strings,
         &mut row_heights,
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 
@@ -293,6 +300,7 @@ fn test_parse_formula_str_cached_value_with_xml_space_preserve() {
     let mut cells = vec![CellData::default(); 10];
     let mut strings = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let count = parse_worksheet_fast_with_extras(
         xml,
@@ -301,6 +309,7 @@ fn test_parse_formula_str_cached_value_with_xml_space_preserve() {
         &mut strings,
         &mut Vec::new(),
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 
@@ -329,6 +338,7 @@ fn test_parse_formula_str_cached_value_without_xml_space() {
     let mut cells = vec![CellData::default(); 10];
     let mut strings = Vec::new();
     let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
 
     let count = parse_worksheet_fast_with_extras(
         xml,
@@ -337,6 +347,7 @@ fn test_parse_formula_str_cached_value_without_xml_space() {
         &mut strings,
         &mut Vec::new(),
         &mut extras,
+        &mut diagnostics,
         &[],
     );
 
