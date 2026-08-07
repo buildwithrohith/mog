@@ -2,11 +2,11 @@
 
 use std::collections::HashMap;
 
+use crate::domain::cells::helpers::{expand_formula_references, tokenize_formula_references};
 use crate::domain::cells::{
     AuthoredStyleOnlyCell, CELL_TYPE_BOOL, CELL_TYPE_EMPTY, CELL_TYPE_ERROR, CELL_TYPE_FORMULA,
     CELL_TYPE_FORMULA_STRING, CELL_TYPE_NUMBER, CELL_TYPE_STRING, CellData, ParseExtras,
     VALUE_TYPE_CACHED_FORMULA, VALUE_TYPE_FORMULA, VALUE_TYPE_INLINE, VALUE_TYPE_SHARED_STRING,
-    adjust_formula_references,
 };
 use crate::output::results::{
     CELL_TYPE_VAL_BOOL, CELL_TYPE_VAL_EMPTY, CELL_TYPE_VAL_ERROR, CELL_TYPE_VAL_FORMULA,
@@ -334,6 +334,17 @@ pub(crate) fn apply_parse_extras(
         return;
     }
 
+    let shared_formula_templates = extras
+        .sf_masters
+        .iter()
+        .map(|(&si, master)| {
+            (
+                si,
+                tokenize_formula_references(master.formula_text.as_bytes()),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
     let mut cell_pos_map: HashMap<(u32, u32), usize> = HashMap::with_capacity(cells.len());
     for (idx, cell) in cells.iter().enumerate() {
         cell_pos_map.insert((cell.row, cell.col), idx);
@@ -341,11 +352,15 @@ pub(crate) fn apply_parse_extras(
 
     if !extras.sf_masters.is_empty() && !extras.sf_refs.is_empty() {
         for &(si, ref_row, ref_col) in &extras.sf_refs {
-            if let Some(master) = extras.sf_masters.get(&si) {
+            if let (Some(master), Some(template)) = (
+                extras.sf_masters.get(&si),
+                shared_formula_templates.get(&si),
+            ) {
                 let row_offset = ref_row as i32 - master.master_row as i32;
                 let col_offset = ref_col as i32 - master.master_col as i32;
-                let expanded = adjust_formula_references(
+                let expanded = expand_formula_references(
                     master.formula_text.as_bytes(),
+                    template,
                     row_offset,
                     col_offset,
                 );
