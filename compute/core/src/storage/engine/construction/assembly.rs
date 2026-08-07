@@ -280,8 +280,11 @@ fn assemble_engine_inner(
     // installed for the doc's lifetime").
     let update_buffer =
         std::sync::Arc::new(crate::storage::engine::update_buffer::UpdateBuffer::default());
-    let update_subscription =
-        crate::storage::engine::update_buffer::install_observer(storage.doc(), &update_buffer);
+    let update_subscription = crate::storage::engine::update_buffer::install_observer(
+        storage.doc(),
+        &update_buffer,
+        crate::storage::engine::update_buffer::UpdateSource::UserMutation,
+    );
 
     let mut engine = YrsComputeEngine {
         mirror,
@@ -354,6 +357,7 @@ pub(in crate::storage::engine) fn rebuild_engine_from_snapshot(
     engine._update_subscription = crate::storage::engine::update_buffer::install_observer(
         engine.stores.storage.doc(),
         &engine.update_buffer,
+        crate::storage::engine::update_buffer::UpdateSource::InternalRebuild,
     );
     // CellMirror is built inside init_from_snapshot / init_from_snapshot_minimal.
     // Don't build it separately to avoid the double-build overhead.

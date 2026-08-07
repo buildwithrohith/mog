@@ -288,6 +288,7 @@ pub(in crate::storage::engine) fn import_from_xlsx_bytes_deferred(
     engine._update_subscription = crate::storage::engine::update_buffer::install_observer(
         engine.stores.storage.doc(),
         &engine.update_buffer,
+        crate::storage::engine::update_buffer::UpdateSource::ImportBootstrap,
     );
     let (observer, undo_manager) = create_observer_and_undo(&engine.stores.storage);
     engine.mutation.observer = observer;
@@ -925,6 +926,7 @@ pub(in crate::storage::engine) fn commit_deferred_hydration(
     engine._update_subscription = crate::storage::engine::update_buffer::install_observer(
         engine.stores.storage.doc(),
         &engine.update_buffer,
+        crate::storage::engine::update_buffer::UpdateSource::FullHydration,
     );
     engine.mirror = completion.mirror;
 
