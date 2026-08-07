@@ -35,6 +35,11 @@ import { MutationResultHandler } from '../mutation-result-handler';
 import type { ReadonlyBinaryViewportBuffer } from '../wire/viewport-coordinator';
 import type { CellMetadataCache } from '../wire/cell-metadata-cache';
 import type { RangeMetadataCache } from '../wire/range-metadata-cache';
+import {
+  decodeQueryRangeBinary,
+  decodeRangeFormatsBinary,
+  decodeRangeValuesBinary,
+} from '../wire/range-binary';
 import type { ViewportPrefetchState, ViewportScrollBehavior } from '../wire/viewport-prefetch';
 import { SHEET_META_DEFAULT_COL_WIDTH } from '../../domain/sheets/sheet-meta-defaults';
 import {
@@ -122,6 +127,7 @@ import type {
   ProtectedWorkbookOperation,
   RangeSchema,
   RangeSchemaDefinition,
+  RangeQueryResult,
   RecalcResult,
   RecalcValidationAnnotation,
   RecalcValidationError,
@@ -170,6 +176,7 @@ import type {
   WorkbookSettings,
   WorkbookSnapshotBin,
 } from './compute-types.gen';
+import type { QueryRangeBinaryMeta, RangeBinaryMeta } from './types';
 
 /**
  * ChartFloatingObject — the chart variant of the wire FloatingObject union.
@@ -554,6 +561,68 @@ export class ComputeBridge extends GeneratedBridgeBase {
   setContext(ctx: IKernelContext): void {
     this.core.setContext(ctx);
     this.bridgeCtx = ctx;
+  }
+
+  // ===========================================================================
+  // Binary bulk range reads
+  // ===========================================================================
+
+  /**
+   * Read the range-query wire through the self-describing binary sibling.
+   *
+   * The generated binary methods intentionally remain additive compatibility
+   * surfaces. Existing callers (including the viewer) keep their established
+   * method names while this override switches the transport to the compact
+   * sibling and restores the original JSON-shaped result after decoding.
+   */
+  async queryRange(
+    sheetId: SheetId,
+    startRow: number,
+    startCol: number,
+    endRow: number,
+    endCol: number,
+  ): Promise<RangeQueryResult> {
+    const raw = await super.queryRangeBinary(sheetId, startRow, startCol, endRow, endCol);
+    const [bytes, metadata] = normalizeBytesTuple(
+      raw as [Uint8Array, QueryRangeBinaryMeta] | Uint8Array,
+    );
+    return decodeQueryRangeBinary(bytes, metadata);
+  }
+
+  /** Decode the dense binary sibling behind the existing values API. */
+  async getRangeValues2d(
+    sheetId: SheetId,
+    startRow: number,
+    startCol: number,
+    endRow: number,
+    endCol: number,
+  ): Promise<CellValue[][]> {
+    const raw = await super.getRangeValues2dBinary(sheetId, startRow, startCol, endRow, endCol);
+    const [bytes, metadata] = normalizeBytesTuple(
+      raw as [Uint8Array, RangeBinaryMeta] | Uint8Array,
+    );
+    return decodeRangeValuesBinary(bytes, metadata);
+  }
+
+  /** Decode the palette-backed binary sibling behind the existing format API. */
+  async getDisplayedRangeProperties(
+    sheetId: SheetId,
+    startRow: number,
+    startCol: number,
+    endRow: number,
+    endCol: number,
+  ): Promise<CellFormat[][]> {
+    const raw = await super.getDisplayedRangePropertiesBinary(
+      sheetId,
+      startRow,
+      startCol,
+      endRow,
+      endCol,
+    );
+    const [bytes, metadata] = normalizeBytesTuple(
+      raw as [Uint8Array, RangeBinaryMeta] | Uint8Array,
+    );
+    return decodeRangeFormatsBinary(bytes, metadata);
   }
 
   /**
