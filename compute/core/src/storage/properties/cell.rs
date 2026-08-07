@@ -136,13 +136,23 @@ pub(crate) fn get_cell_format_layers_for_ids(
     cell_ids: &[CellId],
 ) -> PreloadedCellFormatLayers {
     let txn = doc.transact();
-    let Some(props_map) = get_sheet_submap(&txn, sheets, sheet_id, KEY_CELL_PROPERTIES) else {
+    get_cell_format_layers_for_ids_with_txn(workbook, sheets, sheet_id, cell_ids, &txn)
+}
+
+pub(crate) fn get_cell_format_layers_for_ids_with_txn<T: yrs::ReadTxn>(
+    workbook: &MapRef,
+    sheets: &MapRef,
+    sheet_id: &SheetId,
+    cell_ids: &[CellId],
+    txn: &T,
+) -> PreloadedCellFormatLayers {
+    let Some(props_map) = get_sheet_submap(txn, sheets, sheet_id, KEY_CELL_PROPERTIES) else {
         return PreloadedCellFormatLayers {
             formats: Vec::new(),
             format_ids: std::collections::HashMap::new(),
         };
     };
-    let palette_map = match workbook.get(&txn, KEY_STYLE_PALETTE) {
+    let palette_map = match workbook.get(txn, KEY_STYLE_PALETTE) {
         Some(Out::YMap(map)) => Some(map),
         _ => None,
     };
@@ -155,10 +165,10 @@ pub(crate) fn get_cell_format_layers_for_ids(
 
     for cell_id in cell_ids {
         let cell_hex = id_to_hex(cell_id.as_u128());
-        let format_id = match props_map.get(&txn, &cell_hex) {
+        let format_id = match props_map.get(txn, &cell_hex) {
             Some(Out::YMap(nested)) => {
                 let props: CellProperties =
-                    match props_schema::from_yrs_map(&nested, &txn).map(Into::into) {
+                    match props_schema::from_yrs_map(&nested, txn).map(Into::into) {
                         Some(props) => props,
                         None => continue,
                     };
@@ -180,7 +190,7 @@ pub(crate) fn get_cell_format_layers_for_ids(
                             .as_ref()
                             .and_then(|palette| {
                                 let key = style_id.to_string();
-                                let Out::Any(Any::String(json)) = palette.get(&txn, &key)? else {
+                                let Out::Any(Any::String(json)) = palette.get(txn, &key)? else {
                                     return None;
                                 };
                                 serde_json::from_str::<CellFormat>(&json).ok()

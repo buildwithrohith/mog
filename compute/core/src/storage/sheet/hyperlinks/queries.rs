@@ -4,6 +4,7 @@ use compute_document::identity::GridIndex;
 use compute_document::schema::KEY_FORMULA;
 use compute_parser::{ASTNode, FormulaSource};
 use domain_types::domain::hyperlink::Hyperlink;
+use std::collections::HashMap;
 use yrs::{Any, Doc, Map, MapRef, Out, Transact};
 
 use crate::range_manager::pos_to_a1;
@@ -107,6 +108,41 @@ pub fn get_all_hyperlinks(
 
     result.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cell_ref.cmp(&b.1.cell_ref)));
     result.into_iter().map(|(_, h)| h).collect()
+}
+
+/// Read hyperlink presence for selected positions in one transaction.
+///
+/// The result includes `None` entries for positions without a hyperlink so a
+/// caller can cache negative lookups as well as hits.
+pub fn get_hyperlinks_for_positions(
+    doc: &Doc,
+    sheets: &MapRef,
+    sheet_id: &SheetId,
+    grid: &GridIndex,
+    positions: &[(u32, u32)],
+) -> HashMap<(u32, u32), Option<String>> {
+    let sheet_hex = id_to_hex(sheet_id.as_u128());
+    let txn = doc.transact();
+    let Some(cells_map) = get_cells_map(&txn, sheets, &sheet_hex) else {
+        return positions.iter().copied().map(|pos| (pos, None)).collect();
+    };
+
+    positions
+        .iter()
+        .copied()
+        .map(|position @ (row, col)| {
+            let hyperlink = grid.cell_id_at(row, col).and_then(|cell_id| {
+                let cell_hex = id_to_hex(cell_id.as_u128());
+                let cell_map = match cells_map.get(&txn, &cell_hex) {
+                    Some(Out::YMap(m)) => m,
+                    _ => return None,
+                };
+                read_hyperlink_url(&txn, &cell_map)
+                    .or_else(|| read_hyperlink_formula_url(&txn, &cell_map))
+            });
+            (position, hyperlink)
+        })
+        .collect()
 }
 
 fn read_hyperlink_formula_url<T: yrs::ReadTxn>(txn: &T, cell_map: &MapRef) -> Option<String> {

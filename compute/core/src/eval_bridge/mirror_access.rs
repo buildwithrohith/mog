@@ -71,7 +71,7 @@ pub struct MirrorAccess<'a> {
     pub pending_override: Option<PendingCellOverride>,
     /// Workbook sheet order (tab order), used for 3-D reference evaluation.
     /// Empty means sheet order is unknown — `sheets_in_range` degrades to single-sheet.
-    pub ordered_sheets: Vec<SheetId>,
+    pub ordered_sheets: Arc<[SheetId]>,
     pub formula_text_provider: FormulaTextProvider<'a>,
 }
 
@@ -82,7 +82,7 @@ impl<'a> MirrorAccess<'a> {
             current_cell_id,
             current_sheet,
             pending_override: None,
-            ordered_sheets: Vec::new(),
+            ordered_sheets: Arc::from([]),
             formula_text_provider: FormulaTextProvider::mirror_identity_only_for_test_unavailable(),
         }
     }
@@ -98,7 +98,7 @@ impl<'a> MirrorAccess<'a> {
             current_cell_id,
             current_sheet,
             pending_override: None,
-            ordered_sheets: Vec::new(),
+            ordered_sheets: Arc::from([]),
             formula_text_provider,
         }
     }
@@ -107,7 +107,7 @@ impl<'a> MirrorAccess<'a> {
         mirror: &'a CellMirror,
         current_cell_id: CellId,
         current_sheet: SheetId,
-        ordered_sheets: Vec<SheetId>,
+        ordered_sheets: Arc<[SheetId]>,
     ) -> Self {
         Self {
             mirror,
@@ -130,7 +130,7 @@ impl<'a> MirrorAccess<'a> {
             current_cell_id,
             current_sheet,
             pending_override: Some(pending_override),
-            ordered_sheets: Vec::new(),
+            ordered_sheets: Arc::from([]),
             formula_text_provider: FormulaTextProvider::mirror_identity_only_for_test_unavailable(),
         }
     }

@@ -1,5 +1,28 @@
 use super::*;
 
+#[cfg(test)]
+use std::cell::Cell;
+
+#[cfg(test)]
+thread_local! {
+    static RANGE_INDEX_SHEET_COUNT: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(in crate::storage::engine) fn reset_range_index_sheet_count() {
+    RANGE_INDEX_SHEET_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(in crate::storage::engine) fn range_index_sheet_count() -> usize {
+    RANGE_INDEX_SHEET_COUNT.with(Cell::get)
+}
+
+#[cfg(test)]
+fn record_range_index_sheet_count(range: &std::ops::Range<usize>) {
+    RANGE_INDEX_SHEET_COUNT.with(|count| count.set(count.get() + range.len()));
+}
+
 pub(in crate::storage::engine) fn build_grid_indexes_from_yrs(
     storage: &crate::storage::YrsStorage,
     snapshot: &WorkbookSnapshot,
@@ -31,6 +54,8 @@ pub(in crate::storage::engine) fn build_grid_indexes_from_allocations_range(
     range: std::ops::Range<usize>,
     grid_id_alloc: Arc<IdAllocator>,
 ) -> Result<FxHashMap<SheetId, GridIndex>, ComputeError> {
+    #[cfg(test)]
+    record_range_index_sheet_count(&range);
     let mut grid_indexes = FxHashMap::default();
     for i in range {
         let sheet_snap = &snapshot.sheets[i];
@@ -64,6 +89,8 @@ pub(in crate::storage::engine) fn build_merge_indexes_from_parse_output_range(
     snapshot: &WorkbookSnapshot,
     range: std::ops::Range<usize>,
 ) -> Result<FxHashMap<SheetId, RangeSpatialIndex<MergeSpatialItem>>, ComputeError> {
+    #[cfg(test)]
+    record_range_index_sheet_count(&range);
     let mut indexes = FxHashMap::default();
     for i in range {
         let sheet_snap = &snapshot.sheets[i];
@@ -103,6 +130,8 @@ pub(in crate::storage::engine) fn build_layout_indexes_from_parse_output_range(
     range: std::ops::Range<usize>,
     layout_metrics: domain_types::units::LayoutMetrics,
 ) -> Result<FxHashMap<SheetId, LayoutIndex>, ComputeError> {
+    #[cfg(test)]
+    record_range_index_sheet_count(&range);
     let mut indexes = FxHashMap::default();
     for i in range {
         let sheet_snap = &snapshot.sheets[i];

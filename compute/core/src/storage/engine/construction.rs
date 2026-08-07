@@ -71,6 +71,8 @@ pub(super) use indexes::{
     build_layout_indexes_from_parse_output_range, build_merge_indexes,
     build_merge_indexes_from_parse_output_range,
 };
+#[cfg(test)]
+pub(super) use indexes::{range_index_sheet_count, reset_range_index_sheet_count};
 pub(super) use named_ranges::{
     YrsIdentityFormulaLookup, defined_names_to_named_range_defs, normalize_named_range_refs,
 };

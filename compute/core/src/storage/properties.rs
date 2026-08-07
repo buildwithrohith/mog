@@ -61,8 +61,12 @@ use cascade::apply_format_range_layer;
 pub use cascade::{get_effective_format, get_effective_format_preloaded, get_positional_format};
 pub(crate) use cascade::{
     get_effective_format_from_preloaded_layers_with_range, get_workbook_base_format,
+    get_workbook_base_format_with_txn,
 };
-pub(crate) use cell::{PreloadedCellFormatLayers, get_cell_format_layers_for_ids};
+pub(crate) use cell::{
+    PreloadedCellFormatLayers, get_cell_format_layers_for_ids,
+    get_cell_format_layers_for_ids_with_txn,
+};
 pub use cell::{
     clear_cell_format, clear_cell_formats, clear_formula_cache_metadata,
     clear_formula_cache_metadata_for_cell_ids, clear_properties, get_all_properties,
@@ -86,6 +90,7 @@ pub use row_col::{
     get_row_xlsx_style_id, patch_col_borders, patch_col_format, patch_row_borders,
     patch_row_format, set_col_format, set_row_format,
 };
+pub(crate) use row_col::{get_all_col_formats_with_txn, get_all_row_formats_with_txn};
 pub(crate) use yrs::resolve_compact_props_with_txn;
 #[cfg(test)]
 mod tests;

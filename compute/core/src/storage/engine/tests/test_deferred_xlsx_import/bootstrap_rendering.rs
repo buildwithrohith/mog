@@ -482,6 +482,29 @@ fn deferred_xlsx_completion_then_grouped_paste_undo_preserves_redo_stack() {
 }
 
 #[test]
+fn deferred_xlsx_materialization_builds_one_sheet_of_runtime_indexes() {
+    let bytes = three_sheet_deferred_fixture_xlsx();
+    let (mut engine, _) = YrsComputeEngine::from_snapshot(simple_snapshot()).unwrap();
+    engine
+        .import_from_xlsx_bytes_deferred(&bytes)
+        .expect("deferred XLSX import should succeed");
+
+    let ids = engine.get_all_sheet_ids();
+    let retention = SheetId::from_uuid_str(&ids[1]).unwrap();
+    crate::storage::engine::construction::reset_range_index_sheet_count();
+
+    engine
+        .materialize_deferred_sheet(retention)
+        .expect("sheet-scoped preview materialization should succeed");
+
+    assert_eq!(
+        crate::storage::engine::construction::range_index_sheet_count(),
+        3,
+        "grid, merge, and layout builders should each see exactly one sheet"
+    );
+}
+
+#[test]
 fn deferred_xlsx_import_exposes_metadata_only_sheet_outlines_before_full_hydration() {
     let bytes = metadata_outline_deferred_fixture_xlsx();
 

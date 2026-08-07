@@ -9,7 +9,7 @@ use cell_types::{IdAllocator, SheetId};
 use compute_document::undo::ORIGIN_USER_EDIT;
 use domain_types::{CellBorders, CellFormat, yrs_schema};
 use value_types::ComputeError;
-use yrs::{Any, Map, MapPrelim, Origin, Out, Transact};
+use yrs::{Any, Map, MapPrelim, MapRef, Origin, Out, Transact};
 
 // -------------------------------------------------------------------
 // Row Format (keyed by RowId via row_col_identity)
@@ -431,19 +431,28 @@ pub fn get_all_row_formats(
     sheet_id: &SheetId,
     grid_index: Option<&GridIndex>,
 ) -> Vec<RowFormatEntry> {
+    let sheets = storage.sheets_ref();
+    let txn = storage.doc().transact();
+    get_all_row_formats_with_txn(&sheets, sheet_id, grid_index, &txn)
+}
+
+pub(crate) fn get_all_row_formats_with_txn<T: yrs::ReadTxn>(
+    sheets: &MapRef,
+    sheet_id: &SheetId,
+    grid_index: Option<&GridIndex>,
+    txn: &T,
+) -> Vec<RowFormatEntry> {
     let grid = match grid_index {
         Some(g) => g,
         None => return vec![],
     };
-    let sheets = storage.sheets_ref();
-    let txn = storage.doc().transact();
-    let fmt_map = match get_sheet_submap(&txn, &sheets, sheet_id, KEY_ROW_FORMATS) {
+    let fmt_map = match get_sheet_submap(txn, sheets, sheet_id, KEY_ROW_FORMATS) {
         Some(m) => m,
         None => return vec![],
     };
 
     let mut result = Vec::new();
-    for (hex_key, value) in fmt_map.iter(&txn) {
+    for (hex_key, value) in fmt_map.iter(txn) {
         // Parse hex key → RowId → row index
         let raw_id = match compute_document::hex::hex_to_id(hex_key) {
             Some(id) => id,
@@ -457,10 +466,10 @@ pub fn get_all_row_formats(
 
         let (format, xlsx_style_id) = match value {
             Out::YMap(nested) => {
-                let fmt = yrs_schema::cell_format::from_yrs_map(&nested, &txn);
+                let fmt = yrs_schema::cell_format::from_yrs_map(&nested, txn);
                 let xi = {
                     use domain_types::yrs_schema::cell_format::KEY_XLSX_STYLE_ID;
-                    match nested.get(&txn, KEY_XLSX_STYLE_ID) {
+                    match nested.get(txn, KEY_XLSX_STYLE_ID) {
                         Some(Out::Any(Any::Number(n))) => Some(n as u32),
                         _ => None,
                     }
@@ -487,19 +496,28 @@ pub fn get_all_col_formats(
     sheet_id: &SheetId,
     grid_index: Option<&GridIndex>,
 ) -> Vec<ColFormatEntry> {
+    let sheets = storage.sheets_ref();
+    let txn = storage.doc().transact();
+    get_all_col_formats_with_txn(&sheets, sheet_id, grid_index, &txn)
+}
+
+pub(crate) fn get_all_col_formats_with_txn<T: yrs::ReadTxn>(
+    sheets: &MapRef,
+    sheet_id: &SheetId,
+    grid_index: Option<&GridIndex>,
+    txn: &T,
+) -> Vec<ColFormatEntry> {
     let grid = match grid_index {
         Some(g) => g,
         None => return vec![],
     };
-    let sheets = storage.sheets_ref();
-    let txn = storage.doc().transact();
-    let fmt_map = match get_sheet_submap(&txn, &sheets, sheet_id, KEY_COL_FORMATS) {
+    let fmt_map = match get_sheet_submap(txn, sheets, sheet_id, KEY_COL_FORMATS) {
         Some(m) => m,
         None => return vec![],
     };
 
     let mut result = Vec::new();
-    for (hex_key, value) in fmt_map.iter(&txn) {
+    for (hex_key, value) in fmt_map.iter(txn) {
         let raw_id = match compute_document::hex::hex_to_id(hex_key) {
             Some(id) => id,
             None => continue,
@@ -512,10 +530,10 @@ pub fn get_all_col_formats(
 
         let (format, xlsx_style_id) = match value {
             Out::YMap(nested) => {
-                let fmt = yrs_schema::cell_format::from_yrs_map(&nested, &txn);
+                let fmt = yrs_schema::cell_format::from_yrs_map(&nested, txn);
                 let xi = {
                     use domain_types::yrs_schema::cell_format::KEY_XLSX_STYLE_ID;
-                    match nested.get(&txn, KEY_XLSX_STYLE_ID) {
+                    match nested.get(txn, KEY_XLSX_STYLE_ID) {
                         Some(Out::Any(Any::Number(n))) => Some(n as u32),
                         _ => None,
                     }
