@@ -124,8 +124,13 @@ re-resolve (hand-guarded lockfile; validated by fresh frozen install).
   #2725 deploy — #2727 and #2731 never auto-deployed; the earlier "staging
   SUCCESS" observation was the STALE 19:14 deployment (monitor exited on
   latest-status without checking createdAt vs merge time — fixed pattern:
-  gate on createdAt). Manual serviceInstanceDeploy mutation triggered for
-  round-5; first staging Excel session is still the live dlopen proof.
+  gate on createdAt). RESOLVED: staging service had ZERO deployment
+  triggers (deleted/disconnected after 19:14); recreated via
+  deploymentTriggerCreate (id 65132c8a, GeniorLabs/Sapiex develop->staging)
+  and deployed a318186a explicitly (serviceInstanceDeploy WITHOUT commitSha
+  rebuilds the STALE last-known commit -- always pass commitSha). Railway
+  SUCCESS 23:55 + Vercel READY on a318186a: round 5 + native engine LIVE on
+  both staging surfaces. First staging Excel session = live dlopen proof.
   Fork TLS fix commit 3e791703 (jemalloc disable_initial_exec_tls — REQUIRED
   for any dlopen'd linux build). Linux build recipe that works: docker
   linux/arm64 rust:1-trixie + apt gcc-x86-64-linux-gnu, CARGO_TARGET_DIR=
