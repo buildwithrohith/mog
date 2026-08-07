@@ -16,7 +16,7 @@ use compute_document::hex::id_to_hex;
 use compute_wire::PaletteSnapshot;
 use compute_wire::mutation::CfColorOverrides;
 use domain_types::CellFormat;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use snapshot_types::RecalcResult;
 use value_types::CellValue;
 
@@ -37,11 +37,10 @@ impl YrsComputeEngine {
         mutation_sheet_id: &SheetId,
         generation: u8,
     ) -> Vec<u8> {
-        // Refresh CF cache for this sheet if it has CF rules and cells changed
-        if self.stores.cf_cache.contains_key(mutation_sheet_id) && !recalc.changed_cells.is_empty()
-        {
-            self.refresh_cf_cache(mutation_sheet_id);
-        }
+        // CF cache refreshes happen in `produce_viewport_patches_for_recalc`
+        // before this single-sheet serializer is entered. The other callers
+        // of this helper only patch comment/sparkline metadata and do not
+        // change values that could affect conditional formatting.
         self.enrich_display_text(recalc);
         self.enrich_metadata_flags(recalc);
 
@@ -279,16 +278,25 @@ impl YrsComputeEngine {
         rows: &[u32],
         cols: &[u32],
     ) -> Vec<u8> {
-        let mut positions: FxHashSet<(u32, u32)> = FxHashSet::default();
+        // Collect inclusive column strips keyed by row. A row format adds one
+        // full horizontal strip; a column format adds singleton vertical
+        // strips for each row in the viewport. Keeping strips until the final
+        // materialization avoids one hash insertion per visible cell.
+        let mut strips_by_row: FxHashMap<u32, Vec<(u32, u32)>> = FxHashMap::default();
 
         for (_viewport_id, bounds) in self.viewport.viewports_for_sheet(sheet_id) {
+            if bounds.start_row > bounds.end_row || bounds.start_col > bounds.end_col {
+                continue;
+            }
+
             for &row in rows {
                 if row < bounds.start_row || row > bounds.end_row {
                     continue;
                 }
-                for col in bounds.start_col..=bounds.end_col {
-                    positions.insert((row, col));
-                }
+                strips_by_row
+                    .entry(row)
+                    .or_default()
+                    .push((bounds.start_col, bounds.end_col));
             }
 
             for &col in cols {
@@ -296,17 +304,44 @@ impl YrsComputeEngine {
                     continue;
                 }
                 for row in bounds.start_row..=bounds.end_row {
-                    positions.insert((row, col));
+                    strips_by_row.entry(row).or_default().push((col, col));
                 }
             }
         }
 
-        if positions.is_empty() {
+        if strips_by_row.is_empty() {
             return compute_wire::mutation::serialize_multi_viewport_patches(&[]);
         }
 
-        let mut positions: Vec<(u32, u32)> = positions.into_iter().collect();
-        positions.sort_unstable();
+        // FxHashMap iteration is not ordered, so sort rows explicitly to keep
+        // the same row-major order as the previous tuple sort. Merge
+        // overlapping and adjacent inclusive strips so row/column crossings,
+        // duplicate inputs, and overlapping viewports each emit one cell.
+        let mut strips_by_row: Vec<(u32, Vec<(u32, u32)>)> = strips_by_row.into_iter().collect();
+        strips_by_row.sort_unstable_by_key(|(row, _)| *row);
+
+        let mut positions = Vec::new();
+        for (row, mut strips) in strips_by_row {
+            strips.sort_unstable();
+
+            let mut merged: Vec<(u32, u32)> = Vec::with_capacity(strips.len());
+            for (start, end) in strips {
+                if let Some((_, current_end)) = merged.last_mut()
+                    && (start <= *current_end
+                        || (*current_end != u32::MAX && start == *current_end + 1))
+                {
+                    *current_end = (*current_end).max(end);
+                } else {
+                    merged.push((start, end));
+                }
+            }
+
+            for (start, end) in merged {
+                for col in start..=end {
+                    positions.push((row, col));
+                }
+            }
+        }
 
         let sheet_id_str = sheet_id.to_uuid_string();
 
@@ -406,7 +441,11 @@ impl YrsComputeEngine {
         // side-effect of sibling cells changing (e.g. Duplicate-Values,
         // Top-N). These cells need viewport patches even though their values
         // didn't change — otherwise the old CF color stays in the TS buffer.
-        let cf_only_changes = self.refresh_cf_caches_after_recalc(recalc);
+        let cf_only_changes = self
+            .mutation
+            .pending_cf_only_changes
+            .take()
+            .unwrap_or_else(|| self.refresh_cf_caches_after_recalc(recalc));
 
         // Synthesize CellChange entries for CF-only-changed cells and append
         // them to recalc.changed_cells so they flow through the standard
@@ -562,7 +601,13 @@ impl YrsComputeEngine {
         let format_patches = self.mutation.pending_format_patches.take();
         let value_patches = match self.mutation.pending_recalc.take() {
             Some(mut recalc) => self.produce_viewport_patches_for_recalc(&mut recalc),
-            None => compute_wire::mutation::serialize_multi_viewport_patches(&[]),
+            None => {
+                // A format-only or full-rebuild path can intentionally skip
+                // the pending recalc flush. Clear its unused CF diff so it
+                // cannot survive into a later direct flush.
+                self.mutation.pending_cf_only_changes = None;
+                compute_wire::mutation::serialize_multi_viewport_patches(&[])
+            }
         };
 
         match format_patches {
@@ -957,5 +1002,100 @@ impl YrsComputeEngine {
         }
 
         compute_wire::mutation::serialize_multi_viewport_patches(&all_patches)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::YrsComputeEngine;
+    use crate::snapshot::{SheetSnapshot, WorkbookSnapshot};
+    use cell_types::SheetId;
+    use value_types::FiniteF64;
+
+    const SHEET_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
+
+    type ViewportSpec = (&'static str, u32, u32, u32, u32);
+
+    fn fixture_engine(viewports: &[ViewportSpec]) -> (YrsComputeEngine, SheetId) {
+        let snapshot = WorkbookSnapshot {
+            sheets: vec![SheetSnapshot {
+                id: SHEET_ID.to_string(),
+                name: "Sheet1".to_string(),
+                rows: 100,
+                cols: 26,
+                cells: vec![],
+                ranges: vec![],
+            }],
+            named_ranges: vec![],
+            tables: vec![],
+            pivot_tables: vec![],
+            data_table_regions: vec![],
+            iterative_calc: false,
+            max_iterations: 100,
+            max_change: FiniteF64::must(0.001),
+            calculation_settings: None,
+        };
+        let (mut engine, _) = YrsComputeEngine::from_snapshot(snapshot).expect("fixture engine");
+        let sheet_id = SheetId::from_uuid_str(SHEET_ID).expect("fixture sheet id");
+        for (viewport_id, start_row, start_col, end_row, end_col) in viewports {
+            engine
+                .register_viewport(
+                    viewport_id,
+                    &sheet_id,
+                    *start_row,
+                    *start_col,
+                    *end_row,
+                    *end_col,
+                )
+                .expect("register fixture viewport");
+        }
+        (engine, sheet_id)
+    }
+
+    fn fixture_patches(rows: &[u32], cols: &[u32], viewports: &[ViewportSpec]) -> Vec<u8> {
+        let (mut engine, sheet_id) = fixture_engine(viewports);
+        engine.produce_row_col_format_viewport_patches(&sheet_id, rows, cols)
+    }
+
+    fn hex_bytes(value: &str) -> Vec<u8> {
+        assert!(value.len().is_multiple_of(2));
+        (0..value.len())
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&value[index..index + 2], 16).expect("hex fixture"))
+            .collect()
+    }
+
+    #[test]
+    fn row_col_format_patch_bytes_match_pre_rewrite_fixtures() {
+        let fixtures = [
+            (
+                "three-rows",
+                fixture_patches(&[5, 1, 3], &[], &[("main", 1, 2, 5, 2)]),
+                "0100046d61696e070100000300000000000000200004000000000035353065383430306532396234316434613731363434363635353434303030300100000002000000000000000000f87f00000000ffffffff000000000000000000000000000000000300000002000000000000000000f87f00000000ffffffff000000000000000000000000000000000500000002000000000000000000f87f00000000ffffffff00000000000000000000000000000000000059000000000001001f0000007fc08118000000000700f82a000007000000070000000e000000040000120000000700190000000600000e0000000400010043616c69627269233030303030306e6f6e6567656e6572616c626f74746f6d",
+            ),
+            (
+                "crossings",
+                fixture_patches(&[4, 2, 2], &[1], &[("main", 1, 1, 4, 2)]),
+                "0100046d61696e7f0100000600000000000000200004000000000035353065383430306532396234316434613731363434363635353434303030300100000001000000000000000000f87f00000000ffffffff000000000000000000000000000000000200000001000000000000000000f87f00000000ffffffff000000000000000000000000000000000200000002000000000000000000f87f00000000ffffffff000000000000000000000000000000000300000001000000000000000000f87f00000000ffffffff000000000000000000000000000000000400000001000000000000000000f87f00000000ffffffff000000000000000000000000000000000400000002000000000000000000f87f00000000ffffffff00000000000000000000000000000000000059000000000001001f0000007fc08118000000000700f82a000007000000070000000e000000040000120000000700190000000600000e0000000400010043616c69627269233030303030306e6f6e6567656e6572616c626f74746f6d",
+            ),
+            (
+                "overlapping-viewports",
+                fixture_patches(
+                    &[2, 1, 2],
+                    &[1],
+                    &[("main", 0, 0, 2, 1), ("split", 1, 1, 3, 2)],
+                ),
+                "0200046d61696e570100000500000000000000200004000000000035353065383430306532396234316434613731363434363635353434303030300000000001000000000000000000f87f00000000ffffffff000000000000000000000000000000000100000000000000000000000000f87f00000000ffffffff000000000000000000000000000000000100000001000000000000000000f87f00000000ffffffff000000000000000000000000000000000200000000000000000000000000f87f00000000ffffffff000000000000000000000000000000000200000001000000000000000000f87f00000000ffffffff00000000000000000000000000000000000059000000000001001f0000007fc08118000000000700f82a000007000000070000000e000000040000120000000700190000000600000e0000000400010043616c69627269233030303030306e6f6e6567656e6572616c626f74746f6d0573706c6974570100000500000000000000200004000000000035353065383430306532396234316434613731363434363635353434303030300100000001000000000000000000f87f00000000ffffffff000000000000000000000000000000000100000002000000000000000000f87f00000000ffffffff000000000000000000000000000000000200000001000000000000000000f87f00000000ffffffff000000000000000000000000000000000200000002000000000000000000f87f00000000ffffffff000000000000000000000000000000000300000001000000000000000000f87f00000000ffffffff00000000000000000000000000000000000059000000000001001f0000007fc08118000000000700f82a000007000000070000000e000000040000120000000700190000000600000e0000000400010043616c69627269233030303030306e6f6e6567656e6572616c626f74746f6d",
+            ),
+            (
+                "empty-intersection",
+                fixture_patches(&[1, 2], &[1, 2], &[("main", 10, 10, 12, 12)]),
+                "0000",
+            ),
+        ];
+
+        for (name, bytes, expected) in fixtures {
+            assert_eq!(bytes, hex_bytes(expected), "fixture changed: {name}");
+        }
     }
 }
