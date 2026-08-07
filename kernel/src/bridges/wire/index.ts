@@ -35,6 +35,13 @@ export type { TestMutationOptions, TestMutationPatch } from './mutation-test-bui
 export { CellMetadataCache, createCellMetadataCache } from './cell-metadata-cache';
 export type { SpillInfo } from './cell-metadata-cache';
 
+export {
+  decodeQueryRangeBinary,
+  decodeRangeFormatsBinary,
+  decodeRangeValuesBinary,
+  RangeBinaryDecodeError,
+} from './range-binary';
+
 export { computePrefetchBounds, isWithinPrefetch } from './viewport-prefetch';
 export type { PrefetchBounds, PrefetchConfig } from './viewport-prefetch';
 
