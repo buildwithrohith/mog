@@ -95,7 +95,22 @@ session's worktree `.claude/worktrees/merge-wave` with unpushed model-registry
 commits — NEVER branch from local develop; branch from origin/develop and
 cherry-pick, delete stale .next if typecheck fails on phantom routes).
 
-## Round 5 (IN PROGRESS at last update)
+## Round 5: SHIPPED (Sapiex PR #2731 MERGED 2026-08-07)
+Fork HEAD 352fc890 (= 8d7a97b6 lanes + lane-S codec fix). All four artifacts
+vendored -352fc89. Post-integration finds: (a) P×Q compile break at
+mirror/write/identity.rs (P's new id_to_pos uses vs Q's field removal) —
+integration commit 5ee8b1a3 routes through Q's helpers; (b) lane-R codec
+BROKE on real fixtures (RangeBinaryDecodeError: inline-format slots encoded
+fixed-u32 vs varint decoders — synthetic tests all passed, browser matrix
+caught it) — lane S fix 86243be5/352fc890, payload pinned in Rust+Jest.
+Merged battery: core 3,060/0, doc 285/0, parser 3,583/0, wire jest 321/321.
+A/B: import peak −23.3% vs stock. Matrix green + screenshots. Dependency
+traps recorded in the PR: @next/* age-gate exclusion, supportedArchitectures
+for cross-platform file: tarballs (fresh macOS installs ENOTDIR without it),
+better-call zod peer nondeterministically flips 4.3.6→workspace zod3 on full
+re-resolve (hand-guarded lockfile; validated by fresh frozen install).
+
+## Round 5 (dispatch details, for archaeology)
 - Lanes: P=term_6859becb (sol, plan 023 schema-v20 cutover; STOPped 3× — provider
   scope expanded, host-provider risk RULED accepted with scratch-doc baseline
   inspection, identity-divergence ruled fix-at-source: normalization mints a
@@ -104,9 +119,13 @@ cherry-pick, delete stale .next if typecheck fails on phantom routes).
   epoch invalidation, 3,036/0, commits 52e4dfd8+cd3f1e85 in mog-opt-q);
   R=term_b11ae8de (plan 025 binary wire: size gate 29.26% vs 25% numeric bar —
   ruled one codec-tightening iteration: rect header + RLE type stream).
-- SERVER NATIVE ADOPTION SHIPPED: Sapiex PR #2727 MERGED, Railway staging
-  deploy SUCCESS (image provably contains fork linux binary via frozen-lockfile
-  + vendor/ COPY; first staging Excel session is the live dlopen proof).
+- SERVER NATIVE ADOPTION: Sapiex PR #2727 MERGED. CORRECTION (found during
+  round-5 ship): Railway's GitHub trigger silently stopped after the 19:14
+  #2725 deploy — #2727 and #2731 never auto-deployed; the earlier "staging
+  SUCCESS" observation was the STALE 19:14 deployment (monitor exited on
+  latest-status without checking createdAt vs merge time — fixed pattern:
+  gate on createdAt). Manual serviceInstanceDeploy mutation triggered for
+  round-5; first staging Excel session is still the live dlopen proof.
   Fork TLS fix commit 3e791703 (jemalloc disable_initial_exec_tls — REQUIRED
   for any dlopen'd linux build). Linux build recipe that works: docker
   linux/arm64 rust:1-trixie + apt gcc-x86-64-linux-gnu, CARGO_TARGET_DIR=
