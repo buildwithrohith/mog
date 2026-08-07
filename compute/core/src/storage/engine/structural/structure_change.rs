@@ -56,7 +56,7 @@ impl YrsComputeEngine {
                 &mut completion.mirror,
             );
         }
-        construction::commit_deferred_hydration(self, completion);
+        construction::commit_deferred_hydration(self, completion)?;
         Ok(())
     }
 

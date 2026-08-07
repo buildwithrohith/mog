@@ -197,7 +197,7 @@ impl YrsComputeEngine {
                 RecalcResult::empty()
             };
 
-        construction::commit_deferred_hydration(self, completion);
+        construction::commit_deferred_hydration(self, completion)?;
         self.postprocess_import_open_recalc(&mut recalc);
         let mut result = services::mutation_handlers::build_mutation_result_for_hydration(
             &self.stores,

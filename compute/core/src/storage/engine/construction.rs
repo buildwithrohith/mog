@@ -42,6 +42,7 @@ mod assembly;
 mod axis_resolver;
 mod csv;
 mod deferred;
+mod dependency_closure;
 mod indexes;
 mod named_ranges;
 mod range_styles;
@@ -64,6 +65,9 @@ pub(super) use csv::{from_csv_bytes, import_from_csv_bytes};
 pub(super) use deferred::{
     commit_deferred_hydration, hydrate_deferred_sheet, import_from_xlsx_bytes_deferred,
     materialize_deferred_sheet, stage_deferred_hydration,
+};
+pub(in crate::storage::engine) use dependency_closure::{
+    DeferredCalculationEdit, prepare_deferred_calculation_edit,
 };
 pub(super) use indexes::{
     build_grid_indexes_from_allocations_range, build_grid_indexes_from_yrs,
@@ -90,7 +94,10 @@ pub(super) use sheet_import::import_sheets_from_xlsx;
 pub use snapshots::build_workbook_snapshot_from_yrs;
 pub(super) use snapshots::{build_sheet_snapshot_from_yrs, build_workbook_snapshot};
 pub(in crate::storage::engine) use table_auto_filter_projection::materialize_table_auto_filters_from_preserved_specs;
-pub(super) use types::{DeferredHydrationCompletion, DeferredHydrationData, XlsxHydrateResult};
+pub(super) use types::{
+    DeferredCommittedCellEdit, DeferredCommittedCellEditBatch, DeferredCommittedCellEditKind,
+    DeferredHydrationCompletion, DeferredHydrationData, SheetDependencyManifest, XlsxHydrateResult,
+};
 pub(super) use xlsx::{from_xlsx_bytes, import_from_xlsx_bytes};
 
 pub(super) fn sync_table_catalog_from_yrs_if_present(

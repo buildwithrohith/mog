@@ -7,6 +7,15 @@ pub(in crate::storage::engine) fn import_from_xlsx_bytes_deferred(
     use crate::import;
     use crate::storage::infra::hydration::{SharedIdAllocator, allocate_sheet_ids};
 
+    // Pass 0: Stream the workbook-wide sheet dependency inventory. This reads
+    // formula/name text only and retains no unselected CellData.
+    let parsed_dependency_manifest =
+        xlsx_api::parse_sheet_dependency_manifest(xlsx_data).map_err(|e| {
+            ComputeError::Deserialize {
+                message: format!("XLSX dependency manifest error: {e}"),
+            }
+        })?;
+
     // Pass 1: Parse XLSX — only the initial active visible sheet's cells
     // (ZIP decompress + XML parse). Remaining sheets get metadata only. Full
     // parse happens in complete_deferred_hydration.
@@ -319,6 +328,11 @@ pub(in crate::storage::engine) fn import_from_xlsx_bytes_deferred(
         })
         .unwrap_or_default();
     let yrs_hydrated_sheets = mirror_materialized_sheets.clone();
+    let sheet_dependency_manifest = SheetDependencyManifest::from_parser_manifest(
+        parsed_dependency_manifest,
+        &parse_output,
+        &allocations,
+    )?;
     engine.deferred_hydration = Some(DeferredHydrationData {
         parse_output,
         allocations,
@@ -327,6 +341,8 @@ pub(in crate::storage::engine) fn import_from_xlsx_bytes_deferred(
         expected_imported_sheets,
         mirror_materialized_sheets,
         yrs_hydrated_sheets,
+        sheet_dependency_manifest,
+        committed_cell_edit_batches: Vec::new(),
     });
 
     Ok(RecalcResult::empty())
@@ -1195,6 +1211,7 @@ pub(in crate::storage::engine) fn stage_deferred_hydration(
             custom_table_styles: FxHashMap::default(),
             custom_cell_styles: FxHashMap::default(),
         };
+
         load_custom_cell_styles(&mut stores);
         load_custom_table_styles(&mut stores);
         sync_table_catalog_from_yrs_if_present(&mut stores, &mut new_mirror);
@@ -1212,6 +1229,7 @@ pub(in crate::storage::engine) fn stage_deferred_hydration(
             phantom_cells: id_map.phantom_cells,
             calculation,
             import_report,
+            committed_cell_edit_batches: data.committed_cell_edit_batches.clone(),
         }
     };
 
@@ -1270,7 +1288,8 @@ fn build_deferred_critical_sheet_range_plan(
 pub(in crate::storage::engine) fn commit_deferred_hydration(
     engine: &mut YrsComputeEngine,
     completion: DeferredHydrationCompletion,
-) {
+) -> Result<(), ComputeError> {
+    let committed_cell_edit_batches = completion.committed_cell_edit_batches;
     // Commit the fully staged state. From this point onward the live engine is
     // all-sheet materialized and export/graph guards can be cleared.
     engine.update_buffer.clear();
@@ -1301,4 +1320,82 @@ pub(in crate::storage::engine) fn commit_deferred_hydration(
     }
 
     engine.deferred_hydration = None;
+
+    // Full hydration and its normalization writes are bootstrap state. Clear
+    // only those updates, then restore the normal user source before replaying
+    // row-4 edits so their undo and provider semantics match the original
+    // admitted mutations.
+    engine
+        .update_buffer
+        .clear_source(crate::storage::engine::update_buffer::UpdateSource::FullHydration);
+    let previous_subscription = std::mem::replace(
+        &mut engine._update_subscription,
+        crate::storage::engine::update_buffer::install_observer(
+            engine.stores.storage.doc(),
+            &engine.update_buffer,
+            crate::storage::engine::update_buffer::UpdateSource::UserMutation,
+        ),
+    );
+    drop(previous_subscription);
+
+    for batch in committed_cell_edit_batches {
+        let mutation = match batch.kind {
+            DeferredCommittedCellEditKind::SetCell => {
+                let edit =
+                    batch
+                        .edits
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| ComputeError::InvalidInput {
+                            message: "deferred SetCell replay batch was empty".into(),
+                        })?;
+                crate::storage::engine::mutation::EngineMutation::SetCell {
+                    sheet_id: edit.sheet_id,
+                    cell_id: edit.cell_id,
+                    row: edit.row,
+                    col: edit.col,
+                    input: edit.input,
+                }
+            }
+            DeferredCommittedCellEditKind::SetCells => {
+                crate::storage::engine::mutation::EngineMutation::SetCells {
+                    edits: batch
+                        .edits
+                        .into_iter()
+                        .map(|edit| (edit.sheet_id, edit.cell_id, edit.row, edit.col, edit.input))
+                        .collect(),
+                    skip_cycle_check: batch.skip_cycle_check,
+                }
+            }
+            DeferredCommittedCellEditKind::SetCellsByPosition => {
+                // Preserve identities minted by the original position edit.
+                // Once registered, normal position resolution reuses them and
+                // still executes the format-inference path for this variant.
+                for edit in &batch.edits {
+                    engine
+                        .stores
+                        .grid_indexes
+                        .get_mut(&edit.sheet_id)
+                        .ok_or_else(|| ComputeError::InvalidInput {
+                            message: format!(
+                                "deferred edit replay is missing sheet {} grid index",
+                                edit.sheet_id
+                            ),
+                        })?
+                        .register_cell(edit.cell_id, edit.row, edit.col);
+                }
+                crate::storage::engine::mutation::EngineMutation::SetCellsByPosition {
+                    edits: batch
+                        .edits
+                        .into_iter()
+                        .map(|edit| (edit.sheet_id, edit.row, edit.col, edit.input))
+                        .collect(),
+                    skip_cycle_check: batch.skip_cycle_check,
+                }
+            }
+        };
+        engine.apply_mutation(mutation)?;
+    }
+
+    Ok(())
 }

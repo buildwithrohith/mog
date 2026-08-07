@@ -1,6 +1,6 @@
 use super::*;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use cell_types::SheetId;
 use value_types::ComputeError;
@@ -34,6 +34,116 @@ pub struct DeferredHydrationData {
     pub(in crate::storage::engine) mirror_materialized_sheets: HashSet<SheetId>,
     /// Sheets whose canonical Yrs subtrees have been durably hydrated.
     pub(in crate::storage::engine) yrs_hydrated_sheets: HashSet<SheetId>,
+    /// Workbook-wide, cell-free dependency inventory used to admit edits
+    /// without constructing a graph from parse-only sheets.
+    pub(in crate::storage::engine) sheet_dependency_manifest: SheetDependencyManifest,
+    /// Successful row-4 cell edits that must be replayed if the legacy full
+    /// hydration path later rebuilds the document from the retained XLSX.
+    /// Cell identities are captured after the live mutation succeeds.
+    pub(in crate::storage::engine) committed_cell_edit_batches: Vec<DeferredCommittedCellEditBatch>,
+}
+
+#[derive(Clone)]
+pub(in crate::storage::engine) struct DeferredCommittedCellEdit {
+    pub sheet_id: SheetId,
+    pub cell_id: CellId,
+    pub row: u32,
+    pub col: u32,
+    pub input: crate::storage::engine::mutation::CellInput,
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::storage::engine) enum DeferredCommittedCellEditKind {
+    SetCell,
+    SetCells,
+    SetCellsByPosition,
+}
+
+#[derive(Clone)]
+pub(in crate::storage::engine) struct DeferredCommittedCellEditBatch {
+    pub edits: Vec<DeferredCommittedCellEdit>,
+    pub skip_cycle_check: bool,
+    pub kind: DeferredCommittedCellEditKind,
+}
+
+/// Parser dependency facts translated from workbook-order indices to the
+/// stable `SheetId`s allocated for this engine import.
+pub(in crate::storage::engine) struct SheetDependencyManifest {
+    pub parsed: xlsx_api::SheetDependencyManifest,
+    pub workbook_index_by_sheet: HashMap<SheetId, u32>,
+    pub sheet_by_workbook_index: BTreeMap<u32, SheetId>,
+    pub precedents_by_dependent: HashMap<SheetId, HashSet<SheetId>>,
+    pub blockers_by_dependent: HashMap<SheetId, BTreeSet<xlsx_api::DependencyBlocker>>,
+    pub sheet_order: Vec<SheetId>,
+}
+
+impl SheetDependencyManifest {
+    pub fn from_parser_manifest(
+        parsed: xlsx_api::SheetDependencyManifest,
+        parse_output: &domain_types::ParseOutput,
+        allocations: &[crate::storage::infra::hydration::SheetIdAllocation],
+    ) -> Result<Self, ComputeError> {
+        let mut workbook_index_by_sheet = HashMap::with_capacity(allocations.len());
+        let mut sheet_by_workbook_index = BTreeMap::new();
+        for (editable_index, allocation) in allocations.iter().enumerate() {
+            let workbook_index = parse_output
+                .workbook_sheet_inventory
+                .iter()
+                .find(|entry| entry.editable_sheet_index == Some(editable_index))
+                .map(|entry| entry.workbook_order)
+                .ok_or_else(|| ComputeError::Deserialize {
+                    message: format!(
+                        "dependency manifest could not map editable sheet index {editable_index}"
+                    ),
+                })?;
+            workbook_index_by_sheet.insert(allocation.sheet_id, workbook_index);
+            sheet_by_workbook_index.insert(workbook_index, allocation.sheet_id);
+        }
+
+        let mut precedents_by_dependent = HashMap::<SheetId, HashSet<SheetId>>::new();
+        let mut blockers_by_dependent =
+            HashMap::<SheetId, BTreeSet<xlsx_api::DependencyBlocker>>::new();
+        for (dependent_index, precedent_indices) in &parsed.precedents_by_dependent {
+            let Some(dependent) = sheet_by_workbook_index.get(dependent_index).copied() else {
+                continue;
+            };
+            for precedent_index in precedent_indices {
+                if let Some(precedent) = sheet_by_workbook_index.get(precedent_index).copied() {
+                    if precedent != dependent {
+                        precedents_by_dependent
+                            .entry(dependent)
+                            .or_default()
+                            .insert(precedent);
+                    }
+                } else {
+                    blockers_by_dependent
+                        .entry(dependent)
+                        .or_default()
+                        .insert(xlsx_api::DependencyBlocker::UnresolvedSheetReference);
+                }
+            }
+        }
+        for (dependent_index, blockers) in &parsed.blockers_by_dependent {
+            if let Some(dependent) = sheet_by_workbook_index.get(dependent_index).copied() {
+                blockers_by_dependent
+                    .entry(dependent)
+                    .or_default()
+                    .extend(blockers.iter().cloned());
+            }
+        }
+
+        Ok(Self {
+            parsed,
+            workbook_index_by_sheet,
+            sheet_by_workbook_index,
+            precedents_by_dependent,
+            blockers_by_dependent,
+            sheet_order: allocations
+                .iter()
+                .map(|allocation| allocation.sheet_id)
+                .collect(),
+        })
+    }
 }
 
 /// Actionable details for an incomplete deferred-hydration guard.
@@ -163,4 +273,5 @@ pub(in crate::storage::engine) struct DeferredHydrationCompletion {
     pub(in crate::storage::engine) phantom_cells: Vec<(SheetId, CellId, u32, u32)>,
     pub(in crate::storage::engine) calculation: domain_types::CalculationProperties,
     pub(in crate::storage::engine) import_report: domain_types::ImportReport,
+    pub(in crate::storage::engine) committed_cell_edit_batches: Vec<DeferredCommittedCellEditBatch>,
 }

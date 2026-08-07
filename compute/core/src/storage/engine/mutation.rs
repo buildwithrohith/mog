@@ -418,6 +418,9 @@ impl EngineMutation {
     /// product contract is still one Cmd+Z per public mutation.
     pub(crate) fn should_auto_group_undo(&self) -> bool {
         match self {
+            EngineMutation::SetCell { input, .. } => {
+                matches!(input, CellInput::Parse { text } if text.trim_start().starts_with('='))
+            }
             EngineMutation::SetCells { edits, .. } => !edits.is_empty(),
             EngineMutation::SetCellsByPosition { edits, .. } => !edits.is_empty(),
             EngineMutation::ClearCells { cell_ids } => !cell_ids.is_empty(),

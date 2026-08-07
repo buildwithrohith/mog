@@ -5,6 +5,7 @@ use super::helpers::*;
 
 mod bootstrap_rendering;
 mod calc_completion;
+mod dependency_closure;
 mod existing_sheet_hydration;
 mod formula_visibility;
 mod guards;

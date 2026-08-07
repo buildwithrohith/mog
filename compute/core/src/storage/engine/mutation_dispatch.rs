@@ -11,9 +11,102 @@ use super::format_inference::is_formula_parse_input;
 use super::mutation::{self, EngineMutation, MutationOutput};
 use super::mutation_coordinator::SheetLifecycleHistoryHint;
 use super::stores::EngineStores;
-use super::{YrsComputeEngine, services, validation};
+use super::{YrsComputeEngine, construction, services, validation};
 
 type RawCellEdit = (SheetId, CellId, u32, u32, CellValue, Option<String>);
+
+fn prospective_formula(input: &mutation::CellInput) -> Option<String> {
+    match input {
+        mutation::CellInput::Parse { text } if text.trim_start().starts_with('=') => {
+            Some(text.clone())
+        }
+        _ => None,
+    }
+}
+
+/// Row 4 deliberately admits only the central calculation-bearing cell
+/// variants. Formatting, features, structural edits, and workbook mutations
+/// remain fail-closed for row 5 routing.
+fn deferred_calculation_edits(
+    mutation: &EngineMutation,
+) -> Option<Vec<construction::DeferredCalculationEdit>> {
+    match mutation {
+        EngineMutation::SetCell {
+            sheet_id, input, ..
+        } => Some(vec![construction::DeferredCalculationEdit {
+            sheet_id: *sheet_id,
+            prospective_formula: prospective_formula(input),
+        }]),
+        EngineMutation::SetCells { edits, .. } => Some(
+            edits
+                .iter()
+                .map(
+                    |(sheet_id, _, _, _, input)| construction::DeferredCalculationEdit {
+                        sheet_id: *sheet_id,
+                        prospective_formula: prospective_formula(input),
+                    },
+                )
+                .collect(),
+        ),
+        EngineMutation::SetCellsByPosition { edits, .. } => Some(
+            edits
+                .iter()
+                .map(
+                    |(sheet_id, _, _, input)| construction::DeferredCalculationEdit {
+                        sheet_id: *sheet_id,
+                        prospective_formula: prospective_formula(input),
+                    },
+                )
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
+fn deferred_replay_candidates(
+    mutation: &EngineMutation,
+) -> Option<(
+    Vec<(SheetId, u32, u32, mutation::CellInput)>,
+    bool,
+    construction::DeferredCommittedCellEditKind,
+)> {
+    match mutation {
+        EngineMutation::SetCell {
+            sheet_id,
+            row,
+            col,
+            input,
+            ..
+        } => Some((
+            vec![(*sheet_id, *row, *col, input.clone())],
+            false,
+            construction::DeferredCommittedCellEditKind::SetCell,
+        )),
+        EngineMutation::SetCells {
+            edits,
+            skip_cycle_check,
+        } => Some((
+            edits
+                .iter()
+                .map(|(sheet_id, _, row, col, input)| (*sheet_id, *row, *col, input.clone()))
+                .collect(),
+            *skip_cycle_check,
+            construction::DeferredCommittedCellEditKind::SetCells,
+        )),
+        EngineMutation::SetCellsByPosition {
+            edits,
+            skip_cycle_check,
+        } => Some((
+            edits
+                .iter()
+                .map(|(sheet_id, row, col, input)| (*sheet_id, *row, *col, input.clone()))
+                .collect(),
+            *skip_cycle_check,
+            construction::DeferredCommittedCellEditKind::SetCellsByPosition,
+        )),
+        _ => None,
+    }
+}
 
 fn materialize_data_table_body_edits(
     stores: &mut EngineStores,
@@ -80,9 +173,56 @@ impl YrsComputeEngine {
     ) -> Result<MutationOutput, ComputeError> {
         validation::validate_mutation(&mutation, self)?;
 
-        self.with_undo_group_if(mutation.should_auto_group_undo(), |engine| {
+        let Some(deferred_edits) = deferred_calculation_edits(&mutation) else {
+            return self.with_undo_group_if(mutation.should_auto_group_undo(), |engine| {
+                engine.apply_mutation_inner(mutation)
+            });
+        };
+        let (replay_candidates, replay_skip_cycle_check, replay_kind) =
+            deferred_replay_candidates(&mutation)
+                .expect("calculation edits always have replay candidates");
+
+        // Resolve every blocker and hydrate/register the full closure before
+        // opening an undo group or entering any user-origin write path.
+        let required = construction::prepare_deferred_calculation_edit(self, &deferred_edits)?;
+        let prior_admission = self
+            .stores
+            .compute
+            .begin_deferred_partial_graph_edit_admission(&required)?;
+        let result = self.with_undo_group_if(mutation.should_auto_group_undo(), |engine| {
             engine.apply_mutation_inner(mutation)
-        })
+        });
+        self.stores
+            .compute
+            .restore_deferred_partial_graph_edit_admission(prior_admission);
+        if result.is_ok() && self.deferred_hydration.is_some() {
+            let committed = replay_candidates
+                .into_iter()
+                .filter_map(|(sheet_id, row, col, input)| {
+                    services::cell_editing::find_cell_id_at(&self.stores, &sheet_id, row, col).map(
+                        |cell_id| construction::DeferredCommittedCellEdit {
+                            sheet_id,
+                            cell_id,
+                            row,
+                            col,
+                            input,
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            if !committed.is_empty() {
+                self.deferred_hydration
+                    .as_mut()
+                    .expect("deferred state checked above")
+                    .committed_cell_edit_batches
+                    .push(construction::DeferredCommittedCellEditBatch {
+                        edits: committed,
+                        skip_cycle_check: replay_skip_cycle_check,
+                        kind: replay_kind,
+                    });
+            }
+        }
+        result
     }
 
     fn apply_mutation_inner(
@@ -97,9 +237,28 @@ impl YrsComputeEngine {
                 col,
                 input,
             } => {
-                let (_patches, mutation_result) =
-                    self.set_cell(&sheet_id, cell_id, row, col, input)?;
-                MutationOutput::Recalc(mutation_result)
+                let should_apply_formula_format = is_formula_parse_input(&input);
+                let mut recalc = services::cell_editing::set_cell(
+                    &mut self.stores,
+                    &mut self.mirror,
+                    &mut self.mutation,
+                    &sheet_id,
+                    cell_id,
+                    row,
+                    col,
+                    &input,
+                )?;
+                let format_result = if should_apply_formula_format {
+                    self.apply_formula_inherited_number_formats(&[(sheet_id, row, col)])?
+                } else {
+                    MutationResult::empty()
+                };
+                self.prepare_recalc_for_flush(&mut recalc);
+                let mut result = MutationResult::from_recalc(recalc);
+                result
+                    .property_changes
+                    .extend(format_result.property_changes);
+                MutationOutput::Recalc(result)
             }
 
             EngineMutation::SetCells {
