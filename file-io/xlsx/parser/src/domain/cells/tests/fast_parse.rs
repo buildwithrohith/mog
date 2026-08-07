@@ -2,8 +2,7 @@ use crate::domain::cells::{
     CELL_TYPE_BOOL, CELL_TYPE_ERROR, CELL_TYPE_FORMULA_STRING, CELL_TYPE_NUMBER, CELL_TYPE_STRING,
     CellData, FastParseDiagnosticCode, FastParseDiagnostics, ParseExtras,
     VALUE_TYPE_CACHED_FORMULA, VALUE_TYPE_FORMULA, VALUE_TYPE_INLINE, VALUE_TYPE_SHARED_STRING,
-    parse_worksheet_fast,
-    parse_worksheet_fast_with_extras,
+    parse_worksheet_fast, parse_worksheet_fast_with_extras,
 };
 
 fn value_bytes<'a>(cell: &CellData, strings: &'a [u8]) -> &'a [u8] {
@@ -179,7 +178,10 @@ fn invalid_cell_reference_is_skipped_without_misplacing_neighbors() {
     assert_eq!(cells[1].get_col(), 2);
     assert_eq!(value_bytes(&cells[0], &strings), b"1");
     assert_eq!(value_bytes(&cells[1], &strings), b"3");
-    assert_eq!(diagnostics.count(FastParseDiagnosticCode::InvalidCellReference), 2);
+    assert_eq!(
+        diagnostics.count(FastParseDiagnosticCode::InvalidCellReference),
+        2
+    );
 }
 
 #[test]
@@ -209,7 +211,10 @@ fn invalid_shared_string_index_uses_ref_placeholder_and_records_diagnostic() {
     assert_eq!(value_bytes(&cells[0], &strings), b"#REF!");
     assert_eq!(value_bytes(&cells[1], &strings), b"2");
     assert_eq!(cells[0].get_value_type(), VALUE_TYPE_INLINE);
-    assert_eq!(diagnostics.count(FastParseDiagnosticCode::InvalidSharedStringIndex), 1);
+    assert_eq!(
+        diagnostics.count(FastParseDiagnosticCode::InvalidSharedStringIndex),
+        1
+    );
 }
 
 #[test]

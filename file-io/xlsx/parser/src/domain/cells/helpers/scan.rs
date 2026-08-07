@@ -8,9 +8,7 @@ use super::super::types::{
 };
 use super::a1::parse_a1_reference;
 use super::bytes::parse_u32;
-use super::tags::{
-    closing_tag_at, find_closing_tag_span, find_start_tag, start_tag_at,
-};
+use super::tags::{closing_tag_at, find_closing_tag_span, find_start_tag, start_tag_at};
 use super::value::{extract_formula_forward, extract_inline_string_owned_forward};
 
 pub(crate) struct ScanResult {
@@ -240,15 +238,13 @@ pub(crate) fn scan_cell<'a, T: SharedStringLookup + ?Sized>(
             }
 
             match b {
-                b'r' => {
-                    match parse_a1_reference(&xml[val_start..val_end]) {
-                        Some((r, c)) => {
-                            row = r;
-                            col = c;
-                        }
-                        None => invalid_cell_ref = true,
+                b'r' => match parse_a1_reference(&xml[val_start..val_end]) {
+                    Some((r, c)) => {
+                        row = r;
+                        col = c;
                     }
-                }
+                    None => invalid_cell_ref = true,
+                },
                 b's' => {
                     has_explicit_s = true;
                     let mut val: u16 = 0;
@@ -454,8 +450,8 @@ pub(crate) fn scan_cell<'a, T: SharedStringLookup + ?Sized>(
                 // The fast path normally avoids this scan; this guard only
                 // runs for the fallback shape where the close was not adjacent
                 // to the last recognized child element.
-                let next_cell_before_close = find_start_tag(xml, b"c", body_start)
-                    .is_some_and(|next| next.lt < close.lt);
+                let next_cell_before_close =
+                    find_start_tag(xml, b"c", body_start).is_some_and(|next| next.lt < close.lt);
                 let next_row_before_close = find_closing_tag_span(xml, b"row", body_start)
                     .is_some_and(|next| next.lt < close.lt);
                 if next_cell_before_close || next_row_before_close {
