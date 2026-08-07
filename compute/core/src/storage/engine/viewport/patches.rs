@@ -16,7 +16,7 @@ use compute_document::hex::id_to_hex;
 use compute_wire::PaletteSnapshot;
 use compute_wire::mutation::CfColorOverrides;
 use domain_types::CellFormat;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use snapshot_types::RecalcResult;
 use value_types::CellValue;
 
@@ -278,16 +278,25 @@ impl YrsComputeEngine {
         rows: &[u32],
         cols: &[u32],
     ) -> Vec<u8> {
-        let mut positions: FxHashSet<(u32, u32)> = FxHashSet::default();
+        // Collect inclusive column strips keyed by row. A row format adds one
+        // full horizontal strip; a column format adds singleton vertical
+        // strips for each row in the viewport. Keeping strips until the final
+        // materialization avoids one hash insertion per visible cell.
+        let mut strips_by_row: FxHashMap<u32, Vec<(u32, u32)>> = FxHashMap::default();
 
         for (_viewport_id, bounds) in self.viewport.viewports_for_sheet(sheet_id) {
+            if bounds.start_row > bounds.end_row || bounds.start_col > bounds.end_col {
+                continue;
+            }
+
             for &row in rows {
                 if row < bounds.start_row || row > bounds.end_row {
                     continue;
                 }
-                for col in bounds.start_col..=bounds.end_col {
-                    positions.insert((row, col));
-                }
+                strips_by_row
+                    .entry(row)
+                    .or_default()
+                    .push((bounds.start_col, bounds.end_col));
             }
 
             for &col in cols {
@@ -295,17 +304,44 @@ impl YrsComputeEngine {
                     continue;
                 }
                 for row in bounds.start_row..=bounds.end_row {
-                    positions.insert((row, col));
+                    strips_by_row.entry(row).or_default().push((col, col));
                 }
             }
         }
 
-        if positions.is_empty() {
+        if strips_by_row.is_empty() {
             return compute_wire::mutation::serialize_multi_viewport_patches(&[]);
         }
 
-        let mut positions: Vec<(u32, u32)> = positions.into_iter().collect();
-        positions.sort_unstable();
+        // FxHashMap iteration is not ordered, so sort rows explicitly to keep
+        // the same row-major order as the previous tuple sort. Merge
+        // overlapping and adjacent inclusive strips so row/column crossings,
+        // duplicate inputs, and overlapping viewports each emit one cell.
+        let mut strips_by_row: Vec<(u32, Vec<(u32, u32)>)> = strips_by_row.into_iter().collect();
+        strips_by_row.sort_unstable_by_key(|(row, _)| *row);
+
+        let mut positions = Vec::new();
+        for (row, mut strips) in strips_by_row {
+            strips.sort_unstable();
+
+            let mut merged: Vec<(u32, u32)> = Vec::with_capacity(strips.len());
+            for (start, end) in strips {
+                if let Some((_, current_end)) = merged.last_mut()
+                    && (start <= *current_end
+                        || (*current_end != u32::MAX && start == *current_end + 1))
+                {
+                    *current_end = (*current_end).max(end);
+                } else {
+                    merged.push((start, end));
+                }
+            }
+
+            for (start, end) in merged {
+                for col in start..=end {
+                    positions.push((row, col));
+                }
+            }
+        }
 
         let sheet_id_str = sheet_id.to_uuid_string();
 
