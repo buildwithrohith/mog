@@ -221,20 +221,30 @@ fn canonicalize_effective_fill(mut format: CellFormat) -> CellFormat {
 /// hydration. It sits above Mog's built-in fallback defaults and below every
 /// positional or authored style layer.
 pub(crate) fn get_workbook_base_format(storage: &YrsStorage) -> CellFormat {
+    let txn = storage.doc().transact();
+    get_workbook_base_format_with_txn(storage, &txn)
+}
+
+pub(crate) fn get_workbook_base_format_with_txn<T: yrs::ReadTxn>(
+    storage: &YrsStorage,
+    txn: &T,
+) -> CellFormat {
     let base = default_format();
-    let Some(normal) = workbook_normal_format(storage) else {
+    let Some(normal) = workbook_normal_format_with_txn(storage, txn) else {
         return base;
     };
     merge_formats(&base, &normal)
 }
 
-fn workbook_normal_format(storage: &YrsStorage) -> Option<CellFormat> {
-    let txn = storage.doc().transact();
-    let palette = match storage.workbook_map().get(&txn, KEY_STYLE_PALETTE) {
+fn workbook_normal_format_with_txn<T: yrs::ReadTxn>(
+    storage: &YrsStorage,
+    txn: &T,
+) -> Option<CellFormat> {
+    let palette = match storage.workbook_map().get(txn, KEY_STYLE_PALETTE) {
         Some(Out::YMap(map)) => map,
         _ => return None,
     };
-    match palette.get(&txn, "0") {
+    match palette.get(txn, "0") {
         Some(Out::Any(Any::String(ref fmt_json))) => {
             serde_json::from_str::<CellFormat>(fmt_json).ok()
         }

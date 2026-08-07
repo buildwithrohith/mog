@@ -10,6 +10,7 @@ use crate::storage::engine::stores::EngineStores;
 use crate::storage::sheet::{comments, hyperlinks, sparklines};
 use compute_document::hex::hex_to_id;
 use compute_wire::flags as render_flags;
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // enrich_display_text
@@ -24,6 +25,32 @@ pub(in crate::storage::engine) fn enrich_display_text(
     result: &mut RecalcResult,
     format_value_fn: &dyn Fn(&CellValue, &SheetId, u32, u32) -> String,
 ) {
+    let mut format_cache: HashMap<SheetId, HashMap<(u32, u32), domain_types::CellFormat>> =
+        HashMap::new();
+    let positions_by_sheet = result
+        .changed_cells
+        .iter()
+        .filter_map(|change| {
+            let pos = change.position.as_ref()?;
+            let sheet_id = SheetId::from_uuid_str(&change.sheet_id).ok()?;
+            Some((sheet_id, (pos.row, pos.col)))
+        })
+        .fold(
+            HashMap::<SheetId, Vec<(u32, u32)>>::new(),
+            |mut acc, (sheet, pos)| {
+                acc.entry(sheet).or_default().push(pos);
+                acc
+            },
+        );
+    for (sheet_id, positions) in positions_by_sheet {
+        format_cache.insert(
+            sheet_id.clone(),
+            resolved_formats::get_resolved_cell_formats(
+                stores, mirror, settings, &sheet_id, &positions,
+            ),
+        );
+    }
+
     for change in &mut result.changed_cells {
         let Some(pos) = change.position.clone() else {
             continue;
@@ -43,9 +70,11 @@ pub(in crate::storage::engine) fn enrich_display_text(
 
         change.display_text = Some(format_value_fn(&change.value, &sheet_id, pos.row, pos.col));
 
-        let effective_format = resolved_formats::get_resolved_cell_format(
-            stores, mirror, settings, &sheet_id, pos.row, pos.col,
-        );
+        let effective_format = format_cache
+            .get(&sheet_id)
+            .and_then(|formats| formats.get(&(pos.row, pos.col)))
+            .cloned()
+            .unwrap_or_default();
         change.number_format = Some(
             effective_format
                 .number_format
@@ -80,6 +109,38 @@ pub(in crate::storage::engine) fn enrich_metadata_flags(
 ) {
     let mut comment_cache: std::collections::HashMap<SheetId, std::collections::HashSet<u128>> =
         std::collections::HashMap::new();
+    let mut hyperlink_cache: HashMap<SheetId, HashMap<(u32, u32), Option<String>>> = HashMap::new();
+    let positions_by_sheet = recalc
+        .changed_cells
+        .iter()
+        .filter_map(|change| {
+            let pos = change.position.as_ref()?;
+            let sheet_id = SheetId::from_uuid_str(&change.sheet_id).ok()?;
+            Some((sheet_id, (pos.row, pos.col)))
+        })
+        .fold(
+            HashMap::<SheetId, Vec<(u32, u32)>>::new(),
+            |mut acc, (sheet, pos)| {
+                acc.entry(sheet).or_default().push(pos);
+                acc
+            },
+        );
+    for (sheet_id, positions) in positions_by_sheet {
+        let cache = stores
+            .grid_indexes
+            .get(&sheet_id)
+            .map(|grid| {
+                hyperlinks::get_hyperlinks_for_positions(
+                    stores.storage.doc(),
+                    stores.storage.sheets(),
+                    &sheet_id,
+                    grid,
+                    &positions,
+                )
+            })
+            .unwrap_or_else(|| positions.into_iter().map(|pos| (pos, None)).collect());
+        hyperlink_cache.insert(sheet_id, cache);
+    }
 
     for change in &mut recalc.changed_cells {
         let Some(pos) = change.position.clone() else {
@@ -148,15 +209,10 @@ pub(in crate::storage::engine) fn enrich_metadata_flags(
         }
 
         // --- HAS_HYPERLINK ---
-        if let Some(grid) = stores.grid_indexes.get(&sheet_id)
-            && hyperlinks::get_hyperlink(
-                stores.storage.doc(),
-                stores.storage.sheets(),
-                &sheet_id,
-                grid,
-                pos.row,
-                pos.col,
-            )
+        if hyperlink_cache
+            .get(&sheet_id)
+            .and_then(|cache| cache.get(&(pos.row, pos.col)))
+            .and_then(|url| url.as_ref())
             .is_some()
         {
             change.extra_flags |= render_flags::HAS_HYPERLINK;
