@@ -19,6 +19,7 @@ pub(super) fn parse_worksheet_core(
 ) -> usize {
     let mut cell_idx = 0;
     let mut pos = 0;
+    let resolve_shared_strings = extras.is_none();
 
     let sheet_data_bounds = match find_sheet_data_bounds(xml, pos) {
         Some(bounds) => bounds,
@@ -68,6 +69,7 @@ pub(super) fn parse_worksheet_core(
                     cell_start,
                     current_row,
                     shared_strings,
+                    resolve_shared_strings,
                     strings,
                     current_row_style,
                     col_styles,

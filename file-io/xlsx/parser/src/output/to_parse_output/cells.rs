@@ -3,6 +3,7 @@
 use super::StrInternPool;
 
 use std::fmt::{self, Write as _};
+use std::sync::Arc;
 
 use domain_types::{
     CellData, CellDataExtras, FormulaCacheProvenance, FormulaCacheState,
@@ -244,7 +245,8 @@ pub(super) fn convert_cell_with_projection_role_and_provenance(
     // have cell_formula.is_some() but formula.is_none() (no formula text).
     let has_empty_cached_value =
         (is_formula || cell.formula.is_some() || cell.cell_formula.is_some())
-            && cell.value.as_ref().map_or(false, |v| v.is_empty())
+            && (cell.value.as_ref().is_some_and(String::is_empty)
+                || cell.sst_resolved.as_deref().is_some_and(str::is_empty))
             && cell.cached_value_type == 0;
     let is_formula_cell = is_formula || cell.formula.is_some() || cell.cell_formula.is_some();
 
@@ -296,7 +298,10 @@ pub(super) fn convert_cell_with_projection_role_and_provenance(
         original_value: if can_drop_sst_provenance || can_drop_numeric_original_value {
             None
         } else {
-            cell.value.clone()
+            cell.sst_resolved
+                .as_deref()
+                .map(str::to_owned)
+                .or_else(|| cell.value.clone())
         },
     };
 
@@ -327,7 +332,12 @@ fn formula_cache_provenance(
 
     let cached_value_presence = if has_empty_cached_value {
         FormulaCachedValuePresence::ExplicitEmpty
-    } else if cell.value.as_ref().is_some_and(|value| !value.is_empty()) {
+    } else if cell.value.as_ref().is_some_and(|value| !value.is_empty())
+        || cell
+            .sst_resolved
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+    {
         FormulaCachedValuePresence::NonEmpty
     } else {
         FormulaCachedValuePresence::Absent
@@ -338,6 +348,7 @@ fn formula_cache_provenance(
         && cached_value_kind.is_none()
         && cached_value_presence.is_absent()
         && cell.value.is_none()
+        && cell.sst_resolved.is_none()
     {
         return FormulaCacheProvenance::default();
     }
@@ -347,7 +358,11 @@ fn formula_cache_provenance(
         force_recalc: cell.force_recalc,
         cached_value_kind,
         cached_value_presence,
-        cached_value_lexeme: cell.value.clone(),
+        cached_value_lexeme: cell
+            .sst_resolved
+            .as_deref()
+            .map(str::to_owned)
+            .or_else(|| cell.value.clone()),
         formula_identity_fingerprint: cell.formula.clone(),
         ..Default::default()
     }
@@ -503,9 +518,14 @@ pub(super) fn resolve_cell_value(
             }
         }
         CELL_TYPE_STRING => cell
-            .value
+            .sst_resolved
             .as_ref()
-            .map(|v| CellValue::Text(string_pool.intern(v)))
+            .map(|value| CellValue::Text(Arc::clone(value)))
+            .or_else(|| {
+                cell.value
+                    .as_ref()
+                    .map(|value| CellValue::Text(string_pool.intern(value)))
+            })
             .unwrap_or_else(|| CellValue::Text(string_pool.intern(""))),
         CELL_TYPE_DATE => cell
             .value
@@ -537,13 +557,17 @@ pub(super) fn resolve_formula_cached_value(
     cell: &FullCellData,
     string_pool: &mut StrInternPool,
 ) -> CellValue {
-    let value_str = match &cell.value {
-        Some(v) => v,
-        None => return CellValue::Null,
+    let value_str = cell.sst_resolved.as_deref().or(cell.value.as_deref());
+    let Some(value_str) = value_str else {
+        return CellValue::Null;
     };
 
     match cell.cached_value_type {
-        CACHED_VALUE_TYPE_STRING => CellValue::Text(string_pool.intern(value_str)),
+        CACHED_VALUE_TYPE_STRING => CellValue::Text(
+            cell.sst_resolved
+                .clone()
+                .unwrap_or_else(|| string_pool.intern(value_str)),
+        ),
         CACHED_VALUE_TYPE_ERROR => CellValue::Error(parse_error_code(value_str), None),
         CACHED_VALUE_TYPE_BOOL => {
             CellValue::Boolean(value_str == "1" || value_str.eq_ignore_ascii_case("true"))
@@ -554,7 +578,11 @@ pub(super) fn resolve_formula_cached_value(
             match value_str.parse::<f64>().ok() {
                 Some(n) => CellValue::number(n),
                 None if value_str.is_empty() => CellValue::Null,
-                None => CellValue::Text(string_pool.intern(value_str)),
+                None => CellValue::Text(
+                    cell.sst_resolved
+                        .clone()
+                        .unwrap_or_else(|| string_pool.intern(value_str)),
+                ),
             }
         }
     }

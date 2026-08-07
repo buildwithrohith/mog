@@ -1,6 +1,7 @@
 //! Conversion from fast worksheet cell buffers into full-parse cell output.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::domain::cells::helpers::{expand_formula_references, tokenize_formula_references};
 use crate::domain::cells::{
@@ -206,17 +207,38 @@ pub(crate) fn convert_cell_data(
         preserve_space_formula: false,
         preserve_space_value: false,
         sst_index: None,
+        sst_resolved: None,
         has_explicit_style: false,
     }
 }
 
 /// Apply the extras collected during the first parse pass to the FullCellData array.
+#[cfg(test)]
 pub(crate) fn apply_parse_extras(
     cells: &mut [FullCellData],
     extras: &ParseExtras,
     cells_buffer: &[CellData],
     strings_buffer: &[u8],
     shared_strings: &[String],
+) {
+    apply_parse_extras_with_arcs(
+        cells,
+        extras,
+        cells_buffer,
+        strings_buffer,
+        shared_strings,
+        &[],
+    );
+}
+
+/// Apply parse extras while retaining workbook-scoped resolved SST arcs.
+pub(crate) fn apply_parse_extras_with_arcs(
+    cells: &mut [FullCellData],
+    extras: &ParseExtras,
+    cells_buffer: &[CellData],
+    strings_buffer: &[u8],
+    shared_strings: &[String],
+    shared_string_arcs: &[Arc<str>],
 ) {
     let mut decode_buf = Vec::new();
     for &(cell_idx, offset, len) in &extras.cached_values {
@@ -228,26 +250,26 @@ pub(crate) fn apply_parse_extras(
             let end = (start + len as usize).min(strings_buffer.len());
             if start <= strings_buffer.len() {
                 let value_bytes = &strings_buffer[start..end];
-                let value_str = decode_xstring_to_string(value_bytes, &mut decode_buf);
-
                 if cell_idx < cells_buffer.len() {
                     let cd = cells_buffer[cell_idx];
                     if cd.cell_type == CELL_TYPE_STRING {
-                        let resolved = value_str
-                            .parse::<usize>()
+                        let resolved_idx = std::str::from_utf8(value_bytes)
                             .ok()
-                            .and_then(|idx| shared_strings.get(idx).cloned());
-                        if let Some(s) = resolved {
-                            cells[cell_idx].value = Some(s);
-                        } else {
-                            cells[cell_idx].value = Some(value_str.clone());
+                            .and_then(|value| value.parse::<usize>().ok());
+                        if let Some(idx) = resolved_idx {
+                            if let Some(s) = shared_string_arcs.get(idx) {
+                                cells[cell_idx].sst_resolved = Some(Arc::clone(s));
+                                continue;
+                            }
+                            if let Some(s) = shared_strings.get(idx) {
+                                cells[cell_idx].value = Some(s.clone());
+                                continue;
+                            }
                         }
-                    } else {
-                        cells[cell_idx].value = Some(value_str.clone());
                     }
-                } else {
-                    cells[cell_idx].value = Some(value_str.clone());
                 }
+                let value_str = decode_xstring_to_string(value_bytes, &mut decode_buf);
+                cells[cell_idx].value = Some(value_str);
             }
         }
     }
@@ -318,6 +340,9 @@ pub(crate) fn apply_parse_extras(
     for &(cell_idx, sst_idx) in &extras.sst_indices {
         if cell_idx < cells.len() {
             cells[cell_idx].sst_index = Some(sst_idx);
+            if let Some(s) = shared_string_arcs.get(sst_idx as usize) {
+                cells[cell_idx].sst_resolved = Some(Arc::clone(s));
+            }
         }
     }
     for &cell_idx in &extras.explicit_style_cells {
@@ -524,6 +549,7 @@ mod tests {
             preserve_space_formula: false,
             preserve_space_value: false,
             sst_index: None,
+            sst_resolved: None,
             has_explicit_style: false,
         }
     }

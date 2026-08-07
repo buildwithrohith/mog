@@ -29,6 +29,7 @@ pub(super) fn extent_test_cell(row: u32, col: u32) -> FullCellData {
         preserve_space_formula: false,
         preserve_space_value: false,
         sst_index: None,
+        sst_resolved: None,
         has_explicit_style: false,
     }
 }
@@ -63,6 +64,7 @@ pub(super) fn test_cell(
         preserve_space_formula: false,
         preserve_space_value: false,
         sst_index: None,
+        sst_resolved: None,
         has_explicit_style: false,
     }
 }
@@ -91,6 +93,7 @@ pub(super) fn empty_style_cell(
         preserve_space_formula: false,
         preserve_space_value: false,
         sst_index: None,
+        sst_resolved: None,
         has_explicit_style,
     }
 }
