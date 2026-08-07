@@ -7,18 +7,16 @@ impl CellMirror {
     /// Clear the mirror's position-keyed state at `pos` on `sheet_id` without
     /// disturbing the CellId-keyed maps. Used by same-sheet `relocate_cells`,
     /// where a moved CellId now lives at a NEW position but the OLD position
-    /// still holds stale entries in `pos_to_id` / `col_data` because
-    /// `apply_edit` only writes the destination side. `id_to_pos` and `cells`
-    /// already reflect the new position (the move's `apply_edit` overwrote
-    /// them) and must NOT be touched here - the cell hasn't been deleted,
-    /// just relocated.
+    /// still holds stale entries in `pos_to_id` / `col_data` because an older
+    /// move path wrote only the destination side. The CellId-keyed `cells`
+    /// entry remains alive (the cell has moved, not been deleted), while the
+    /// forward mapping is explicitly vacated here.
     ///
     /// No-op if the position holds no entry.
     pub fn vacate_position(&mut self, sheet_id: &SheetId, pos: SheetPos) {
         let mut invalidate_col: Option<u32> = None;
         if let Some(s) = self.sheets.get_mut(sheet_id) {
-            // Drop the position->id mapping. Don't touch id_to_pos / cells:
-            // those already point at the moved cell's new position.
+            // Drop only the old position->id mapping; the cell entry remains.
             if s.remove_forward_position(pos).is_some() {
                 invalidate_col = Some(pos.col());
             }
@@ -36,13 +34,12 @@ impl CellMirror {
         }
     }
 
-    /// Update the id_to_pos entry for a cell without touching pos_to_id or
-    /// col_data.  Used after a yrs gridIndex change is detected (e.g. undo of
-    /// same-sheet relocate_cells) to pre-warm the mirror position so that
-    /// apply_cell_changes resolves the correct new position when it runs.
+    /// Register the new forward position for a cell after a yrs gridIndex
+    /// change is detected (e.g. undo of same-sheet relocate_cells), so
+    /// `apply_cell_changes` resolves the correct position when it runs.
     ///
     /// Callers should call `vacate_position(old_pos)` first to clean up the
-    /// stale pos_to_id / col_data slot at the former position.
+    /// stale forward / col_data slot at the former position.
     pub fn update_id_to_pos(&mut self, sheet_id: &SheetId, cell_id: CellId, new_pos: SheetPos) {
         if let Some(s) = self.sheets.get_mut(sheet_id) {
             s.update_reverse_position(cell_id, new_pos);
@@ -52,7 +49,8 @@ impl CellMirror {
     /// Synchronize the position-keyed mirror state for an existing CellId after
     /// a yrs gridIndex-only move. Cell payloads are keyed by CellId and may not
     /// fire a separate cell observer event, so position-only undo/redo still
-    /// needs to repopulate `pos_to_id` and `col_data` from the existing entry.
+    /// needs to repopulate the forward mapping and `col_data` from the
+    /// existing entry.
     pub fn sync_cell_position_mapping(
         &mut self,
         sheet_id: &SheetId,

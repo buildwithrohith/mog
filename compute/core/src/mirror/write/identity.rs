@@ -11,7 +11,8 @@ impl CellMirror {
     /// Otherwise, a new unique CellId is created via the allocator and registered.
     ///
     /// For positions within an active projection, the CellId is registered in
-    /// the identity maps (`pos_to_id`, `id_to_pos`, `cells`, `cell_to_sheet`)
+    /// the identity maps (`pos_to_id`, lazy reverse cache, `cells`,
+    /// `cell_to_sheet`)
     /// but `col_data` is NOT touched - the projected value written by
     /// `materialize_projection()` must be preserved. Ghost cells should never
     /// overwrite projected spill values.

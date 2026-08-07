@@ -1,6 +1,28 @@
 use crate::mirror::CellMirror;
 use crate::mirror::test_helpers::{make_cell_id, make_sheet_id, mirror_with_grid};
-use cell_types::{CellId, RowId, SheetPos};
+use crate::snapshot::{CellData, RangeData, SheetSnapshot, WorkbookSnapshot};
+use cell_types::{
+    CellId, ColId, PayloadEncoding, RangeAnchor, RangeId, RangeKind, RowId, SheetId, SheetPos,
+};
+use rustc_hash::FxHashSet;
+use value_types::CellValue;
+
+fn assert_position_maps_consistent(mirror: &crate::mirror::CellMirror, sheet_id: &SheetId) {
+    let sheet = mirror.get_sheet(sheet_id).unwrap();
+    let entries: Vec<(SheetPos, CellId)> = sheet
+        .position_entries()
+        .map(|(&pos, &cell_id)| (pos, cell_id))
+        .collect();
+    let mut seen_ids = FxHashSet::default();
+    for (pos, cell_id) in entries {
+        assert!(
+            seen_ids.insert(cell_id),
+            "duplicate forward position for {cell_id:?}"
+        );
+        assert_eq!(sheet.cell_id_at(pos), Some(cell_id));
+        assert_eq!(sheet.position_of(&cell_id), Some(pos));
+    }
+}
 
 #[test]
 fn test_insert_rows_shifts_positions() {
@@ -377,4 +399,96 @@ fn test_delete_all_rows_with_cells() {
     assert!(sheet.cell_id_at(SheetPos::new(0, 0)).is_none());
     assert!(sheet.position_of(&make_cell_id(100)).is_none());
     assert_eq!(sheet.rows, 7);
+}
+
+#[test]
+fn test_mixed_cell_and_range_position_maps_survive_insert_delete_shift() {
+    let sheet_id = SheetId::from_uuid_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+    let explicit_id = CellId::from_uuid_str("550e8400-e29b-41d4-a716-446655440001").unwrap();
+    let row_ids: Vec<RowId> = (0..6).map(|i| RowId::from_raw(i + 1)).collect();
+    let col_ids: Vec<ColId> = (0..4).map(|i| ColId::from_raw(i + 1)).collect();
+    let payload: Vec<u8> = (0..6).flat_map(|i| (i as f64).to_le_bytes()).collect();
+
+    let snapshot = WorkbookSnapshot {
+        sheets: vec![SheetSnapshot {
+            id: sheet_id.to_uuid_string(),
+            name: "Mixed".to_string(),
+            rows: row_ids.len() as u32,
+            cols: col_ids.len() as u32,
+            cells: vec![CellData {
+                cell_id: explicit_id.to_uuid_string(),
+                row: 5,
+                col: 0,
+                value: CellValue::number(99.0),
+                formula: None,
+                identity_formula: None,
+                array_ref: None,
+            }],
+            ranges: vec![RangeData {
+                range_id: RangeId::from_raw(1),
+                kind: RangeKind::Data,
+                anchor: RangeAnchor::Elastic {
+                    start_row: row_ids[1],
+                    end_row: row_ids[3],
+                    start_col: col_ids[1],
+                    end_col: col_ids[2],
+                },
+                encoding: PayloadEncoding::F64Le,
+                payload,
+                row_axis: None,
+                col_axis: None,
+                row_ids: row_ids[1..4].to_vec(),
+                col_ids: col_ids[1..3].to_vec(),
+            }],
+        }],
+        ..WorkbookSnapshot::default()
+    };
+
+    let mut mirror = crate::mirror::CellMirror::from_snapshot(snapshot).unwrap();
+    mirror.install_row_col_indexes(vec![(sheet_id, row_ids, col_ids)]);
+    mirror.finalize_range_hydration_for_sheet(&sheet_id);
+    assert_position_maps_consistent(&mirror, &sheet_id);
+
+    mirror.apply_structure_change(
+        &sheet_id,
+        &formula_types::StructureChange::InsertRows {
+            at: 1,
+            count: 1,
+            new_row_ids: vec![RowId::from_raw(99)],
+        },
+    );
+    assert_position_maps_consistent(&mirror, &sheet_id);
+
+    mirror.apply_structure_change(
+        &sheet_id,
+        &formula_types::StructureChange::DeleteRows {
+            at: 2,
+            count: 1,
+            deleted_cell_ids: Vec::new(),
+        },
+    );
+    assert_position_maps_consistent(&mirror, &sheet_id);
+
+    mirror.apply_structure_change(
+        &sheet_id,
+        &formula_types::StructureChange::InsertCols {
+            at: 1,
+            count: 1,
+            new_col_ids: vec![ColId::from_raw(99)],
+        },
+    );
+    assert_position_maps_consistent(&mirror, &sheet_id);
+
+    mirror.apply_structure_change(
+        &sheet_id,
+        &formula_types::StructureChange::DeleteCols {
+            at: 2,
+            count: 1,
+            deleted_cell_ids: Vec::new(),
+        },
+    );
+    assert_position_maps_consistent(&mirror, &sheet_id);
+
+    let sheet = mirror.get_sheet(&sheet_id).unwrap();
+    assert_eq!(sheet.position_of(&explicit_id), Some(SheetPos::new(5, 0)));
 }

@@ -6,6 +6,7 @@ use domain_types::CellFormat;
 use formula_types::IdentityFormula;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map;
+use std::sync::RwLock;
 use value_types::CellValue;
 
 use super::range_view::{ColDataState, RangeExtent, RangeView};
@@ -131,7 +132,44 @@ impl CellEntry {
     }
 }
 
-/// Per-sheet cell storage with bidirectional position<->identity index.
+/// Lazily derived CellId -> SheetPos index.
+///
+/// The forward positional map is authoritative. This cache is intentionally
+/// optional so sheets that only use position-based reads do not pay for a
+/// second full map, and raw bulk mutations can drop it until the next reverse
+/// lookup.
+#[derive(Debug, Clone, Default)]
+struct ReversePositionIndex {
+    /// Mutation epoch of the authoritative `pos_to_id` map.
+    epoch: u64,
+    /// Epoch represented by `positions`, when the lazy cache is populated.
+    built_epoch: Option<u64>,
+    positions: Option<FxHashMap<CellId, SheetPos>>,
+}
+
+/// Clone-isolated, thread-safe storage for the lazy reverse index.
+#[derive(Debug)]
+struct ReversePositionCache(RwLock<ReversePositionIndex>);
+
+impl Default for ReversePositionCache {
+    fn default() -> Self {
+        Self(RwLock::new(ReversePositionIndex::default()))
+    }
+}
+
+impl Clone for ReversePositionCache {
+    fn clone(&self) -> Self {
+        let index = self
+            .0
+            .read()
+            .expect("reverse position cache poisoned")
+            .clone();
+        Self(RwLock::new(index))
+    }
+}
+
+/// Per-sheet cell storage with an authoritative position->identity index and
+/// a lazy derived reverse index.
 #[derive(Debug, Clone)]
 pub struct SheetMirror {
     pub id: SheetId,
@@ -157,8 +195,8 @@ pub struct SheetMirror {
     pub(crate) cells: FxHashMap<CellId, CellEntry>,
     /// Position -> CellId index.
     pub(crate) pos_to_id: FxHashMap<SheetPos, CellId>,
-    /// CellId -> Position reverse index.
-    pub(crate) id_to_pos: FxHashMap<CellId, SheetPos>,
+    /// Lazily rebuilt CellId -> Position index; `pos_to_id` is authoritative.
+    reverse_position_index: ReversePositionCache,
     /// Column-major dense storage for fast range access. Indexed: col_data[col][row] = CellValue.
     pub(crate) col_data: FxHashMap<u32, Vec<CellValue>>,
     /// RowId -> row index within this sheet. Populated from `GridIndex` at
@@ -232,7 +270,7 @@ impl SheetMirror {
             identity_cols: cols,
             cells: FxHashMap::default(),
             pos_to_id: FxHashMap::default(),
-            id_to_pos: FxHashMap::default(),
+            reverse_position_index: ReversePositionCache::default(),
             col_data: FxHashMap::default(),
             row_to_index: FxHashMap::default(),
             col_to_index: FxHashMap::default(),
@@ -262,9 +300,10 @@ impl SheetMirror {
 
     /// Create a sheet mirror with pre-sized cell maps.
     ///
-    /// Pre-allocates `cells`, `pos_to_id`, and `id_to_pos` HashMaps to avoid
-    /// incremental rehashing during snapshot loading. For a 2M-cell workbook
-    /// this eliminates ~20 rehash cycles per HashMap.
+    /// Pre-allocates `cells` and `pos_to_id` HashMaps to avoid incremental
+    /// rehashing during snapshot loading. For a 2M-cell workbook this
+    /// eliminates ~20 rehash cycles per owned map; the reverse index remains
+    /// lazy until a CellId -> position lookup is requested.
     pub fn with_capacity(
         id: SheetId,
         name: String,
@@ -283,7 +322,7 @@ impl SheetMirror {
             identity_cols: cols,
             cells: FxHashMap::with_capacity_and_hasher(cell_capacity, Default::default()),
             pos_to_id: FxHashMap::with_capacity_and_hasher(cell_capacity, Default::default()),
-            id_to_pos: FxHashMap::with_capacity_and_hasher(cell_capacity, Default::default()),
+            reverse_position_index: ReversePositionCache::default(),
             col_data: FxHashMap::default(),
             row_to_index: FxHashMap::default(),
             col_to_index: FxHashMap::default(),
@@ -373,16 +412,40 @@ impl SheetMirror {
 
     /// Resolve a CellId to its position within this sheet.
     ///
-    /// For virtual CellIds that are not eagerly registered, attempts
-    /// reverse resolution via the row/col identity indexes.
+    /// The forward positional map is authoritative; this reverse index is
+    /// rebuilt lazily for the current mutation epoch.
     pub fn position_of(&self, cell_id: &CellId) -> Option<SheetPos> {
-        if let Some(pos) = self.id_to_pos.get(cell_id).copied() {
-            return Some(pos);
+        {
+            let reverse = self
+                .reverse_position_index
+                .0
+                .read()
+                .expect("reverse position cache poisoned");
+            if reverse.built_epoch == Some(reverse.epoch)
+                && let Some(positions) = reverse.positions.as_ref()
+            {
+                return positions.get(cell_id).copied();
+            }
         }
-        // Virtual CellIds for large Ranges may not be in id_to_pos.
-        // Resolve via row_to_index / col_to_index if the cell was derived
-        // via CellId::virtual_at.
-        None
+
+        let mut reverse = self
+            .reverse_position_index
+            .0
+            .write()
+            .expect("reverse position cache poisoned");
+        if reverse.built_epoch != Some(reverse.epoch) {
+            let mut positions =
+                FxHashMap::with_capacity_and_hasher(self.pos_to_id.len(), Default::default());
+            for (&pos, &id) in &self.pos_to_id {
+                positions.insert(id, pos);
+            }
+            reverse.positions = Some(positions);
+            reverse.built_epoch = Some(reverse.epoch);
+        }
+        reverse
+            .positions
+            .as_ref()
+            .and_then(|positions| positions.get(cell_id).copied())
     }
 
     /// Resolve a position to its CellId.
@@ -402,51 +465,124 @@ impl SheetMirror {
         Some(CellId::virtual_at(self.id, row_id, col_id))
     }
 
-    /// Insert a position mapping in both directions.
-    pub(super) fn insert_position_mapping(&mut self, pos: SheetPos, cell_id: CellId) {
-        self.pos_to_id.insert(pos, cell_id);
-        self.id_to_pos.insert(cell_id, pos);
+    /// Advance the mutation epoch while retaining a cache that a caller has
+    /// updated incrementally.
+    fn mark_position_index_changed(&self) {
+        let mut reverse = self
+            .reverse_position_index
+            .0
+            .write()
+            .expect("reverse position cache poisoned");
+        reverse.epoch = reverse.epoch.wrapping_add(1);
+        if reverse.positions.is_some() {
+            // The caller has updated the warm cache incrementally before
+            // advancing the epoch. A cold cache remains cold.
+            reverse.built_epoch = Some(reverse.epoch);
+        }
     }
 
-    /// Remove a position mapping from both directions.
+    /// Drop the derived reverse index after a raw bulk mutation.
+    pub(super) fn invalidate_position_index(&mut self) {
+        let mut reverse = self
+            .reverse_position_index
+            .0
+            .write()
+            .expect("reverse position cache poisoned");
+        reverse.epoch = reverse.epoch.wrapping_add(1);
+        reverse.positions = None;
+        reverse.built_epoch = None;
+    }
+
+    /// Insert a position mapping in the authoritative forward map.
+    pub(super) fn insert_position_mapping(&mut self, pos: SheetPos, cell_id: CellId) {
+        let previous = self.pos_to_id.insert(pos, cell_id);
+        if previous == Some(cell_id) {
+            return;
+        }
+        if let Some(positions) = self
+            .reverse_position_index
+            .0
+            .write()
+            .expect("reverse position cache poisoned")
+            .positions
+            .as_mut()
+        {
+            if let Some(previous_id) = previous {
+                positions.remove(&previous_id);
+            }
+            positions.insert(cell_id, pos);
+        }
+        self.mark_position_index_changed();
+    }
+
+    /// Remove a position mapping from the authoritative forward map.
     pub(super) fn remove_position_mapping(&mut self, pos: SheetPos) -> Option<CellId> {
         let cell_id = self.pos_to_id.remove(&pos)?;
-        self.id_to_pos.remove(&cell_id);
+        if let Some(positions) = self
+            .reverse_position_index
+            .0
+            .write()
+            .expect("reverse position cache poisoned")
+            .positions
+            .as_mut()
+        {
+            positions.remove(&cell_id);
+        }
+        self.mark_position_index_changed();
         Some(cell_id)
     }
 
-    /// Remove the position mapping for a CellId from both directions.
+    /// Remove the position mapping for a CellId from the forward map.
     pub(super) fn remove_cell_mapping(&mut self, cell_id: &CellId) -> Option<SheetPos> {
-        let pos = self.id_to_pos.remove(cell_id)?;
-        self.pos_to_id.remove(&pos);
-        Some(pos)
+        let pos = self.position_of(cell_id)?;
+        self.remove_position_mapping(pos).map(|_| pos)
     }
 
     /// Remove only the position-keyed entry.
     pub(super) fn remove_forward_position(&mut self, pos: SheetPos) -> Option<CellId> {
-        self.pos_to_id.remove(&pos)
+        self.remove_position_mapping(pos)
     }
 
-    /// Update the reverse-only entry used while a grid-index move is being
-    /// staged. The forward entry is intentionally left untouched.
+    /// Remove every forward slot currently carrying `cell_id`.
+    ///
+    /// This is used by upsert-style edits that move an ID. The scan is only
+    /// needed for that exceptional move path; normal position writes remain
+    /// direct forward-map inserts.
+    pub(super) fn remove_forward_mappings_for_cell(&mut self, cell_id: &CellId) -> Vec<SheetPos> {
+        let positions: Vec<SheetPos> = self
+            .position_entries()
+            .filter_map(|(&pos, &id)| (id == *cell_id).then_some(pos))
+            .collect();
+        if positions.is_empty() {
+            return positions;
+        }
+        for pos in &positions {
+            self.pos_to_id.remove(pos);
+        }
+        self.invalidate_position_index();
+        positions
+    }
+
+    /// Register the forward mapping used while a grid-index move is staged.
     pub(super) fn update_reverse_position(&mut self, cell_id: CellId, pos: SheetPos) {
-        self.id_to_pos.insert(cell_id, pos);
+        self.insert_position_mapping(pos, cell_id);
     }
 
-    /// Borrow the range-folding storage fields.
+    /// Borrow the forward storage fields for range folding.
+    ///
+    /// The caller must invalidate the derived reverse index after the range
+    /// helper writes directly into `pos_to_id`.
     pub(super) fn range_fold_parts(
         &mut self,
     ) -> (
         &mut FxHashMap<CellId, CellEntry>,
         &mut FxHashMap<SheetPos, CellId>,
-        &mut FxHashMap<CellId, SheetPos>,
         &FxHashMap<RowId, u32>,
         &FxHashMap<ColId, u32>,
     ) {
         (
             &mut self.cells,
             &mut self.pos_to_id,
-            &mut self.id_to_pos,
             &self.row_to_index,
             &self.col_to_index,
         )
@@ -455,6 +591,11 @@ impl SheetMirror {
     /// Iterate over the owned position mappings.
     pub(super) fn position_entries(&self) -> hash_map::Iter<'_, SheetPos, CellId> {
         self.pos_to_id.iter()
+    }
+
+    /// Count the owned position mappings without exposing the backing map.
+    pub(super) fn position_entry_count(&self) -> usize {
+        self.pos_to_id.len()
     }
 
     /// Get a cell entry by CellId.

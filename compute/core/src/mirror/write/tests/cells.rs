@@ -167,15 +167,9 @@ fn writing_col_a_does_not_affect_col_b() {
     assert_eq!(mirror.col_version(&sheet_id, 1), 0);
 }
 
-/// Reproduces a known bug: when `apply_edit` moves a CellId from position A
-/// to position B, the stale `pos_to_id[A]` entry is NOT removed. This causes
-/// two positions to resolve to the same CellId, so rendering position A
-/// returns position B's value.
-///
-/// CORRECT behavior: `apply_edit` should detect that `cell_id` already exists
-/// at a different position (via `id_to_pos`) and remove the old `pos_to_id`
-/// entry (and clear the old `col_data` slot). Until that fix lands, this test
-/// asserts the BUGGY behavior to document the issue.
+/// `apply_edit` must remove a CellId's old forward slot when an upsert moves
+/// it from position A to position B. Otherwise two positions resolve to one
+/// CellId and rendering position A returns position B's value.
 #[test]
 fn test_apply_edit_stale_pos_to_id_after_move() {
     use crate::projection::CellRender;
@@ -204,33 +198,19 @@ fn test_apply_edit_stale_pos_to_id_after_move() {
     let pos_b = SheetPos::new(15, 12);
     mirror.apply_edit(&sheet_id, cell_id, pos_b, CellValue::from("world"), None);
 
-    // id_to_pos correctly points to the new position B
+    // The derived reverse lookup points to the new position B.
     let sheet = mirror.get_sheet(&sheet_id).unwrap();
     assert_eq!(sheet.position_of(&cell_id), Some(pos_b));
 
-    // BUG: pos_to_id at position A still resolves to cell_id (stale entry).
-    // The correct behavior would be: pos_to_id should NOT contain pos_a anymore.
+    // The old forward slot and dense value are cleared.
+    assert!(sheet.cell_id_at(pos_a).is_none());
     assert_eq!(
-        sheet.cell_id_at(pos_a),
-        Some(cell_id),
-        "BUG: stale pos_to_id entry at old position A still points to the moved cell"
+        sheet.col_data[&pos_a.col()][pos_a.row() as usize],
+        CellValue::Null
     );
 
-    // BUG (user-visible): cell_render_at at position A returns "world" (the
-    // moved cell's current value) instead of Empty.
-    // Correct behavior: cell_render_at(pos_a) should return CellRender::Empty.
-    match mirror.cell_render_at(&sheet_id, pos_a.row(), pos_a.col()) {
-        CellRender::Plain(view) => {
-            assert_eq!(view.cell_id, cell_id);
-            assert_eq!(
-                *view.value,
-                CellValue::from("world"),
-                "BUG: old position A renders the moved cell's new value 'world'"
-            );
-        }
-        other => panic!(
-            "Expected CellRender::Plain (buggy stale render), got {:?}",
-            other
-        ),
-    }
+    assert!(matches!(
+        mirror.cell_render_at(&sheet_id, pos_a.row(), pos_a.col()),
+        CellRender::Empty
+    ));
 }

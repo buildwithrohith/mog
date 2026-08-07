@@ -32,8 +32,9 @@ impl CellMirror {
         // (caller-provided + ghost cells the mirror knows about that aren't
         // tracked by the caller's `GridIndex`).
         //
-        // Walking `id_to_pos` (not `pos_to_id`) catches ghost cells that
-        // share a position with a real cell but lost the `pos_to_id` slot.
+        // Walking the identity-keyed cell store and resolving through the
+        // accessor catches ghost cells that share a position with a real cell
+        // but lost their forward position slot.
         let extra_doomed: Vec<CellId> = match change {
             StructureChange::DeleteRows { at, count, .. } => self
                 .sheets
@@ -367,17 +368,21 @@ impl CellMirror {
             // Fold removed Ranges into per-cell entries.
             for range_id in &removed_range_ids {
                 if let Some(rv) = s.range_views.remove(range_id) {
-                    let (cells, pos_to_id, id_to_pos, row_to_index, col_to_index) =
-                        s.range_fold_parts();
+                    let mut folded_reverse = FxHashMap::with_capacity_and_hasher(
+                        s.position_entry_count(),
+                        Default::default(),
+                    );
+                    let (cells, pos_to_id, row_to_index, col_to_index) = s.range_fold_parts();
                     let folded = fold_range_to_cells(
                         &rv,
                         cells,
                         pos_to_id,
-                        id_to_pos,
+                        &mut folded_reverse,
                         row_to_index,
                         col_to_index,
                         sheet,
                     );
+                    s.invalidate_position_index();
                     for vid in folded {
                         self.cell_to_sheet.insert(vid, *sheet);
                     }
@@ -588,7 +593,7 @@ fn rebuild_col_data(s: &mut SheetMirror) {
     }
 }
 
-/// Shift positions in the pos_to_id and id_to_pos maps.
+/// Shift positions in the authoritative forward map.
 ///
 /// - `threshold`: positions at or after this value are shifted.
 /// - `amount`: how much to shift by.

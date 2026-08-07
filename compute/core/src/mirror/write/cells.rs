@@ -1,5 +1,6 @@
 use cell_types::{CellId, SheetId, SheetPos};
 use formula_types::IdentityFormula;
+use rustc_hash::FxHashSet;
 use value_types::CellValue;
 
 use super::{clear_col_value, write_col_value};
@@ -165,7 +166,21 @@ impl CellMirror {
             value: value.clone(),
             formula: formula.map(Box::new),
         };
+        let mut invalidate_cols: FxHashSet<u32> = FxHashSet::default();
+        invalidate_cols.insert(pos.col());
         if let Some(s) = self.sheets.get_mut(sheet_id) {
+            // An upsert can also move an existing CellId. Remove every stale
+            // forward slot before registering the destination so the derived
+            // reverse cache never has to choose between old and new positions.
+            if s.cell_id_at(pos) != Some(cell_id) {
+                for old_pos in s.remove_forward_mappings_for_cell(&cell_id) {
+                    if old_pos != pos {
+                        clear_col_value(s, old_pos);
+                        s.rebuild_col_data(old_pos.col());
+                        invalidate_cols.insert(old_pos.col());
+                    }
+                }
+            }
             s.cells.insert(cell_id, entry);
             s.insert_position_mapping(pos, cell_id);
             self.cell_to_sheet.insert(cell_id, *sheet_id);
@@ -190,9 +205,10 @@ impl CellMirror {
                 rv.override_count = rv.overrides.len() as u32;
             }
         }
-        // Invalidate dense column cache for the affected column.
-        self.dense_cache.invalidate(sheet_id, pos.col());
-        self.bump_col_version(sheet_id, pos.col());
+        for col in invalidate_cols {
+            self.dense_cache.invalidate(sheet_id, col);
+            self.bump_col_version(sheet_id, col);
+        }
     }
 
     /// Apply a batch of edits.
