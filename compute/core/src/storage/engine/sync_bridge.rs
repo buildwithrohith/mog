@@ -106,6 +106,14 @@ impl YrsComputeEngine {
 
     #[bridge::read(scope = "workbook")]
     pub fn encode_diff(&self, remote_sv: &[u8]) -> Result<Vec<u8>, ComputeError> {
+        let mirror_sheet_count = self.mirror.sheet_count();
+        if self.stores.storage.sheet_order().is_empty() && mirror_sheet_count > 0 {
+            return Err(ComputeError::InvalidInput {
+                message: format!(
+                    "sync encode_diff found inconsistent state: Yrs storage has an empty sheet order while the cell mirror reports {mirror_sheet_count} sheet(s)"
+                ),
+            });
+        }
         sync::encode_diff(self.stores.storage.doc(), remote_sv).map_err(|e| ComputeError::Eval {
             message: format!("sync encode_diff failed: {}", e),
         })

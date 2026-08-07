@@ -205,6 +205,14 @@ impl YrsComputeEngine {
                 ),
             });
         }
+        let mirror_sheet_count = self.mirror.sheet_count();
+        if self.stores.storage.sheet_order().is_empty() && mirror_sheet_count > 0 {
+            return Err(ComputeError::InvalidInput {
+                message: format!(
+                    "{operation} found inconsistent state: Yrs storage has an empty sheet order while the cell mirror reports {mirror_sheet_count} sheet(s)"
+                ),
+            });
+        }
         Ok(())
     }
 }
