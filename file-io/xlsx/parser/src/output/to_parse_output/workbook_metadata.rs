@@ -142,8 +142,8 @@ pub(super) fn imported_metadata_xml(
         generated_at_import: crate::domain::metadata::spreadsheet_xml::write_metadata_model_xml(
             metadata,
         ),
-        cell_metadata_refs: metadata_refs(sheets, |cell| cell.cell_metadata_index),
-        value_metadata_refs: metadata_refs(sheets, |cell| cell.vm),
+        cell_metadata_refs: metadata_refs(sheets, |cell| cell.cell_metadata_index()),
+        value_metadata_refs: metadata_refs(sheets, |cell| cell.vm()),
     }
 }
 

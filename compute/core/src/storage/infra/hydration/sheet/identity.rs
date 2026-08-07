@@ -10,16 +10,16 @@ use crate::storage::infra::hydration::helpers::PositionMap;
 use crate::storage::infra::hydration::{AnchoredCellIdentity, IdAllocator};
 
 pub(crate) fn cell_keeps_import_identity(cell: &domain_types::CellData) -> bool {
-    cell.formula.is_some()
+    cell.formula().is_some()
         || !cell.value.is_null()
         || cell.style_id.is_some()
-        || cell.cell_metadata_index.is_some()
-        || cell.vm.is_some()
-        || cell.formula_result_type.is_some()
-        || cell.has_empty_cached_value
-        || !cell.formula_cache_provenance.is_absent_or_unknown()
-        || cell.original_sst_index.is_some()
-        || cell.original_value.is_some()
+        || cell.cell_metadata_index().is_some()
+        || cell.vm().is_some()
+        || cell.formula_result_type().is_some()
+        || cell.has_empty_cached_value()
+        || !cell.formula_cache_provenance().is_absent_or_unknown()
+        || cell.original_sst_index().is_some()
+        || cell.original_value().is_some()
 }
 
 pub(crate) fn sheet_identity_extent(sheet: &SheetData) -> (u32, u32) {

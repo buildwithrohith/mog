@@ -572,8 +572,13 @@ fn generated_sheet(scale: &GeneratedScaleFixture, sheet_index: u32) -> SheetData
                 row,
                 col,
                 value,
-                formula,
                 style_id: None,
+                extras: formula.map(|formula| {
+                    Box::new(domain_types::CellDataExtras {
+                        formula: Some(formula),
+                        ..Default::default()
+                    })
+                }),
                 ..CellData::default()
             });
         }
@@ -638,13 +643,13 @@ fn workbook_facts(
         .sheets
         .iter()
         .flat_map(|sheet| sheet.cells.iter())
-        .filter(|cell| cell.formula.is_some())
+        .filter(|cell| cell.formula().is_some())
         .count() as u32;
     facts.formulas.array_formula_cells = output
         .sheets
         .iter()
         .flat_map(|sheet| sheet.cells.iter())
-        .filter(|cell| cell.array_ref.is_some())
+        .filter(|cell| cell.array_ref().is_some())
         .count() as u32;
     facts.package = package_facts(exported, output.calculation.calc_id.is_some());
     facts.normalized()
@@ -665,7 +670,7 @@ fn sheet_facts(index: usize, sheet: &SheetData) -> SheetFacts {
         formula_cell_count: sheet
             .cells
             .iter()
-            .filter(|cell| cell.formula.is_some())
+            .filter(|cell| cell.formula().is_some())
             .count() as u32,
         number_cell_count: sheet
             .cells

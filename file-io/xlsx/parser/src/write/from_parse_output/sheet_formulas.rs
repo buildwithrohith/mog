@@ -109,7 +109,7 @@ pub(super) fn shared_formula_export_plan(cells: &[DomainCellData]) -> SharedForm
     for cell in cells {
         cells_by_pos.insert((cell.row, cell.col), cell);
 
-        let Some(formula) = cell.cell_formula.as_ref() else {
+        let Some(formula) = cell.cell_formula() else {
             continue;
         };
         if formula.t != CellFormulaType::Shared {
@@ -191,8 +191,7 @@ fn validate_shared_formula_candidate(
 
     let master = candidate.masters[0];
     let master_formula = master
-        .cell_formula
-        .as_ref()
+        .cell_formula()
         .expect("shared formula master came from cell metadata");
 
     if has_unsupported_shared_formula_attributes(master_formula) {
@@ -219,7 +218,8 @@ fn validate_shared_formula_candidate(
         return Err(candidate_diagnostic(candidate, "invalid_ref"));
     }
 
-    let Some(current_master_formula) = master.formula.as_deref() else {
+    let current_master_formula = master.formula().map(String::as_str);
+    let Some(current_master_formula) = current_master_formula else {
         return Err(candidate_diagnostic(candidate, "missing_live_formula"));
     };
     if !formulas_match(current_master_formula, &master_formula.text) {
@@ -233,10 +233,11 @@ fn validate_shared_formula_candidate(
             let Some(cell) = cells_by_pos.get(&(row, col)).copied() else {
                 return Err(candidate_diagnostic(candidate, "missing_follower"));
             };
-            let Some(current_formula) = cell.formula.as_deref() else {
+            let current_formula = cell.formula().map(String::as_str);
+            let Some(current_formula) = current_formula else {
                 return Err(candidate_diagnostic(candidate, "missing_live_formula"));
             };
-            let Some(cell_formula) = cell.cell_formula.as_ref() else {
+            let Some(cell_formula) = cell.cell_formula() else {
                 return Err(candidate_diagnostic(candidate, "conflicting_formula_owner"));
             };
             if cell_formula.t != CellFormulaType::Shared || cell_formula.si != Some(candidate.si) {
@@ -324,7 +325,7 @@ fn candidate_diagnostic(
         Some(candidate.si),
         master.map(|cell| (cell.row, cell.col)),
         master
-            .and_then(|cell| cell.cell_formula.as_ref())
+            .and_then(|cell| cell.cell_formula())
             .and_then(|formula| formula.r#ref.clone()),
         SharedFormulaDisposition::Decompacted(reason),
         candidate
@@ -352,8 +353,7 @@ fn shared_formula_diagnostic(
 }
 
 pub(super) fn current_formula_metadata(cell: &DomainCellData) -> Option<&CellFormula> {
-    cell.cell_formula
-        .as_ref()
+    cell.cell_formula()
         .filter(|formula| current_formula_metadata_matches_current_cell(cell, formula))
 }
 
@@ -381,13 +381,14 @@ fn current_array_formula_ref_matches(cell: &DomainCellData, formula: &CellFormul
         return true;
     }
 
-    cell.array_ref.as_deref().is_some_and(|array_ref| {
+    cell.array_ref().as_deref().is_some_and(|array_ref| {
         formulas_match(array_ref, ref_text) && range_starts_at(ref_text, cell.row, cell.col)
     })
 }
 
 fn formula_metadata_matches_current_cell(cell: &DomainCellData, formula: &CellFormula) -> bool {
-    let Some(current_formula) = cell.formula.as_deref() else {
+    let current_formula = cell.formula().map(String::as_str);
+    let Some(current_formula) = current_formula else {
         return false;
     };
 
@@ -448,7 +449,7 @@ pub(super) fn is_data_table_body_formula(
     if is_data_table_master {
         return false;
     }
-    cell.formula
+    cell.formula()
         .as_deref()
         .map(|formula| {
             let formula = formula.trim_start();
@@ -536,14 +537,17 @@ mod tests {
             row,
             col,
             value: DomainValue::Number(FiniteF64::must(1.0)),
-            formula: Some(formula.to_string()),
-            cell_formula: Some(CellFormula {
-                t: CellFormulaType::Shared,
-                si: Some(si),
-                r#ref: ref_range.map(str::to_string),
-                text: formula_text.to_string(),
+            extras: Some(Box::new(domain_types::CellDataExtras {
+                formula: Some(formula.to_string()),
+                cell_formula: Some(CellFormula {
+                    t: CellFormulaType::Shared,
+                    si: Some(si),
+                    r#ref: ref_range.map(str::to_string),
+                    text: formula_text.to_string(),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
+            })),
             ..Default::default()
         }
     }

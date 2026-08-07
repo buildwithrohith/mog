@@ -145,8 +145,11 @@ fn make_text_cell_with_original_sst(row: u32, col: u32, value: &str, index: u32)
         row,
         col,
         value: DomainValue::Text(Arc::from(value)),
-        original_sst_index: Some(index),
-        original_value: Some(index.to_string()),
+        extras: Some(Box::new(domain_types::CellDataExtras {
+            original_sst_index: Some(index),
+            original_value: Some(index.to_string()),
+            ..Default::default()
+        })),
         ..Default::default()
     }
 }
@@ -442,7 +445,10 @@ fn make_formula_cell(row: u32, col: u32, formula: &str, cached: DomainValue) -> 
         row,
         col,
         value: cached,
-        formula: Some(formula.to_string()),
+        extras: Some(Box::new(domain_types::CellDataExtras {
+            formula: Some(formula.to_string()),
+            ..Default::default()
+        })),
         ..Default::default()
     }
 }

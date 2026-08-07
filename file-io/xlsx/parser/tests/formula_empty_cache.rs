@@ -1,4 +1,4 @@
-use domain_types::{CellData, ParseOutput, SheetData};
+use domain_types::{CellData, CellDataExtras, ParseOutput, SheetData};
 use value_types::CellValue;
 use xlsx_parser::{XlsxArchive, write::write_xlsx_from_parse_output};
 
@@ -13,8 +13,11 @@ fn writer_regenerates_explicit_empty_formula_cached_value() {
                 row: 0,
                 col: 0,
                 value: CellValue::Null,
-                formula: Some("A2".to_string()),
-                has_empty_cached_value: true,
+                extras: Some(Box::new(CellDataExtras {
+                    formula: Some("A2".to_string()),
+                    has_empty_cached_value: true,
+                    ..Default::default()
+                })),
                 ..Default::default()
             }],
             ..Default::default()

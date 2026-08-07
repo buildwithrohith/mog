@@ -218,7 +218,7 @@ pub(in crate::storage::engine) fn parse_and_hydrate_xlsx(
             let ranged: std::collections::HashSet<(u32, u32)> = sheet_data
                 .cells
                 .iter()
-                .filter(|c| c.formula.is_some() || !c.value.is_null())
+                .filter(|c| c.formula().is_some() || !c.value.is_null())
                 .map(|c| (c.row, c.col))
                 .filter(|pos| !snap_positions.contains(pos))
                 .collect();
@@ -261,16 +261,16 @@ pub(in crate::storage::engine) fn parse_and_hydrate_xlsx(
                 if cell.style_id.is_some() {
                     ranged_style_id += 1;
                 }
-                if cell.original_value.is_some() {
+                if cell.original_value().is_some() {
                     ranged_original_value += 1;
                 }
-                if cell.original_sst_index.is_some() {
+                if cell.original_sst_index().is_some() {
                     ranged_original_sst_index += 1;
                 }
-                if cell.formula.is_some()
-                    || cell.cell_formula.is_some()
-                    || cell.formula_result_type.is_some()
-                    || cell.has_empty_cached_value
+                if cell.formula().is_some()
+                    || cell.cell_formula().is_some()
+                    || cell.formula_result_type().is_some()
+                    || cell.has_empty_cached_value()
                 {
                     ranged_formula_metadata += 1;
                 }

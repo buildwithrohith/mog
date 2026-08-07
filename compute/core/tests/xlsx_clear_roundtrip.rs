@@ -96,9 +96,9 @@ fn xlsx_clear_range_by_position_removes_formula_on_export() {
         None => {}
         Some(c) => {
             assert!(
-                c.formula.is_none(),
+                c.formula().is_none(),
                 "A2 formula must be cleared by ws.clear(); still have {:?}",
-                c.formula
+                c.formula()
             );
             assert!(
                 matches!(c.value, CellValue::Null)
@@ -138,8 +138,8 @@ fn xlsx_clear_range_bulk_removes_all_formulas() {
     let surviving: Vec<(u32, u32, Option<String>)> = sheet
         .cells
         .iter()
-        .filter(|c| c.col == 1 && c.formula.is_some())
-        .map(|c| (c.row, c.col, c.formula.clone()))
+        .filter(|c| c.col == 1 && c.formula().is_some())
+        .map(|c| (c.row, c.col, c.formula().cloned()))
         .collect();
 
     assert!(
@@ -180,9 +180,9 @@ fn xlsx_clear_range_contents_only_removes_formula_on_export() {
         None => {}
         Some(c) => {
             assert!(
-                c.formula.is_none(),
+                c.formula().is_none(),
                 "B1 formula must be cleared by clear_range (contents-only); still have {:?}",
-                c.formula
+                c.formula()
             );
         }
     }

@@ -59,7 +59,7 @@ fn modeled_formula_metadata_decorates_current_formula_cell() {
         "SUM(A2:A10)",
         DomainValue::Number(FiniteF64::new(100.0).unwrap()),
     );
-    formula_cell.cell_formula = Some(ooxml_types::worksheet::CellFormula {
+    formula_cell.extras_mut().cell_formula = Some(ooxml_types::worksheet::CellFormula {
         t: ooxml_types::worksheet::CellFormulaType::Shared,
         si: Some(7),
         r#ref: Some("A1:A1".to_string()),
@@ -88,7 +88,7 @@ fn shared_formula_range_is_preserved_when_group_matches_live_formulas() {
         "A1+1",
         DomainValue::Number(FiniteF64::new(2.0).unwrap()),
     );
-    master.cell_formula = Some(ooxml_types::worksheet::CellFormula {
+    master.extras_mut().cell_formula = Some(ooxml_types::worksheet::CellFormula {
         t: ooxml_types::worksheet::CellFormulaType::Shared,
         si: Some(7),
         r#ref: Some("A1:A2".to_string()),
@@ -101,7 +101,7 @@ fn shared_formula_range_is_preserved_when_group_matches_live_formulas() {
         "A2+1",
         DomainValue::Number(FiniteF64::new(3.0).unwrap()),
     );
-    follower.cell_formula = Some(ooxml_types::worksheet::CellFormula {
+    follower.extras_mut().cell_formula = Some(ooxml_types::worksheet::CellFormula {
         t: ooxml_types::worksheet::CellFormulaType::Shared,
         si: Some(7),
         ..Default::default()
@@ -134,7 +134,7 @@ fn array_formula_range_is_not_replayed_without_modeled_group() {
         "SUM(A2:A10)",
         DomainValue::Number(FiniteF64::new(100.0).unwrap()),
     );
-    formula_cell.cell_formula = Some(ooxml_types::worksheet::CellFormula {
+    formula_cell.extras_mut().cell_formula = Some(ooxml_types::worksheet::CellFormula {
         t: ooxml_types::worksheet::CellFormulaType::Array,
         r#ref: Some("A1:A2".to_string()),
         text: "SUM(A2:A10)".to_string(),
@@ -166,7 +166,7 @@ fn stale_shared_formula_range_decompacts_to_current_plain_formulas() {
         "SUM(A2:A10)",
         DomainValue::Number(FiniteF64::new(100.0).unwrap()),
     );
-    master.cell_formula = Some(ooxml_types::worksheet::CellFormula {
+    master.extras_mut().cell_formula = Some(ooxml_types::worksheet::CellFormula {
         t: ooxml_types::worksheet::CellFormulaType::Shared,
         si: Some(7),
         r#ref: Some("A1:A2".to_string()),
@@ -179,7 +179,7 @@ fn stale_shared_formula_range_decompacts_to_current_plain_formulas() {
         "SUM(B2:B10)",
         DomainValue::Number(FiniteF64::new(100.0).unwrap()),
     );
-    follower.cell_formula = Some(ooxml_types::worksheet::CellFormula {
+    follower.extras_mut().cell_formula = Some(ooxml_types::worksheet::CellFormula {
         t: ooxml_types::worksheet::CellFormulaType::Shared,
         si: Some(7),
         ..Default::default()
@@ -210,8 +210,8 @@ fn modeled_array_formula_range_is_preserved_when_current_array_ref_matches() {
         "SUM(A2:A10)",
         DomainValue::Number(FiniteF64::new(100.0).unwrap()),
     );
-    formula_cell.array_ref = Some("A1:A2".to_string());
-    formula_cell.cell_formula = Some(ooxml_types::worksheet::CellFormula {
+    formula_cell.extras_mut().array_ref = Some("A1:A2".to_string());
+    formula_cell.extras_mut().cell_formula = Some(ooxml_types::worksheet::CellFormula {
         t: ooxml_types::worksheet::CellFormulaType::Array,
         r#ref: Some("A1:A2".to_string()),
         text: "SUM(A2:A10)".to_string(),
@@ -241,8 +241,8 @@ fn imported_xlfn_array_formula_metadata_matches_normalized_current_formula() {
         "STDEV.S(FILTER(A2:A10,B2:B10=1))",
         DomainValue::Number(FiniteF64::new(100.0).unwrap()),
     );
-    formula_cell.array_ref = Some("A1:A2".to_string());
-    formula_cell.cell_formula = Some(ooxml_types::worksheet::CellFormula {
+    formula_cell.extras_mut().array_ref = Some("A1:A2".to_string());
+    formula_cell.extras_mut().cell_formula = Some(ooxml_types::worksheet::CellFormula {
         t: ooxml_types::worksheet::CellFormulaType::Array,
         r#ref: Some("A1:A2".to_string()),
         text: "_xlfn.STDEV.S(_xlfn._xlws.FILTER(A2:A10,B2:B10=1))".to_string(),
@@ -319,7 +319,7 @@ fn stale_data_table_formula_metadata_does_not_decorate_edited_formula_cell() {
         "SUM(B2:B10)",
         DomainValue::Number(FiniteF64::new(100.0).unwrap()),
     );
-    edited_formula_cell.cell_formula = Some(ooxml_types::worksheet::CellFormula {
+    edited_formula_cell.extras_mut().cell_formula = Some(ooxml_types::worksheet::CellFormula {
         t: ooxml_types::worksheet::CellFormulaType::DataTable,
         r#ref: Some("A1:B2".to_string()),
         r1: Some("$A$1".to_string()),

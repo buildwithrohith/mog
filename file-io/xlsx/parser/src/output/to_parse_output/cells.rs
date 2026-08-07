@@ -3,8 +3,8 @@
 use super::StrInternPool;
 
 use domain_types::{
-    CellData, FormulaCacheProvenance, FormulaCacheState, FormulaCachedValuePresence,
-    ImportedCellProjectionRole,
+    CellData, CellDataExtras, FormulaCacheProvenance, FormulaCacheState,
+    FormulaCachedValuePresence, ImportedCellProjectionRole,
 };
 use value_types::{CellError, CellValue};
 
@@ -261,10 +261,7 @@ pub(super) fn convert_cell_with_projection_role_and_provenance(
         && cell.cell_type == CELL_TYPE_NUMBER
         && numeric_original_value_is_writer_canonical(cell.value.as_deref());
 
-    CellData {
-        row: cell.row,
-        col: cell.col,
-        value,
+    let extras = CellDataExtras {
         rich_string: rich_string_for_cell(
             cell,
             shared_strings,
@@ -273,11 +270,6 @@ pub(super) fn convert_cell_with_projection_role_and_provenance(
         ),
         formula,
         array_ref: cell.array_ref.clone(),
-        style_id: if cell.style_idx > 0 || cell.has_explicit_style {
-            Some(cell.style_idx as u32)
-        } else {
-            None
-        },
         cell_formula: cell.cell_formula.clone(),
         cell_metadata_index: cell.cell_metadata_index,
         formula_result_type: if has_effective_formula_result_type {
@@ -293,7 +285,6 @@ pub(super) fn convert_cell_with_projection_role_and_provenance(
             has_effective_formula_result_type,
         ),
         vm: cell.vm,
-        phonetic: cell.phonetic,
         date_lexical_value: cell.date_lexical_value.clone(),
         original_sst_index: if can_drop_sst_provenance {
             None
@@ -305,7 +296,20 @@ pub(super) fn convert_cell_with_projection_role_and_provenance(
         } else {
             cell.value.clone()
         },
+    };
+
+    CellData {
+        row: cell.row,
+        col: cell.col,
+        value,
+        style_id: if cell.style_idx > 0 || cell.has_explicit_style {
+            Some(cell.style_idx as u32)
+        } else {
+            None
+        },
+        phonetic: cell.phonetic,
         projection_role,
+        extras: (!extras.is_empty()).then(|| Box::new(extras)),
     }
 }
 

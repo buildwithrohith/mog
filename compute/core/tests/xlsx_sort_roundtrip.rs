@@ -143,11 +143,11 @@ fn xlsx_sort_range_ascending_shifts_formula_refs() {
             .unwrap_or_else(|| panic!("missing D{}", r + 1));
         let expected = format!("A{}+C{}", r + 1, r + 1);
         assert_eq!(
-            d.formula.as_deref(),
+            d.formula().map(String::as_str),
             Some(expected.as_str()),
             "row {}: formula not shifted to row-local refs; got {:?}",
             r,
-            d.formula
+            d.formula()
         );
     }
 }
@@ -176,11 +176,11 @@ fn xlsx_sort_range_descending_shifts_formula_refs() {
             .unwrap_or_else(|| panic!("missing D{}", r + 1));
         let expected = format!("A{}+C{}", r + 1, r + 1);
         assert_eq!(
-            d.formula.as_deref(),
+            d.formula().map(String::as_str),
             Some(expected.as_str()),
             "row {}: formula not shifted to row-local refs; got {:?}",
             r,
-            d.formula
+            d.formula()
         );
     }
 }

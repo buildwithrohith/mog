@@ -8,7 +8,7 @@ use std::mem::size_of;
 
 use cell_types::CellId;
 use compute_core::mirror::CellEntry;
-use domain_types::{CellData, FormulaCacheProvenance};
+use domain_types::{CellData, CellDataExtras, FormulaCacheProvenance};
 use value_types::CellValue;
 
 #[test]
@@ -17,24 +17,35 @@ fn report_fixed_cell_type_sizes() {
         (
             "domain_types::parse_output::CellData",
             size_of::<CellData>(),
+            150,
+        ),
+        (
+            "domain_types::parse_output::CellDataExtras",
+            size_of::<CellDataExtras>(),
+            4096,
         ),
         (
             "domain_types::parse_output::FormulaCacheProvenance",
             size_of::<FormulaCacheProvenance>(),
+            4096,
         ),
-        ("compute_core::mirror::CellEntry", size_of::<CellEntry>()),
-        ("value_types::CellValue", size_of::<CellValue>()),
-        ("cell_types::CellId", size_of::<CellId>()),
+        (
+            "compute_core::mirror::CellEntry",
+            size_of::<CellEntry>(),
+            4096,
+        ),
+        ("value_types::CellValue", size_of::<CellValue>(), 4096),
+        ("cell_types::CellId", size_of::<CellId>(), 4096),
     ];
 
     println!("=== Mog fixed type size report ===");
     println!("{:<56} {:>8}", "type", "bytes");
     println!("{}", "-".repeat(67));
-    for (name, bytes) in rows {
+    for (name, bytes, ceiling) in rows {
         println!("{name:<56} {bytes:>8}");
         assert!(
-            bytes < 4096,
-            "unexpectedly large fixed type {name}: {bytes} bytes"
+            bytes < ceiling,
+            "unexpectedly large fixed type {name}: {bytes} bytes (ceiling {ceiling})"
         );
     }
 

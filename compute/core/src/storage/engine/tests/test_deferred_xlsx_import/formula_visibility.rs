@@ -20,7 +20,10 @@ fn formula_text_fixture_xlsx() -> Vec<u8> {
                     row: 0,
                     col: 1,
                     value: CellValue::number(20.0),
-                    formula: Some("=A1*2".to_string()),
+                    extras: Some(Box::new(domain_types::CellDataExtras {
+                        formula: Some("=A1*2".to_string()),
+                        ..Default::default()
+                    })),
                     ..Default::default()
                 },
             ],

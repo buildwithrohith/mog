@@ -11,8 +11,8 @@ use domain_types::domain::pivot::{
     PivotTableLayout, PivotTableStyle,
 };
 use domain_types::{
-    CalculationProperties, CellData as DtCellData, ImportedCellProjectionRole, NamedRange,
-    ParseOutput, SheetData, TableColumnSpec, TableSpec,
+    CalculationProperties, CellData as DtCellData, CellDataExtras, ImportedCellProjectionRole,
+    NamedRange, ParseOutput, SheetData, TableColumnSpec, TableSpec,
 };
 use formula_types::Scope;
 use value_types::CellValue;
@@ -34,7 +34,10 @@ fn make_parse_output() -> ParseOutput {
                     row: 1,
                     col: 0,
                     value: CellValue::number(0.0),
-                    formula: Some("=A1*2".into()),
+                    extras: Some(Box::new(CellDataExtras {
+                        formula: Some("=A1*2".into()),
+                        ..Default::default()
+                    })),
                     ..Default::default()
                 },
                 DtCellData {
@@ -128,8 +131,11 @@ fn projection_role_controls_spill_target_snapshot_filtering_not_cm() {
                     row: 0,
                     col: 0,
                     value: CellValue::number(1.0),
-                    formula: Some("=SEQUENCE(1,2)".into()),
-                    cell_metadata_index: Some(1),
+                    extras: Some(Box::new(CellDataExtras {
+                        formula: Some("=SEQUENCE(1,2)".into()),
+                        cell_metadata_index: Some(1),
+                        ..Default::default()
+                    })),
                     projection_role: ImportedCellProjectionRole::DynamicArraySource,
                     ..Default::default()
                 },
@@ -137,7 +143,10 @@ fn projection_role_controls_spill_target_snapshot_filtering_not_cm() {
                     row: 0,
                     col: 1,
                     value: CellValue::number(2.0),
-                    cell_metadata_index: Some(1),
+                    extras: Some(Box::new(CellDataExtras {
+                        cell_metadata_index: Some(1),
+                        ..Default::default()
+                    })),
                     projection_role: ImportedCellProjectionRole::DynamicArraySpillTarget,
                     ..Default::default()
                 },
@@ -145,7 +154,10 @@ fn projection_role_controls_spill_target_snapshot_filtering_not_cm() {
                     row: 5,
                     col: 5,
                     value: CellValue::number(35.676741130091997),
-                    cell_metadata_index: Some(1),
+                    extras: Some(Box::new(CellDataExtras {
+                        cell_metadata_index: Some(1),
+                        ..Default::default()
+                    })),
                     projection_role: ImportedCellProjectionRole::UnknownCellMetadata,
                     ..Default::default()
                 },
@@ -369,8 +381,11 @@ fn phantom_cells_filtered_from_snapshot() {
                     row: 0,
                     col: 0,
                     value: CellValue::Text("Business Development".into()),
-                    formula: Some("UNIQUE(C1:C100)".into()),
-                    cell_metadata_index: Some(1),
+                    extras: Some(Box::new(CellDataExtras {
+                        formula: Some("UNIQUE(C1:C100)".into()),
+                        cell_metadata_index: Some(1),
+                        ..Default::default()
+                    })),
                     projection_role: ImportedCellProjectionRole::DynamicArraySource,
                     ..Default::default()
                 },
@@ -379,8 +394,10 @@ fn phantom_cells_filtered_from_snapshot() {
                     row: 1,
                     col: 0,
                     value: CellValue::Text("Engineering".into()),
-                    formula: None,
-                    cell_metadata_index: Some(1),
+                    extras: Some(Box::new(CellDataExtras {
+                        cell_metadata_index: Some(1),
+                        ..Default::default()
+                    })),
                     projection_role: ImportedCellProjectionRole::DynamicArraySpillTarget,
                     ..Default::default()
                 },
@@ -389,8 +406,10 @@ fn phantom_cells_filtered_from_snapshot() {
                     row: 2,
                     col: 0,
                     value: CellValue::Text("Sales".into()),
-                    formula: None,
-                    cell_metadata_index: Some(1),
+                    extras: Some(Box::new(CellDataExtras {
+                        cell_metadata_index: Some(1),
+                        ..Default::default()
+                    })),
                     projection_role: ImportedCellProjectionRole::DynamicArraySpillTarget,
                     ..Default::default()
                 },
@@ -399,7 +418,6 @@ fn phantom_cells_filtered_from_snapshot() {
                     row: 0,
                     col: 1,
                     value: CellValue::number(100.0),
-                    formula: None,
                     ..Default::default()
                 },
             ],
@@ -629,7 +647,10 @@ fn named_range_creates_dependency_graph_edge() {
                     row: 0,
                     col: 0,
                     value: CellValue::number(0.0),
-                    formula: Some("=InputVal*2".into()),
+                    extras: Some(Box::new(CellDataExtras {
+                        formula: Some("=InputVal*2".into()),
+                        ..Default::default()
+                    })),
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -754,7 +775,7 @@ fn gate1_range_anchor_exclusion() {
         })
         .collect();
 
-    cells[formula_row as usize].formula = Some("=1+1".into());
+    cells[formula_row as usize].extras_mut().formula = Some("=1+1".into());
 
     let output = ParseOutput {
         sheets: vec![SheetData {
@@ -824,7 +845,7 @@ fn gate4_anchor_gap_in_middle_of_run() {
         })
         .collect();
 
-    cells[anchor_row as usize].formula = Some("=1+1".into());
+    cells[anchor_row as usize].extras_mut().formula = Some("=1+1".into());
 
     let output = ParseOutput {
         sheets: vec![SheetData {

@@ -80,7 +80,7 @@ fn read_formula_via_xlsx(engine: &YrsComputeEngine, row: u32, col: u32) -> Optio
         .cells
         .iter()
         .find(|c| c.row == row && c.col == col)
-        .and_then(|c| c.formula.clone())
+        .and_then(|c| c.formula().cloned())
 }
 
 #[test]
@@ -162,7 +162,10 @@ fn collab_formula_shift_on_insert_row_propagates() {
     for c in &sheet.cells {
         eprintln!(
             "  ({}, {}): value={:?} formula={:?}",
-            c.row, c.col, c.value, c.formula
+            c.row,
+            c.col,
+            c.value,
+            c.formula()
         );
     }
     assert_eq!(

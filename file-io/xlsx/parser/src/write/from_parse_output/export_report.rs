@@ -73,7 +73,7 @@ pub(super) fn build_export_report(output: &ParseOutput) -> ExportReport {
     let mut requires_consumer_recalc = false;
     for (sheet_idx, sheet) in output.sheets.iter().enumerate() {
         for cell in &sheet.cells {
-            let provenance = &cell.formula_cache_provenance;
+            let provenance = cell.formula_cache_provenance();
             if provenance.state.is_current() && provenance.force_recalc {
                 diagnostics.push(ExportDiagnostic {
                     code: ExportDiagnosticCode::FormulaRecalcIntentPreserved,
@@ -108,7 +108,7 @@ pub(super) fn build_export_report(output: &ParseOutput) -> ExportReport {
 pub(super) fn requires_consumer_recalc(output: &ParseOutput) -> bool {
     output.sheets.iter().any(|sheet| {
         sheet.cells.iter().any(|cell| {
-            let provenance = &cell.formula_cache_provenance;
+            let provenance = cell.formula_cache_provenance();
             matches!(provenance.state, FormulaCacheState::StaleImported)
         })
     })

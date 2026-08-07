@@ -138,12 +138,26 @@ fn deferred_full_hydration_matches_direct_xlsx_open_content() {
         let mut direct_cells: Vec<_> = direct_sheet
             .cells
             .iter()
-            .map(|cell| (cell.row, cell.col, cell.value.clone(), cell.formula.clone()))
+            .map(|cell| {
+                (
+                    cell.row,
+                    cell.col,
+                    cell.value.clone(),
+                    cell.formula().cloned(),
+                )
+            })
             .collect();
         let mut deferred_cells: Vec<_> = deferred_sheet
             .cells
             .iter()
-            .map(|cell| (cell.row, cell.col, cell.value.clone(), cell.formula.clone()))
+            .map(|cell| {
+                (
+                    cell.row,
+                    cell.col,
+                    cell.value.clone(),
+                    cell.formula().cloned(),
+                )
+            })
             .collect();
         direct_cells.sort_by_key(|cell| (cell.0, cell.1));
         deferred_cells.sort_by_key(|cell| (cell.0, cell.1));

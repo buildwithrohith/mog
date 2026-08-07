@@ -1,6 +1,9 @@
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
-use serde::{Deserialize, Serialize};
+use serde::de::Deserializer;
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::domain::floating_object::FloatingObject;
 use crate::domain::pivot::ParsedPivotTable;
@@ -1608,81 +1611,326 @@ impl ImportedCellProjectionRole {
     }
 }
 
-/// A single cell's data, position-keyed (no UUID).
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CellData {
-    pub row: u32,
-    pub col: u32,
-    pub value: CellValue,
+/// Formula and import-fidelity payloads owned by a [`CellData`] record.
+///
+/// Plain value cells keep this sidecar absent, so they pay only for the single
+/// `Option<Box<_>>` in [`CellData`]. The fields remain public because parser and
+/// hydration boundaries need to fill several payloads in one pass; readers
+/// should use [`CellData`] accessors when they only need to inspect a value.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CellDataExtras {
     /// Rich/phonetic shared-string content owned by this cell.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rich_string: Option<RichSharedString>,
     /// Formula in A1 notation (expanded text for all formula types).
     pub formula: Option<String>,
     /// Array formula master cell range.
     pub array_ref: Option<String>,
-    /// Index into `ParseOutput.style_palette`.
-    pub style_id: Option<u32>,
     /// Original OOXML formula metadata for round-trip preservation.
     /// When present, carries shared/array/dataTable formula attributes
     /// so the writer can emit the correct `<f>` element structure.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cell_formula: Option<ooxml_types::worksheet::CellFormula>,
     /// OOXML cell metadata index from the `<c cm="N">` attribute.
     ///
     /// This is the authored metadata-record reference. Projection/spill behavior
     /// is represented separately by `projection_role` after parser-owned
     /// metadata classification.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cell_metadata_index: Option<u32>,
     /// For formula cells with a string result, the OOXML `t` attribute value
     /// (e.g., `6` = "str", `4` = "e", `3` = "b"). Used for round-trip fidelity
     /// to emit the correct `t="str"` on cells whose formula evaluates to a string.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub formula_result_type: Option<u8>,
     /// Whether the formula cell had an explicit empty `<v/>` element in the original XML.
     /// When true, the writer emits `<v/>` even though the cached value is null/empty.
-    #[serde(default, skip_serializing_if = "crate::is_false")]
     pub has_empty_cached_value: bool,
     /// Typed owner for imported or Mog-computed formula-cache metadata.
     ///
     /// Legacy missing state means absent/unknown, so export must not preserve
     /// cache-only metadata such as `ca` unless this owner says it is current.
-    #[serde(
-        default,
-        skip_serializing_if = "FormulaCacheProvenance::is_absent_or_unknown"
-    )]
     pub formula_cache_provenance: FormulaCacheProvenance,
     /// Value metadata index from the `vm` attribute on the `<c>` element.
     /// Used for rich value types (linked data types, images-in-cells).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vm: Option<u32>,
-    /// Worksheet-level phonetic display flag from `ph` on the `<c>` element.
-    #[serde(default, skip_serializing_if = "crate::is_false")]
-    pub phonetic: bool,
     /// Original ISO/date lexical value from OOXML `t="d"` cells.
     ///
     /// This is distinct from numeric serial dates with date number formats.
     /// Writers emit `t="d"` only while this lexical value still matches the
     /// current cell value.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date_lexical_value: Option<String>,
     /// Original shared string table index for imported `t="s"` cells.
     ///
     /// Import provenance only. Writers must derive SST indices from current
     /// cell values/rich-string state instead of consulting this field.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_sst_index: Option<u32>,
     /// Original raw value string from the `<v>` element for round-trip fidelity.
     /// Preserves the exact numeric representation (e.g., scientific notation)
     /// that Excel wrote, so the writer can emit it back unchanged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_value: Option<String>,
+}
+
+impl CellDataExtras {
+    /// Whether this sidecar carries no formula or import-fidelity payload.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.rich_string.is_none()
+            && self.formula.is_none()
+            && self.array_ref.is_none()
+            && self.cell_formula.is_none()
+            && self.cell_metadata_index.is_none()
+            && self.formula_result_type.is_none()
+            && !self.has_empty_cached_value
+            && self.formula_cache_provenance.is_absent_or_unknown()
+            && self.vm.is_none()
+            && self.date_lexical_value.is_none()
+            && self.original_sst_index.is_none()
+            && self.original_value.is_none()
+    }
+}
+
+/// A single cell's data, position-keyed (no UUID).
+///
+/// Formula and import-fidelity fields are boxed in [`CellDataExtras`] so a
+/// plain value cell does not carry their inline `String`/`Vec`/metadata layout.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CellData {
+    pub row: u32,
+    pub col: u32,
+    pub value: CellValue,
+    /// Index into `ParseOutput.style_palette`.
+    pub style_id: Option<u32>,
     /// Parser-owned projection/spill role. Consumers must not infer deletion or
     /// storage omission from `cm` alone.
-    #[serde(default, skip_serializing_if = "ImportedCellProjectionRole::is_normal")]
     pub projection_role: ImportedCellProjectionRole,
+    /// Worksheet-level phonetic display flag from `ph` on the `<c>` element.
+    pub phonetic: bool,
+    /// Formula + import-fidelity payload; None for plain value cells.
+    pub extras: Option<Box<CellDataExtras>>,
+}
+
+impl CellData {
+    /// Borrow the optional formula/import-fidelity sidecar without allocating.
+    #[inline]
+    pub fn extras(&self) -> Option<&CellDataExtras> {
+        self.extras.as_deref()
+    }
+
+    /// Borrow the sidecar, allocating it on first write.
+    #[inline]
+    pub fn extras_mut(&mut self) -> &mut CellDataExtras {
+        self.extras
+            .get_or_insert_with(|| Box::new(CellDataExtras::default()))
+            .as_mut()
+    }
+
+    #[inline]
+    pub fn rich_string(&self) -> Option<&RichSharedString> {
+        self.extras
+            .as_ref()
+            .and_then(|extras| extras.rich_string.as_ref())
+    }
+
+    #[inline]
+    pub fn formula(&self) -> Option<&String> {
+        self.extras
+            .as_ref()
+            .and_then(|extras| extras.formula.as_ref())
+    }
+
+    #[inline]
+    pub fn array_ref(&self) -> Option<&String> {
+        self.extras
+            .as_ref()
+            .and_then(|extras| extras.array_ref.as_ref())
+    }
+
+    #[inline]
+    pub fn cell_formula(&self) -> Option<&ooxml_types::worksheet::CellFormula> {
+        self.extras
+            .as_ref()
+            .and_then(|extras| extras.cell_formula.as_ref())
+    }
+
+    #[inline]
+    pub fn cell_metadata_index(&self) -> Option<u32> {
+        self.extras
+            .as_ref()
+            .and_then(|extras| extras.cell_metadata_index)
+    }
+
+    #[inline]
+    pub fn formula_result_type(&self) -> Option<u8> {
+        self.extras
+            .as_ref()
+            .and_then(|extras| extras.formula_result_type)
+    }
+
+    #[inline]
+    pub fn has_empty_cached_value(&self) -> bool {
+        self.extras
+            .as_ref()
+            .is_some_and(|extras| extras.has_empty_cached_value)
+    }
+
+    #[inline]
+    pub fn formula_cache_provenance(&self) -> &FormulaCacheProvenance {
+        static DEFAULT: OnceLock<FormulaCacheProvenance> = OnceLock::new();
+        match self.extras.as_ref() {
+            Some(extras) => &extras.formula_cache_provenance,
+            None => DEFAULT.get_or_init(FormulaCacheProvenance::default),
+        }
+    }
+
+    #[inline]
+    pub fn vm(&self) -> Option<u32> {
+        self.extras.as_ref().and_then(|extras| extras.vm)
+    }
+
+    #[inline]
+    pub fn date_lexical_value(&self) -> Option<&String> {
+        self.extras
+            .as_ref()
+            .and_then(|extras| extras.date_lexical_value.as_ref())
+    }
+
+    #[inline]
+    pub fn original_sst_index(&self) -> Option<u32> {
+        self.extras
+            .as_ref()
+            .and_then(|extras| extras.original_sst_index)
+    }
+
+    #[inline]
+    pub fn original_value(&self) -> Option<&String> {
+        self.extras
+            .as_ref()
+            .and_then(|extras| extras.original_value.as_ref())
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CellDataWire {
+    row: u32,
+    col: u32,
+    value: CellValue,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rich_string: Option<RichSharedString>,
+    formula: Option<String>,
+    array_ref: Option<String>,
+    style_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cell_formula: Option<ooxml_types::worksheet::CellFormula>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cell_metadata_index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    formula_result_type: Option<u8>,
+    #[serde(default, skip_serializing_if = "crate::is_false")]
+    has_empty_cached_value: bool,
+    #[serde(
+        default,
+        skip_serializing_if = "FormulaCacheProvenance::is_absent_or_unknown"
+    )]
+    formula_cache_provenance: FormulaCacheProvenance,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    vm: Option<u32>,
+    #[serde(default, skip_serializing_if = "crate::is_false")]
+    phonetic: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    date_lexical_value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    original_sst_index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    original_value: Option<String>,
+    #[serde(default, skip_serializing_if = "ImportedCellProjectionRole::is_normal")]
+    projection_role: ImportedCellProjectionRole,
+}
+
+impl Serialize for CellData {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let extras = self.extras.as_deref();
+        let mut state = serializer.serialize_struct("CellData", 17)?;
+        state.serialize_field("row", &self.row)?;
+        state.serialize_field("col", &self.col)?;
+        state.serialize_field("value", &self.value)?;
+        if let Some(value) = extras.and_then(|extras| extras.rich_string.as_ref()) {
+            state.serialize_field("richString", value)?;
+        }
+        state.serialize_field(
+            "formula",
+            &extras.and_then(|extras| extras.formula.as_ref()),
+        )?;
+        state.serialize_field(
+            "arrayRef",
+            &extras.and_then(|extras| extras.array_ref.as_ref()),
+        )?;
+        state.serialize_field("styleId", &self.style_id)?;
+        if let Some(value) = extras.and_then(|extras| extras.cell_formula.as_ref()) {
+            state.serialize_field("cellFormula", value)?;
+        }
+        if let Some(value) = extras.and_then(|extras| extras.cell_metadata_index) {
+            state.serialize_field("cellMetadataIndex", &value)?;
+        }
+        if let Some(value) = extras.and_then(|extras| extras.formula_result_type) {
+            state.serialize_field("formulaResultType", &value)?;
+        }
+        if extras.is_some_and(|extras| extras.has_empty_cached_value) {
+            state.serialize_field("hasEmptyCachedValue", &true)?;
+        }
+        if let Some(value) = extras
+            .filter(|extras| !extras.formula_cache_provenance.is_absent_or_unknown())
+            .map(|extras| &extras.formula_cache_provenance)
+        {
+            state.serialize_field("formulaCacheProvenance", value)?;
+        }
+        if let Some(value) = extras.and_then(|extras| extras.vm) {
+            state.serialize_field("vm", &value)?;
+        }
+        if self.phonetic {
+            state.serialize_field("phonetic", &true)?;
+        }
+        if let Some(value) = extras.and_then(|extras| extras.date_lexical_value.as_ref()) {
+            state.serialize_field("dateLexicalValue", value)?;
+        }
+        if let Some(value) = extras.and_then(|extras| extras.original_sst_index) {
+            state.serialize_field("originalSstIndex", &value)?;
+        }
+        if let Some(value) = extras.and_then(|extras| extras.original_value.as_ref()) {
+            state.serialize_field("originalValue", value)?;
+        }
+        if !self.projection_role.is_normal() {
+            state.serialize_field("projectionRole", &self.projection_role)?;
+        }
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for CellData {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = CellDataWire::deserialize(deserializer)?;
+        let extras = CellDataExtras {
+            rich_string: wire.rich_string,
+            formula: wire.formula,
+            array_ref: wire.array_ref,
+            cell_formula: wire.cell_formula,
+            cell_metadata_index: wire.cell_metadata_index,
+            formula_result_type: wire.formula_result_type,
+            has_empty_cached_value: wire.has_empty_cached_value,
+            formula_cache_provenance: wire.formula_cache_provenance,
+            vm: wire.vm,
+            date_lexical_value: wire.date_lexical_value,
+            original_sst_index: wire.original_sst_index,
+            original_value: wire.original_value,
+        };
+
+        Ok(Self {
+            row: wire.row,
+            col: wire.col,
+            value: wire.value,
+            style_id: wire.style_id,
+            projection_role: wire.projection_role,
+            phonetic: wire.phonetic,
+            extras: (!extras.is_empty()).then(|| Box::new(extras)),
+        })
+    }
 }
 
 /// Compact coverage for authored style-only worksheet cells.

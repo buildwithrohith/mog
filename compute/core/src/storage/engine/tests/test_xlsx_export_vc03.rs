@@ -2,8 +2,8 @@
 
 use super::helpers::engine_from_parse_output_normal;
 use domain_types::{
-    AuthoredStyleRun, CellFormat, ColDimension, DocumentFormat, ParseOutput, RowDimension,
-    SheetData, SheetDimensions,
+    AuthoredStyleRun, CellDataExtras, CellFormat, ColDimension, DocumentFormat, ParseOutput,
+    RowDimension, SheetData, SheetDimensions,
     domain::workbook::{
         CalcMode as WorkbookCalcMode, RefMode, UpdateLinks, WorkbookProperties, WorkbookView,
         WorkbookViewVisibility,
@@ -98,7 +98,10 @@ fn vc03_xlsx_export_reparse_preserves_authored_cells_sheets_dimensions_and_workb
                         row: 1,
                         col: 0,
                         value: CellValue::Number(FiniteF64::must(52.5)),
-                        formula: Some("A1+10".to_string()),
+                        extras: Some(Box::new(CellDataExtras {
+                            formula: Some("A1+10".to_string()),
+                            ..Default::default()
+                        })),
                         ..Default::default()
                     },
                 ],
@@ -286,7 +289,7 @@ fn vc03_xlsx_export_reparse_preserves_authored_cells_sheets_dimensions_and_workb
         CellValue::Error(CellError::Div0, None)
     );
     let formula = parsed_cell(values_sheet, 1, 0);
-    assert_eq!(formula.formula.as_deref(), Some("A1+10"));
+    assert_eq!(formula.formula().map(String::as_str), Some("A1+10"));
     assert_number_cell(values_sheet, 1, 0, 52.5);
 
     assert!(

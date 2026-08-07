@@ -124,7 +124,10 @@ fn second_sheet_range_backed_date_fixture_xlsx() -> Vec<u8> {
         row: 3821,
         col: 29,
         value: CellValue::number(2005.0),
-        formula: Some(r#"IF(Q3822="","",YEAR(Q3822))"#.to_string()),
+        extras: Some(Box::new(domain_types::CellDataExtras {
+            formula: Some(r#"IF(Q3822="","",YEAR(Q3822))"#.to_string()),
+            ..Default::default()
+        })),
         ..Default::default()
     });
 

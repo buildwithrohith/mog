@@ -112,10 +112,10 @@ fn projection_roles_preserve_authored_cm_cells_and_classify_only_proven_spills()
         .iter()
         .find(|cell| cell.row == 5 && cell.col == 30)
         .expect("authored cm cell is preserved");
-    assert_eq!(authored_cm.cell_metadata_index, Some(1));
-    assert!(authored_cm.formula.is_none());
+    assert_eq!(authored_cm.cell_metadata_index(), Some(1));
+    assert!(authored_cm.formula().is_none());
     assert_eq!(
-        authored_cm.original_value.as_deref(),
+        authored_cm.original_value().map(String::as_str),
         Some("35.676741130091997")
     );
 }
@@ -285,7 +285,7 @@ fn test_convert_cell_with_formula() {
     let cd = convert_cell(&cell, &[]);
     assert_eq!(cd.row, 1);
     assert_eq!(cd.col, 2);
-    assert_eq!(cd.formula, Some("=A1+B1".to_string()));
+    assert_eq!(cd.formula(), Some(&"=A1+B1".to_string()));
     assert_eq!(cd.style_id, Some(3));
     match cd.value {
         CellValue::Number(n) => assert_eq!(n.get(), 42.0),

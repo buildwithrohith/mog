@@ -149,7 +149,7 @@ fn fixture_leading_equals_is_text_by_default() {
     // No formulas attached.
     for row in 1..5 {
         let c = cell_at(&r.output, 0, row, 1).unwrap();
-        assert!(c.formula.is_none(), "row {row}: formula should be None");
+        assert!(c.formula().is_none(), "row {row}: formula should be None");
     }
 }
 

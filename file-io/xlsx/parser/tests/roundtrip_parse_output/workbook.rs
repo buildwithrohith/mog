@@ -206,7 +206,7 @@ fn current_cell_recalc_intent_does_not_force_workbook_recalc_flags() {
         "A2+1",
         CellValue::Number(FiniteF64::new(2.0).unwrap()),
     );
-    cell.formula_cache_provenance = FormulaCacheProvenance {
+    cell.extras_mut().formula_cache_provenance = FormulaCacheProvenance {
         state: FormulaCacheState::ImportedCurrent,
         force_recalc: true,
         formula_identity_fingerprint: Some("A2+1".to_string()),
@@ -245,7 +245,7 @@ fn stale_imported_formula_cache_forces_workbook_recalc_flags() {
         "A2+1",
         CellValue::Number(FiniteF64::new(2.0).unwrap()),
     );
-    cell.formula_cache_provenance = FormulaCacheProvenance {
+    cell.extras_mut().formula_cache_provenance = FormulaCacheProvenance {
         state: FormulaCacheState::StaleImported,
         formula_identity_fingerprint: Some("A2+1".to_string()),
         ..Default::default()

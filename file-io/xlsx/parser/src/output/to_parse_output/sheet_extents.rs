@@ -26,61 +26,49 @@ fn include_extent_a1_ref(rows: &mut u32, cols: &mut u32, raw: &str) {
 
 pub(super) fn is_style_only_cell(cell: &CellData) -> bool {
     cell.value.is_null()
-        && cell.formula.is_none()
+        && cell.formula().is_none()
         && cell.style_id.is_some()
-        && cell.cell_formula.is_none()
-        && cell.cell_metadata_index.is_none()
-        && cell.formula_result_type.is_none()
-        && !cell.has_empty_cached_value
-        && cell.formula_cache_provenance.is_absent_or_unknown()
-        && cell.vm.is_none()
+        && cell.cell_formula().is_none()
+        && cell.cell_metadata_index().is_none()
+        && cell.formula_result_type().is_none()
+        && !cell.has_empty_cached_value()
+        && cell.formula_cache_provenance().is_absent_or_unknown()
+        && cell.vm().is_none()
         && !cell.phonetic
-        && cell.date_lexical_value.is_none()
-        && cell.original_sst_index.is_none()
-        && cell
-            .original_value
-            .as_ref()
-            .is_none_or(|value| value.is_empty())
+        && cell.date_lexical_value().is_none()
+        && cell.original_sst_index().is_none()
+        && cell.original_value().is_none_or(|value| value.is_empty())
 }
 
 pub(super) fn is_styleless_blank_cell(cell: &CellData) -> bool {
     cell.value.is_null()
-        && cell.formula.is_none()
-        && cell.rich_string.is_none()
+        && cell.formula().is_none()
+        && cell.rich_string().is_none()
         && cell.style_id.is_none()
-        && cell.cell_formula.is_none()
-        && cell.cell_metadata_index.is_none()
-        && cell.formula_result_type.is_none()
-        && !cell.has_empty_cached_value
-        && cell.formula_cache_provenance.is_absent_or_unknown()
-        && cell.vm.is_none()
+        && cell.cell_formula().is_none()
+        && cell.cell_metadata_index().is_none()
+        && cell.formula_result_type().is_none()
+        && !cell.has_empty_cached_value()
+        && cell.formula_cache_provenance().is_absent_or_unknown()
+        && cell.vm().is_none()
         && !cell.phonetic
-        && cell.date_lexical_value.is_none()
-        && cell.original_sst_index.is_none()
-        && cell.original_value.is_none()
+        && cell.date_lexical_value().is_none()
+        && cell.original_sst_index().is_none()
+        && cell.original_value().is_none()
 }
 
 pub(super) fn explicit_blank_cell(row: u32, col: u32) -> CellData {
-    CellData {
+    let mut cell = CellData {
         row,
         col,
         value: CellValue::Null,
-        rich_string: None,
-        formula: None,
-        array_ref: None,
         style_id: None,
-        cell_formula: None,
-        cell_metadata_index: None,
-        formula_result_type: None,
-        has_empty_cached_value: false,
-        formula_cache_provenance: Default::default(),
-        vm: None,
         phonetic: false,
-        date_lexical_value: None,
-        original_sst_index: None,
-        original_value: Some(String::new()),
         projection_role: domain_types::ImportedCellProjectionRole::Normal,
-    }
+        ..Default::default()
+    };
+    cell.extras_mut().original_value = Some(String::new());
+    cell
 }
 
 pub(super) fn coalesce_style_only_points(points: &[(u32, u32, u32)]) -> Vec<AuthoredStyleRun> {

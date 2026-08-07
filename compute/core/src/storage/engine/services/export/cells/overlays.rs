@@ -82,7 +82,7 @@ pub(in crate::storage::engine) fn export_cells_for_sheet(
             }
             match cells_by_pos.get_mut(&(row, col)) {
                 Some(existing) => {
-                    if existing.formula.is_none() && existing.value.is_null() {
+                    if existing.formula().is_none() && existing.value.is_null() {
                         existing.value = value;
                     }
                 }
@@ -141,7 +141,7 @@ pub(in crate::storage::engine) fn export_cells_for_sheet(
                 }
 
                 if cells_by_pos.get(&(row, col)).is_some_and(|existing| {
-                    existing.formula.is_some() && replacement.formula.is_none()
+                    existing.formula().is_some() && replacement.formula().is_none()
                 }) {
                     continue;
                 }

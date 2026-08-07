@@ -244,9 +244,9 @@ pub(in crate::storage::engine) fn import_sheets_from_xlsx(
                     row: cell.row,
                     col: cell.col,
                     value: cell.value.clone(),
-                    formula: cell.formula.clone(),
+                    formula: cell.formula().cloned(),
                     identity_formula: None,
-                    array_ref: cell.array_ref.clone(),
+                    array_ref: cell.array_ref().cloned(),
                 })
             })
             .collect();

@@ -44,10 +44,7 @@ fn cell(row: u32, col: u32, value: CellValue) -> CellData {
         row,
         col,
         value,
-        formula: None,
-        array_ref: None,
         style_id: None,
-        cell_formula: None,
         ..Default::default()
     }
 }

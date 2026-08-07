@@ -134,17 +134,17 @@ fn roundtrip_preserves_en_dash_in_formula_text() {
     // Find formula cells and verify formula text preserved en-dash
     let f0 = cells.iter().find(|c| c.row == 0 && c.col == 0).unwrap();
     assert!(
-        f0.formula.as_deref().unwrap().contains("–"),
+        f0.formula().map(String::as_str).unwrap().contains("–"),
         "En-dash lost in formula text: {:?}",
-        f0.formula
+        f0.formula()
     );
     assert_eq!(f0.value, CellValue::Text(Arc::from("N/A – Amendment")));
 
     let f1 = cells.iter().find(|c| c.row == 1 && c.col == 0).unwrap();
     assert!(
-        f1.formula.as_deref().unwrap().contains("—"),
+        f1.formula().map(String::as_str).unwrap().contains("—"),
         "Em-dash lost in formula text: {:?}",
-        f1.formula
+        f1.formula()
     );
     assert_eq!(f1.value, CellValue::Text(Arc::from("Pass — yes")));
 }

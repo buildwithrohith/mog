@@ -111,10 +111,10 @@ fn xlsx_set_range_writes_multiple_cells() {
         .find(|c| c.row == 4 && c.col == 2)
         .expect("C5 present");
     assert_eq!(
-        c5.formula.as_deref(),
+        c5.formula().map(String::as_str),
         Some("A5+B5"),
         "C5 formula; got {:?}",
-        c5.formula
+        c5.formula()
     );
 }
 
@@ -152,10 +152,10 @@ fn xlsx_copy_range_duplicates_formulas_with_ref_shift() {
         .find(|c| c.row == 2 && c.col == 2)
         .expect("C3 present");
     assert_eq!(
-        c3.formula.as_deref(),
+        c3.formula().map(String::as_str),
         Some("A3+B3"),
         "C3 formula after copy; got {:?}",
-        c3.formula
+        c3.formula()
     );
 }
 
@@ -185,10 +185,10 @@ fn xlsx_move_range_relocates_values() {
         assert!(
             matches!(c.value, CellValue::Null)
                 || matches!(&c.value, CellValue::Text(s) if s.is_empty())
-                || matches!(c.value, CellValue::Number(n) if n.get() == 0.0 && c.formula.is_none()),
+                || matches!(c.value, CellValue::Number(n) if n.get() == 0.0 && c.formula().is_none()),
             "A1 should be cleared after move; got value={:?} formula={:?}",
             c.value,
-            c.formula
+            c.formula()
         );
     }
 }

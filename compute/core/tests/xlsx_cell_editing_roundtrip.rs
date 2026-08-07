@@ -105,10 +105,10 @@ fn xlsx_set_cell_formula_writes_through_to_export() {
         .find(|c| c.row == 0 && c.col == 2)
         .expect("C1 present after set_cell_formula");
     assert_eq!(
-        c1.formula.as_deref(),
+        c1.formula().map(String::as_str),
         Some("A1+B1"),
         "C1 formula; got {:?}",
-        c1.formula
+        c1.formula()
     );
 }
 

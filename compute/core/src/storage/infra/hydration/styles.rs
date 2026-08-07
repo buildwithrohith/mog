@@ -612,15 +612,15 @@ pub(super) fn hydrate_cell_styles(
     for cell in cells {
         let style_is_range_backed = range_style_positions.contains(&(cell.row, cell.col));
         let has_style = cell.style_id.is_some() && !style_is_range_backed;
-        let cell_metadata_index = cell.cell_metadata_index;
+        let cell_metadata_index = cell.cell_metadata_index();
         let has_cm = cell_metadata_index.is_some();
-        let has_vm = cell.vm.is_some();
+        let has_vm = cell.vm().is_some();
         let has_phonetic = cell.phonetic;
-        let has_date_lexical_value = cell.date_lexical_value.is_some();
-        let has_formula_result_type = cell.formula_result_type.is_some();
-        let has_empty_cached_value = cell.has_empty_cached_value;
-        let has_original_sst_index = cell.original_sst_index.is_some();
-        let has_original_value = cell.original_value.is_some();
+        let has_date_lexical_value = cell.date_lexical_value().is_some();
+        let has_formula_result_type = cell.formula_result_type().is_some();
+        let has_empty_cached_value = cell.has_empty_cached_value();
+        let has_original_sst_index = cell.original_sst_index().is_some();
+        let has_original_value = cell.original_value().is_some();
         // Skip cells with neither style nor import/export metadata.
         if !has_style
             && !has_cm
@@ -629,7 +629,7 @@ pub(super) fn hydrate_cell_styles(
             && !has_date_lexical_value
             && !has_formula_result_type
             && !has_empty_cached_value
-            && cell.formula_cache_provenance.is_absent_or_unknown()
+            && cell.formula_cache_provenance().is_absent_or_unknown()
             && !has_original_sst_index
             && !has_original_value
         {
@@ -677,14 +677,14 @@ pub(super) fn hydrate_cell_styles(
                     cell.style_id
                 },
                 cell_metadata_index,
-                vm: cell.vm,
+                vm: cell.vm(),
                 phonetic: cell.phonetic,
-                date_lexical_value: cell.date_lexical_value.clone(),
-                formula_result_type: cell.formula_result_type,
+                date_lexical_value: cell.date_lexical_value().cloned(),
+                formula_result_type: cell.formula_result_type(),
                 has_empty_cached_value,
-                formula_cache_provenance: cell.formula_cache_provenance.clone(),
-                original_sst_index: cell.original_sst_index,
-                original_value: cell.original_value.clone(),
+                formula_cache_provenance: cell.formula_cache_provenance().clone(),
+                original_sst_index: cell.original_sst_index(),
+                original_value: cell.original_value().cloned(),
                 // CSE flags are runtime-derived; never set on the
                 // hydration-fast-path persistent props.
                 is_array_formula: false,
