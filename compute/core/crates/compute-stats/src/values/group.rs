@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn test_group_key_image_fallback_text_is_not_lowercased() {
-        let image = CellValue::Image(CellImage::new(
+        let image = CellValue::image(CellImage::new(
             "https://example.test/image.png",
             Some(Arc::from("Alt Text")),
             CellImageSizing::Fit,

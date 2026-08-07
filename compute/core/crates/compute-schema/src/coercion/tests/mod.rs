@@ -37,7 +37,7 @@ fn control_value() -> CellValue {
 }
 
 fn image_value() -> CellValue {
-    CellValue::Image(CellImage::new(
+    CellValue::image(CellImage::new(
         "https://example.com/image.png",
         Some(Arc::<str>::from("Example image")),
         CellImageSizing::Fit,

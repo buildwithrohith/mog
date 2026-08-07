@@ -46,5 +46,5 @@ fn constant_to_a1_image_fallback_is_empty() {
         None,
         None,
     );
-    assert_eq!(constant_to_a1(&CellValue::Image(image)), "");
+    assert_eq!(constant_to_a1(&CellValue::image(image)), "");
 }

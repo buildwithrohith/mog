@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_sort_key_image_fallback_ordering_is_lowercased() {
-        let image = CellValue::Image(CellImage::new(
+        let image = CellValue::image(CellImage::new(
             "https://example.test/image.png",
             Some(Arc::from("Banana")),
             CellImageSizing::Fit,

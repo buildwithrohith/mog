@@ -84,7 +84,9 @@ pub enum CellValue {
     /// For formula evaluation, coerces to `Boolean(control.value)`.
     Control(CellControl),
     /// Cell-embedded image result produced by formulas such as `IMAGE`.
-    Image(CellImage),
+    /// Wrapped in `Arc` because image cells are rare, while the compact handle
+    /// keeps every ordinary cell value small and cheap to clone.
+    Image(Arc<CellImage>),
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +212,13 @@ impl From<CellError> for CellValue {
 // ---------------------------------------------------------------------------
 
 impl CellValue {
+    /// Construct an in-cell image value.
+    #[must_use]
+    #[inline]
+    pub fn image(img: CellImage) -> Self {
+        CellValue::Image(Arc::new(img))
+    }
+
     /// Construct a Number value, mapping NaN and Infinity to #NUM! error (matching Excel behavior).
     ///
     /// # Examples

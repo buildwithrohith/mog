@@ -87,7 +87,7 @@ impl PureFunction for FnImage {
             );
         }
 
-        CellValue::Image(CellImage::new(source, alt_text, sizing, height, width))
+        CellValue::image(CellImage::new(source, alt_text, sizing, height, width))
     }
 }
 
