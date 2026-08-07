@@ -531,50 +531,77 @@ fn materialize_deferred_sheet_inner(
         engine.update_buffer.clear();
 
         let shared_alloc = engine.stores.grid_id_alloc.clone();
-        let all_sheets = 0..cumulative_snap.sheets.len();
-        let grid_indexes = build_grid_indexes_from_allocations_range(
+        let target_range = sheet_index..sheet_index.saturating_add(1);
+        let mut target_grid_indexes = build_grid_indexes_from_allocations_range(
             &cumulative_snap,
             &allocations,
-            all_sheets.clone(),
+            target_range.clone(),
             shared_alloc.clone(),
         )?;
-        let merge_indexes = build_merge_indexes_from_parse_output_range(
+        let target_grid_for_layout = target_grid_indexes.clone();
+        let target_grid =
+            target_grid_indexes
+                .remove(&sheet_id)
+                .ok_or_else(|| ComputeError::Deserialize {
+                    message: format!("target sheet {sheet_id} grid index was not built"),
+                })?;
+        let target_merge_indexes = build_merge_indexes_from_parse_output_range(
             &cumulative_parse,
             &cumulative_snap,
-            all_sheets.clone(),
+            target_range.clone(),
         )?;
-        let mut layout_indexes = build_layout_indexes_from_parse_output_range(
+        let mut target_layout_indexes = build_layout_indexes_from_parse_output_range(
             &cumulative_parse,
             &cumulative_snap,
-            &grid_indexes,
-            all_sheets,
+            &target_grid_for_layout,
+            target_range,
             engine.stores.layout_metrics,
         )?;
         engine
             .stores
             .dimension_preview
-            .replay_into(&mut layout_indexes);
+            .replay_into(&mut target_layout_indexes);
 
         let mut compute = ComputeCore::new();
-        let mut mirror = CellMirror::new();
-        compute.init_from_snapshot_viewport_only(&mut mirror, &cumulative_snap)?;
+        // The viewport-only initializer intentionally rebuilds workbook-wide
+        // formula metadata. Keep that compute handling unchanged for now, but
+        // do not let its required temporary mirror replace the live mirror.
+        let mut compute_mirror = CellMirror::new();
+        compute.init_from_snapshot_viewport_only(&mut compute_mirror, &cumulative_snap)?;
         compute.set_id_alloc(shared_alloc.clone());
-        mirror.install_row_col_indexes(
-            grid_indexes
-                .iter()
-                .map(|(sid, grid)| (*sid, grid.row_ids_ordered(), grid.col_ids_ordered())),
+        engine
+            .mirror
+            .replace_sheet(cumulative_snap.sheets[sheet_index].clone())?;
+        engine.mirror.replace_row_col_indexes_for_sheet(
+            sheet_id,
+            target_grid.row_ids_ordered(),
+            target_grid.col_ids_ordered(),
         );
-        // The critical sheet's Yrs-backed range formats remain authoritative. The
-        // newly selected sheet's values/ranges come from the cumulative snapshot.
-        hydrate_mirror_format_ranges(&engine.stores.storage, &mut mirror);
-        mirror.finalize_range_hydration();
+        engine.mirror.finalize_range_hydration_for_sheet(&sheet_id);
+        if let Some(sheet_mirror) = engine.mirror.get_sheet_mut(&sheet_id) {
+            crate::storage::properties::hydrate_col_format_ranges(
+                &engine.stores.storage,
+                &sheet_id,
+                sheet_mirror,
+            );
+            crate::storage::properties::hydrate_format_ranges(
+                &engine.stores.storage,
+                &sheet_id,
+                sheet_mirror,
+            );
+        }
 
         engine.stores.compute = compute;
         engine.stores.grid_id_alloc = shared_alloc;
-        engine.stores.grid_indexes = grid_indexes;
-        engine.stores.merge_indexes = merge_indexes;
-        engine.stores.layout_indexes = layout_indexes;
-        engine.mirror = mirror;
+        engine.stores.grid_indexes.insert(sheet_id, target_grid);
+        engine
+            .stores
+            .merge_indexes
+            .insert(sheet_id, target_merge_indexes.into_iter().next().unwrap().1);
+        engine.stores.layout_indexes.insert(
+            sheet_id,
+            target_layout_indexes.into_iter().next().unwrap().1,
+        );
         engine.viewport.clear();
 
         merge_import_reports(&mut engine.import_report, selected_import_report);
