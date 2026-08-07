@@ -134,12 +134,15 @@ fn range_backed_fixture_xlsx() -> Vec<u8> {
             ..Default::default()
         });
     }
-    range_backed_cells.push(domain_types::CellData {
-        row: 3821,
-        col: 29,
-        value: CellValue::number(2005.0),
-        formula: Some(r#"IF(Q3822="","",YEAR(Q3822))"#.to_string()),
-        ..Default::default()
+    range_backed_cells.push({
+        let mut cell = domain_types::CellData {
+            row: 3821,
+            col: 29,
+            value: CellValue::number(2005.0),
+            ..Default::default()
+        };
+        cell.extras_mut().formula = Some(r#"IF(Q3822="","",YEAR(Q3822))"#.to_string());
+        cell
     });
 
     let output = domain_types::ParseOutput {
