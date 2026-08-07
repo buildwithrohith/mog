@@ -587,12 +587,6 @@ fn rebuild_col_data(s: &mut SheetMirror) {
             col_vec[ri] = entry.value.clone();
         }
     }
-    let target_len = s.rows as usize;
-    for col_vec in s.col_data.values_mut() {
-        if col_vec.len() < target_len {
-            col_vec.resize(target_len, CellValue::Null);
-        }
-    }
 }
 
 /// Shift positions in the pos_to_id and id_to_pos maps.

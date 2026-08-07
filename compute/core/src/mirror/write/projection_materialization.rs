@@ -27,10 +27,9 @@ impl CellMirror {
         if let Some(sheet_mirror) = self.sheets.get_mut(sheet) {
             for c in 0..arr_cols {
                 let col = origin_col + c as u32;
-                // Ensure col_data entry exists, sized to fit both sheet rows and projection extent
-                let num_rows = sheet_mirror.rows as usize;
+                // Ensure col_data entry exists, sized only to this projection's extent.
                 let max_needed = (origin_row + arr_rows as u32) as usize;
-                let target_len = std::cmp::max(num_rows, max_needed);
+                let target_len = max_needed;
                 let col_vec = sheet_mirror
                     .col_data
                     .entry(col)

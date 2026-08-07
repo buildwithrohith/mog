@@ -26,7 +26,7 @@ pub(super) fn write_col_value(
     value: CellValue,
 ) -> CellValue {
     let row = pos.row() as usize;
-    let initial_len = std::cmp::max(sheet.rows as usize, row + 1);
+    let initial_len = row + 1;
     let col_vec = sheet
         .col_data
         .entry(pos.col())

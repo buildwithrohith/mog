@@ -1,6 +1,9 @@
 use crate::mirror::CellEntry;
 use crate::mirror::test_helpers::{make_cell_id, mirror_with_grid};
-use cell_types::{RowId, SheetPos};
+use crate::snapshot::{CellData, RangeData, SheetSnapshot, WorkbookSnapshot};
+use cell_types::{
+    ColId, PayloadEncoding, RangeAnchor, RangeId, RangeKind, RowId, SheetId, SheetPos,
+};
 use value_types::{CellValue, FiniteF64};
 
 #[test]
@@ -204,9 +207,9 @@ fn test_col_data_rebuilt_after_delete_rows() {
     }
 }
 #[test]
-fn test_col_data_padded_to_sheet_rows_after_insert() {
-    // Regression: rebuild_col_data must pad vectors to sheet.rows
-    // (matching snapshot load invariant), not just to last-occupied-row+1.
+fn test_col_data_keeps_per_column_extent_after_insert() {
+    // Regression: structural rebuilds must preserve each column's own extent,
+    // not pad every column to the sheet's declared row count.
     let (mut mirror, sheet_id) = mirror_with_grid();
     // mirror_with_grid: 3×3 grid in a 10×5 sheet, rows 0-2 occupied
 
@@ -225,15 +228,14 @@ fn test_col_data_padded_to_sheet_rows_after_insert() {
     for (col, col_vec) in &sheet.col_data {
         assert_eq!(
             col_vec.len(),
-            sheet.rows as usize,
-            "col_data[{col}] should be padded to sheet.rows ({}) but was {}",
-            sheet.rows,
+            5,
+            "col_data[{col}] should stop at its last populated row, but was {}",
             col_vec.len(),
         );
     }
 }
 #[test]
-fn test_col_data_padded_to_sheet_rows_after_delete() {
+fn test_col_data_keeps_per_column_extent_after_delete() {
     let (mut mirror, sheet_id) = mirror_with_grid();
     // Delete row 0
     let deleted = vec![make_cell_id(100), make_cell_id(101), make_cell_id(102)];
@@ -251,10 +253,70 @@ fn test_col_data_padded_to_sheet_rows_after_delete() {
     for (col, col_vec) in &sheet.col_data {
         assert_eq!(
             col_vec.len(),
-            sheet.rows as usize,
-            "col_data[{col}] should be padded to sheet.rows ({}) but was {}",
-            sheet.rows,
+            2,
+            "col_data[{col}] should stop at its last populated row, but was {}",
             col_vec.len(),
         );
     }
+}
+
+#[test]
+fn test_range_column_does_not_inherit_large_sheet_extent() {
+    let sheet_id = SheetId::from_uuid_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+    let range_id = RangeId::from_raw(1);
+    let row_ids: Vec<RowId> = (0..10).map(|row| RowId::from_raw(row + 1)).collect();
+    let col_a = ColId::from_raw(1);
+    let col_b = ColId::from_raw(2);
+    let payload = (0..10)
+        .flat_map(|value| (value as f64).to_le_bytes())
+        .collect();
+
+    let snapshot = WorkbookSnapshot {
+        sheets: vec![SheetSnapshot {
+            id: sheet_id.to_uuid_string(),
+            name: "Sheet1".to_string(),
+            rows: 500_000,
+            cols: 2,
+            cells: vec![CellData {
+                cell_id: "550e8400-e29b-41d4-a716-446655440001".to_string(),
+                row: 499_999,
+                col: 0,
+                value: CellValue::number(42.0),
+                formula: None,
+                identity_formula: None,
+                array_ref: None,
+            }],
+            ranges: vec![RangeData {
+                range_id,
+                kind: RangeKind::Data,
+                anchor: RangeAnchor::Elastic {
+                    start_row: row_ids[0],
+                    end_row: row_ids[9],
+                    start_col: col_b,
+                    end_col: col_b,
+                },
+                encoding: PayloadEncoding::F64Le,
+                payload,
+                row_axis: None,
+                col_axis: None,
+                row_ids: row_ids.clone(),
+                col_ids: vec![col_b],
+            }],
+        }],
+        ..WorkbookSnapshot::default()
+    };
+
+    let mut mirror = crate::mirror::CellMirror::from_snapshot(snapshot).unwrap();
+    mirror.install_row_col_indexes(vec![(sheet_id, row_ids, vec![col_a, col_b])]);
+    mirror.finalize_range_hydration_for_sheet(&sheet_id);
+
+    let sheet = mirror.get_sheet(&sheet_id).unwrap();
+    assert_eq!(sheet.col_data.get(&0).map(Vec::len), Some(500_000));
+    assert_eq!(sheet.col_data.get(&1).map(Vec::len), Some(10));
+    assert!(
+        mirror
+            .get_cell_value_at(&sheet_id, SheetPos::new(499_999, 1))
+            .is_none(),
+        "a missing high-row range value must read as Null without indexing past the short vector"
+    );
 }

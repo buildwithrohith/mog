@@ -145,9 +145,8 @@ impl CellMirror {
         let mut cols_touched = Vec::new();
 
         if let Some(sheet_mirror) = self.sheets.get_mut(sheet) {
-            let num_rows = sheet_mirror.rows as usize;
             let max_needed = (anchor_row + total_rows) as usize;
-            let target_len = std::cmp::max(num_rows, max_needed);
+            let target_len = max_needed;
 
             // Ensure all columns exist and are sized
             for c in 0..total_cols {

@@ -550,7 +550,6 @@ impl SheetMirror {
         };
 
         let mut has_range = false;
-        let mut max_row: usize = self.rows as usize;
 
         for rv in self.range_views.values() {
             if rv.encoding == PayloadEncoding::None {
@@ -558,11 +557,6 @@ impl SheetMirror {
             }
             if rv.col_offset_by_id.contains_key(&col_id) {
                 has_range = true;
-                for &row_id in rv.row_offset_by_id.keys() {
-                    if let Some(&row_idx) = self.row_to_index.get(&row_id) {
-                        max_row = max_row.max(row_idx as usize + 1);
-                    }
-                }
             }
         }
 
@@ -571,14 +565,7 @@ impl SheetMirror {
             return;
         }
 
-        // Find max row from per-cell entries at this column
-        for pos in self.pos_to_id.keys() {
-            if pos.col() == col {
-                max_row = max_row.max(pos.row() as usize + 1);
-            }
-        }
-
-        let size = max_row.max(self.rows as usize);
+        let size = self.column_data_size(col, col_id);
         let mut data = vec![CellValue::Null; size];
 
         // Layer 1: decode Range payload data into the vector
@@ -637,7 +624,7 @@ impl SheetMirror {
     }
 
     fn column_data_size(&self, col: u32, col_id: ColId) -> usize {
-        let mut max_row = self.rows as usize;
+        let mut max_row = 0usize;
 
         for rv in self.range_views.values() {
             if rv.encoding == PayloadEncoding::None {
@@ -658,7 +645,7 @@ impl SheetMirror {
             }
         }
 
-        max_row.max(self.rows as usize)
+        max_row
     }
 
     fn apply_column_overlays(&self, col: u32, col_id: ColId, data: &mut [CellValue]) {
