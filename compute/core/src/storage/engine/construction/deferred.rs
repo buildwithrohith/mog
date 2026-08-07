@@ -588,6 +588,20 @@ pub(in crate::storage::engine) fn stage_deferred_hydration(
                     .map(|allocation| allocation.cell_ids.len() as u64)
                     .sum::<u64>(),
             );
+            profile.counter(
+                "identity_rows",
+                allocations
+                    .iter()
+                    .map(|allocation| allocation.row_ids.len() as u64)
+                    .sum::<u64>(),
+            );
+            profile.counter(
+                "identity_cols",
+                allocations
+                    .iter()
+                    .map(|allocation| allocation.col_ids.len() as u64)
+                    .sum::<u64>(),
+            );
             allocations
         };
 
@@ -642,7 +656,7 @@ pub(in crate::storage::engine) fn stage_deferred_hydration(
 
         let mut ranged_positions: Vec<std::collections::HashSet<(u32, u32)>> =
             Vec::with_capacity(full_parse_output.sheets.len());
-        let mut range_data_per_sheet: Vec<Vec<snapshot_types::RangeData>> =
+        let mut range_data_per_sheet: Vec<&[snapshot_types::RangeData]> =
             Vec::with_capacity(full_parse_output.sheets.len());
         let mut range_style_positions: Vec<std::collections::HashSet<(u32, u32)>> =
             Vec::with_capacity(full_parse_output.sheets.len());
@@ -666,7 +680,7 @@ pub(in crate::storage::engine) fn stage_deferred_hydration(
                     .filter(|pos| !snap_positions.contains(pos))
                     .collect();
                 ranged_positions.push(ranged);
-                range_data_per_sheet.push(snap_sheet.ranges.clone());
+                range_data_per_sheet.push(snap_sheet.ranges.as_slice());
                 range_style_positions.push(std::collections::HashSet::new());
                 range_styles_per_sheet.push(Vec::new());
             }
@@ -778,25 +792,24 @@ pub(in crate::storage::engine) fn stage_deferred_hydration(
                 "complete_deferred_hydration",
                 "mirror_compute_rebuild",
             );
+            let snapshot_sheet_count = full_snap.sheets.len() as u64;
+            let snapshot_cell_count = full_snap
+                .sheets
+                .iter()
+                .map(|sheet| sheet.cells.len() as u64)
+                .sum::<u64>();
+            profile.counter("sheets", snapshot_sheet_count);
+            profile.counter("snapshot_cells", snapshot_cell_count);
             let mut new_compute = ComputeCore::new();
             let mut new_mirror = CellMirror::new();
             #[cfg(target_arch = "wasm32")]
             {
-                new_compute.init_from_snapshot_minimal(&mut new_mirror, full_snap.clone())?;
+                new_compute.init_from_snapshot_minimal(&mut new_mirror, full_snap)?;
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
-                new_compute.init_from_snapshot_no_recalc(&mut new_mirror, full_snap.clone())?;
+                new_compute.init_from_snapshot_no_recalc(&mut new_mirror, full_snap)?;
             }
-            profile.counter("sheets", full_snap.sheets.len() as u64);
-            profile.counter(
-                "snapshot_cells",
-                full_snap
-                    .sheets
-                    .iter()
-                    .map(|sheet| sheet.cells.len() as u64)
-                    .sum::<u64>(),
-            );
             new_compute.set_id_alloc(shared_alloc.clone());
             (new_compute, new_mirror)
         };

@@ -323,16 +323,19 @@ impl YrsStorage {
     /// stored as compact Range payloads instead), then writes the Range
     /// metadata/payloads from the snapshot into the Yrs range sub-maps.
     #[tracing::instrument(name = "hydrate_from_parse_output_with_ranges", skip_all)]
-    pub(crate) fn hydrate_from_parse_output_with_ranges(
+    pub(crate) fn hydrate_from_parse_output_with_ranges<RangeDataSlice>(
         &mut self,
         output: &ParseOutput,
         allocations: &[SheetIdAllocation],
         ranged_positions: &[std::collections::HashSet<(u32, u32)>],
         range_style_positions: &[std::collections::HashSet<(u32, u32)>],
-        range_data_per_sheet: &[Vec<snapshot_types::RangeData>],
+        range_data_per_sheet: &[RangeDataSlice],
         range_styles_per_sheet: &[Vec<ImportedRangeStyle>],
         allocator: &mut impl IdAllocator,
-    ) -> Result<HydrationIdMap, ComputeError> {
+    ) -> Result<HydrationIdMap, ComputeError>
+    where
+        RangeDataSlice: AsRef<[snapshot_types::RangeData]>,
+    {
         let _span = tracing::info_span!("hydrate_yrs_from_parse_output_with_ranges").entered();
         tracing::info!(target: "deferred_hydration", "hydrate: transact_mut");
         let mut txn = self.doc.transact_mut();
@@ -388,7 +391,7 @@ impl YrsStorage {
             // them only as a defensive fallback for older/corrupt documents.
             let sheet_hex = &alloc.sheet_hex;
             if let Some(yrs::Out::YMap(sheet_map)) = self.sheets.get(&txn, sheet_hex) {
-                let ranges = &range_data_per_sheet[sheet_idx];
+                let ranges: &[snapshot_types::RangeData] = range_data_per_sheet[sheet_idx].as_ref();
                 if !ranges.is_empty() {
                     let ranges_map: MapRef = match sheet_map.get(&txn, KEY_RANGES) {
                         Some(yrs::Out::YMap(map)) => map,

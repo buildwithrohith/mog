@@ -112,3 +112,46 @@ fn deferred_xlsx_without_force_calc_keeps_empty_formula_caches_until_explicit_re
         recalc.changed_cells
     );
 }
+
+#[test]
+fn deferred_full_hydration_matches_direct_xlsx_open_content() {
+    let bytes = three_sheet_deferred_fixture_xlsx();
+    let (direct, _) =
+        YrsComputeEngine::from_xlsx_bytes(&bytes).expect("direct XLSX open should succeed");
+    let (mut deferred, _) = YrsComputeEngine::from_snapshot(simple_snapshot()).unwrap();
+    deferred
+        .import_from_xlsx_bytes_deferred(&bytes)
+        .expect("deferred XLSX import should succeed");
+    deferred
+        .complete_deferred_hydration()
+        .expect("full deferred hydration should succeed");
+
+    let direct_sheets = direct.build_parse_output_from_yrs().sheets;
+    let deferred_sheets = deferred.build_parse_output_from_yrs().sheets;
+    assert_eq!(deferred_sheets.len(), direct_sheets.len());
+
+    for (direct_sheet, deferred_sheet) in direct_sheets.iter().zip(deferred_sheets.iter()) {
+        assert_eq!(deferred_sheet.name, direct_sheet.name);
+        assert_eq!(deferred_sheet.rows, direct_sheet.rows);
+        assert_eq!(deferred_sheet.cols, direct_sheet.cols);
+
+        let mut direct_cells: Vec<_> = direct_sheet
+            .cells
+            .iter()
+            .map(|cell| (cell.row, cell.col, cell.value.clone(), cell.formula.clone()))
+            .collect();
+        let mut deferred_cells: Vec<_> = deferred_sheet
+            .cells
+            .iter()
+            .map(|cell| (cell.row, cell.col, cell.value.clone(), cell.formula.clone()))
+            .collect();
+        direct_cells.sort_by_key(|cell| (cell.0, cell.1));
+        deferred_cells.sort_by_key(|cell| (cell.0, cell.1));
+
+        assert_eq!(
+            deferred_cells, direct_cells,
+            "cell content for {}",
+            direct_sheet.name
+        );
+    }
+}
