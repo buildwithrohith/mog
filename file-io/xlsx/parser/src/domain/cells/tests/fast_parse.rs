@@ -1,7 +1,8 @@
 use crate::domain::cells::{
     CELL_TYPE_BOOL, CELL_TYPE_ERROR, CELL_TYPE_FORMULA_STRING, CELL_TYPE_NUMBER, CELL_TYPE_STRING,
-    CellData, FastParseDiagnostics, ParseExtras, VALUE_TYPE_CACHED_FORMULA, VALUE_TYPE_FORMULA,
-    VALUE_TYPE_INLINE, VALUE_TYPE_SHARED_STRING, parse_worksheet_fast,
+    CellData, FastParseDiagnosticCode, FastParseDiagnostics, ParseExtras,
+    VALUE_TYPE_CACHED_FORMULA, VALUE_TYPE_FORMULA, VALUE_TYPE_INLINE, VALUE_TYPE_SHARED_STRING,
+    parse_worksheet_fast,
     parse_worksheet_fast_with_extras,
 };
 
@@ -54,6 +55,39 @@ fn test_parse_worksheet_basic() {
     // Third cell: A2 with formula
     assert_eq!(cells[2].get_row(), 1);
     assert_eq!(cells[2].get_col(), 0);
+}
+
+#[test]
+fn malformed_cell_resyncs_to_later_cells_and_records_diagnostic() {
+    let xml = br#"<worksheet><sheetData><row r="1">
+      <c r="A1"><v>1</v></c>
+      <c r="B1><v>broken</v>
+      <c r="C1"><v>3</v></c>
+    </row></sheetData></worksheet>"#;
+    let shared_strings: Vec<&str> = vec![];
+    let mut cells = vec![CellData::default(); 10];
+    let mut strings = Vec::new();
+    let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
+
+    let count = parse_worksheet_fast_with_extras(
+        xml,
+        &shared_strings,
+        &mut cells,
+        &mut strings,
+        &mut Vec::new(),
+        &mut extras,
+        &mut diagnostics,
+        &[],
+    );
+
+    assert_eq!(count, 2);
+    assert_eq!(cells[0].get_col(), 0);
+    assert_eq!(cells[1].get_col(), 2);
+    assert_eq!(value_bytes(&cells[0], &strings), b"1");
+    assert_eq!(value_bytes(&cells[1], &strings), b"3");
+    assert_eq!(diagnostics.count(FastParseDiagnosticCode::MalformedXml), 1);
+    assert_eq!(diagnostics.sample_count(), 1);
 }
 
 #[test]
