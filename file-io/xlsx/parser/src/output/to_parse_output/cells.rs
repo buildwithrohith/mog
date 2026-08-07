@@ -405,7 +405,10 @@ fn format_number_like_writer(n: f64) -> String {
 }
 
 /// Resolve a FullCellData's value to CellValue.
-pub(super) fn resolve_cell_value(cell: &FullCellData, string_pool: &mut StrInternPool) -> CellValue {
+pub(super) fn resolve_cell_value(
+    cell: &FullCellData,
+    string_pool: &mut StrInternPool,
+) -> CellValue {
     if cell.cell_type == CELL_TYPE_FORMULA {
         return resolve_formula_cached_value(cell, string_pool);
     }

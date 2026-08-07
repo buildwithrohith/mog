@@ -1,6 +1,6 @@
 use super::super::{
-    convert_cell, full_parse_result_to_parse_output, parse_error_code, resolve_cell_value,
-    StrInternPool,
+    StrInternPool, convert_cell, full_parse_result_to_parse_output, parse_error_code,
+    resolve_cell_value,
 };
 use super::helpers::{test_cell, threading_result};
 use crate::output::results::{
@@ -257,10 +257,7 @@ fn test_resolve_cell_value_empty() {
         has_explicit_style: false,
     };
     let mut string_pool = StrInternPool::default();
-    assert_eq!(
-        resolve_cell_value(&cell, &mut string_pool),
-        CellValue::Null
-    );
+    assert_eq!(resolve_cell_value(&cell, &mut string_pool), CellValue::Null);
 }
 
 #[test]
