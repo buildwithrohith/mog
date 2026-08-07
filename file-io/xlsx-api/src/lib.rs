@@ -38,7 +38,10 @@ pub use options::{ParseMode, ParseOptions};
 pub use parse::{
     DeferredWorkbookMetadata, ParsedWorkbook, initial_active_visible_sheet_index, parse,
     parse_deferred_workbook_metadata, parse_initial_active_visible_sheet, parse_max_sheets,
-    parse_selected_sheets, parse_selected_workbook_sheets, parse_with_options,
-    select_initial_active_visible_workbook_index,
+    parse_selected_sheets, parse_selected_workbook_sheets, parse_sheet_dependency_manifest,
+    parse_with_options, select_initial_active_visible_workbook_index,
+};
+pub use parse::{
+    DependencyBlocker, DependencyDefinedName, SheetDependencyAnalysis, SheetDependencyManifest,
 };
 pub use types::*;

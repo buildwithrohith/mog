@@ -4,6 +4,7 @@
 //! child modules under `pipeline/full_parse/`.
 
 mod deferred_metadata;
+mod dependency_manifest;
 mod external_links_phase;
 mod helpers;
 mod implementation;
@@ -19,6 +20,9 @@ pub(crate) use helpers::extract_attr_value;
 use crate::output::results::{FullParseResult, ParseTimings};
 
 pub use deferred_metadata::DeferredWorkbookMetadata;
+pub use dependency_manifest::{
+    DependencyBlocker, DependencyDefinedName, SheetDependencyAnalysis, SheetDependencyManifest,
+};
 
 /// Parse an XLSX file from raw bytes and return a full structured result.
 ///
@@ -77,6 +81,14 @@ pub fn parse_deferred_workbook_metadata(
     xlsx_data: &[u8],
 ) -> Result<DeferredWorkbookMetadata, String> {
     deferred_metadata::parse_deferred_workbook_metadata_impl(xlsx_data)
+}
+
+/// Scan every editable worksheet formula and workbook defined name into a
+/// compact workbook-order dependency manifest without constructing cell data.
+pub fn parse_sheet_dependency_manifest(
+    xlsx_data: &[u8],
+) -> Result<SheetDependencyManifest, String> {
+    dependency_manifest::parse_sheet_dependency_manifest_impl(xlsx_data)
 }
 
 /// Select the initial visible editable workbook-order sheet index from

@@ -103,7 +103,9 @@ pub use pipeline::full_parse::parse_xlsx_full_native_selected_sheets;
 pub use pipeline::full_parse::parse_xlsx_full_native_selected_workbook_sheets;
 pub use pipeline::full_parse::select_initial_active_visible_workbook_index;
 pub use pipeline::full_parse::{
-    DeferredWorkbookMetadata, parse_deferred_workbook_metadata, parse_xlsx_full_native,
+    DeferredWorkbookMetadata, DependencyBlocker, DependencyDefinedName, SheetDependencyAnalysis,
+    SheetDependencyManifest, parse_deferred_workbook_metadata, parse_sheet_dependency_manifest,
+    parse_xlsx_full_native,
 };
 
 // =============================================================================

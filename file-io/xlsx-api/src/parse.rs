@@ -14,6 +14,9 @@ use crate::error::{XlsxApiError, from_parse_string_error};
 use crate::options::ParseOptions;
 use domain_types::{ImportReport, ParseDiagnostics, ParseOutput};
 pub use xlsx_parser::DeferredWorkbookMetadata;
+pub use xlsx_parser::{
+    DependencyBlocker, DependencyDefinedName, SheetDependencyAnalysis, SheetDependencyManifest,
+};
 
 /// Result of a successful parse. Contains domain-typed parse output.
 #[derive(Debug)]
@@ -122,6 +125,13 @@ pub fn parse_deferred_workbook_metadata(
     xlsx_data: &[u8],
 ) -> Result<DeferredWorkbookMetadata, XlsxApiError> {
     xlsx_parser::parse_deferred_workbook_metadata(xlsx_data).map_err(from_parse_string_error)
+}
+
+/// Scan workbook-wide sheet dependencies without materializing worksheet cells.
+pub fn parse_sheet_dependency_manifest(
+    xlsx_data: &[u8],
+) -> Result<SheetDependencyManifest, XlsxApiError> {
+    xlsx_parser::parse_sheet_dependency_manifest(xlsx_data).map_err(from_parse_string_error)
 }
 
 /// Select the workbook-order index for the initial visible editable worksheet.
