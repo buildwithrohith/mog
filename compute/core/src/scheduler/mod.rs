@@ -236,6 +236,16 @@ pub struct ComputeCore {
     /// before any recalc or mutation that depends on the graph.
     deferred_formula_cells: Option<Vec<(CellId, SheetId, String)>>,
     deferred_snapshot: Option<WorkbookSnapshot>,
+    /// Sheets whose formulas have been appended to the sparse dependency graph
+    /// after their complete dependency closure was hydrated into the mirror.
+    ///
+    /// This is intentionally separate from mirror/Yrs hydration state. The
+    /// engine owns those transitions; the scheduler only records whether it has
+    /// consumed a sheet snapshot exactly once.
+    incrementally_registered_sheets: FxHashSet<SheetId>,
+    /// Scoped exception to the viewport-only graph guard. The engine may open
+    /// this only after every sheet required by an edit is registered above.
+    deferred_partial_graph_edit_admitted: bool,
 }
 
 impl Default for ComputeCore {
@@ -274,6 +284,8 @@ impl ComputeCore {
             spill_blockers: FxHashMap::default(),
             deferred_formula_cells: None,
             deferred_snapshot: None,
+            incrementally_registered_sheets: FxHashSet::default(),
+            deferred_partial_graph_edit_admitted: false,
         }
     }
 

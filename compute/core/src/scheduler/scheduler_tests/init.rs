@@ -441,6 +441,138 @@ fn test_viewport_only_init_rejects_partial_graph_build() {
 }
 
 #[test]
+fn test_incremental_hydration_registers_closure_once_and_scopes_edit_admission() {
+    fn sheet(id: SheetId, name: &str, cells: Vec<CellData>) -> SheetSnapshot {
+        SheetSnapshot {
+            id: id.to_uuid_string(),
+            name: name.to_string(),
+            rows: 10,
+            cols: 10,
+            cells,
+            ranges: vec![],
+        }
+    }
+
+    fn value_cell(id: CellId, value: f64) -> CellData {
+        CellData {
+            cell_id: id.to_uuid_string(),
+            row: 0,
+            col: 0,
+            value: CellValue::number(value),
+            formula: None,
+            identity_formula: None,
+            array_ref: None,
+        }
+    }
+
+    fn formula_cell(id: CellId, formula: &str, cached: f64) -> CellData {
+        CellData {
+            cell_id: id.to_uuid_string(),
+            row: 0,
+            col: 0,
+            value: CellValue::number(cached),
+            formula: Some(formula.to_string()),
+            identity_formula: None,
+            array_ref: None,
+        }
+    }
+
+    let inputs = sid(0x101);
+    let calc = sid(0x102);
+    let unrelated = sid(0x103);
+    let input_a1 = cid(0x1001);
+    let calc_a1 = cid(0x1002);
+    let unrelated_a1 = cid(0x1003);
+    let inputs_snapshot = sheet(inputs, "Inputs", vec![value_cell(input_a1, 1.0)]);
+    let calc_snapshot = sheet(
+        calc,
+        "Calc",
+        vec![formula_cell(calc_a1, "=Inputs!A1*2", 2.0)],
+    );
+    let unrelated_snapshot = sheet(
+        unrelated,
+        "Unrelated",
+        vec![formula_cell(unrelated_a1, "=1+1", 99.0)],
+    );
+    let inventory = WorkbookSnapshot {
+        sheets: vec![
+            sheet(inputs, "Inputs", vec![]),
+            sheet(calc, "Calc", vec![]),
+            sheet(unrelated, "Unrelated", vec![]),
+        ],
+        named_ranges: vec![],
+        tables: vec![],
+        pivot_tables: vec![],
+        data_table_regions: vec![],
+        iterative_calc: false,
+        max_iterations: 100,
+        max_change: value_types::FiniteF64::must(0.001),
+        calculation_settings: None,
+    };
+
+    let mut core = ComputeCore::new();
+    let mut mirror = CellMirror::new();
+    core.init_from_snapshot_viewport_only(&mut mirror, &inventory)
+        .unwrap();
+    mirror.replace_sheet(inputs_snapshot.clone()).unwrap();
+    mirror.replace_sheet(calc_snapshot.clone()).unwrap();
+
+    let direct_err = core
+        .set_cell(&mut mirror, &inputs, input_a1, 0, 0, "3")
+        .unwrap_err();
+    assert!(direct_err.to_string().contains("deferred XLSX hydration"));
+
+    core.register_incrementally_hydrated_sheets(
+        &mut mirror,
+        &[inputs_snapshot.clone(), calc_snapshot.clone()],
+    )
+    .unwrap();
+    assert_eq!(core.incrementally_registered_sheets.len(), 2);
+    assert!(!core.incrementally_registered_sheets.contains(&unrelated));
+    assert!(mirror.get_cell_value(&unrelated_a1).is_none());
+
+    let ast_count = core.ast_cache.len();
+    core.register_incrementally_hydrated_sheets(&mut mirror, &[inputs_snapshot, calc_snapshot])
+        .unwrap();
+    assert_eq!(core.ast_cache.len(), ast_count);
+    assert_eq!(core.incrementally_registered_sheets.len(), 2);
+
+    let prior = core
+        .begin_deferred_partial_graph_edit_admission(&[inputs, calc])
+        .unwrap();
+    let result = core
+        .set_cell(&mut mirror, &inputs, input_a1, 0, 0, "3")
+        .unwrap();
+    core.restore_deferred_partial_graph_edit_admission(prior);
+    assert!(result.changed_cells.iter().any(|change| {
+        change.cell_id == calc_a1.to_uuid_string() && change.value == CellValue::number(6.0)
+    }));
+    assert_eq!(
+        core.get_cell_value(&mirror, &calc_a1),
+        Some(&CellValue::number(6.0))
+    );
+    assert!(core.deferred_snapshot.is_some());
+
+    let missing_err = core
+        .begin_deferred_partial_graph_edit_admission(&[unrelated])
+        .unwrap_err();
+    assert!(
+        missing_err
+            .to_string()
+            .contains(&unrelated.to_uuid_string())
+    );
+
+    let closed_err = core
+        .set_cell(&mut mirror, &inputs, input_a1, 0, 0, "4")
+        .unwrap_err();
+    assert!(closed_err.to_string().contains("deferred XLSX hydration"));
+
+    // The unrelated snapshot was never registered or hydrated; keeping it
+    // here makes the closure boundary explicit in this three-sheet example.
+    assert_eq!(unrelated_snapshot.cells.len(), 1);
+}
+
+#[test]
 fn test_init_empty_snapshot() {
     let mut core = ComputeCore::new();
     let mut mirror = CellMirror::new();

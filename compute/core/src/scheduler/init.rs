@@ -361,6 +361,124 @@ impl ComputeCore {
         Ok(RecalcResult::empty())
     }
 
+    /// Append formulas from newly hydrated sheets to a viewport-only graph.
+    ///
+    /// The engine must first hydrate the complete dependency closure into the
+    /// mirror, then pass the matching full sheet snapshots here as one batch.
+    /// All snapshots are validated before the graph is changed. A sheet already
+    /// consumed by an earlier batch is skipped, making retries idempotent.
+    pub(crate) fn register_incrementally_hydrated_sheets(
+        &mut self,
+        mirror: &mut CellMirror,
+        snapshots: &[SheetSnapshot],
+    ) -> Result<(), ComputeError> {
+        if self.deferred_snapshot.is_none() {
+            return Err(ComputeError::InvalidInput {
+                message: "incremental sheet formula registration requires a viewport-only deferred XLSX workbook"
+                    .to_string(),
+            });
+        }
+
+        let mut new_sheets = FxHashSet::default();
+        let mut formula_cells = Vec::new();
+
+        // Validate the whole closure before appending any graph edges. This
+        // keeps a bad second snapshot from leaving the first one half-admitted.
+        for snapshot in snapshots {
+            let sheet_id = SheetId::from_uuid_str(&snapshot.id)?;
+            if self.incrementally_registered_sheets.contains(&sheet_id)
+                || !new_sheets.insert(sheet_id)
+            {
+                continue;
+            }
+            if mirror.get_sheet(&sheet_id).is_none() {
+                return Err(ComputeError::InvalidInput {
+                    message: format!(
+                        "cannot register formulas for sheet {} before it is hydrated in the mirror",
+                        snapshot.id
+                    ),
+                });
+            }
+
+            for cell in &snapshot.cells {
+                let cell_id = CellId::from_uuid_str(&cell.cell_id)?;
+                if mirror.sheet_for_cell(&cell_id) != Some(sheet_id) {
+                    return Err(ComputeError::InvalidInput {
+                        message: format!(
+                            "cannot register sheet {} because cell {} is not hydrated in its mirror subtree",
+                            snapshot.id, cell.cell_id
+                        ),
+                    });
+                }
+                if let Some(formula) = &cell.formula {
+                    formula_cells.push((
+                        cell_id,
+                        sheet_id,
+                        compute_parser::normalize_xlsx_formula(formula),
+                    ));
+                }
+            }
+        }
+
+        if new_sheets.is_empty() {
+            return Ok(());
+        }
+
+        // The closure is fully resident now, so static imported names can be
+        // lowered to identity references before cell dependency extraction.
+        // The engine manifest rejects dynamic or unresolved names before this
+        // API is reached.
+        self.normalize_raw_named_ranges_for_graph(mirror);
+
+        // Cross-sheet resolution sees every required precedent regardless of
+        // snapshot order in this batch.
+        for (cell_id, sheet_id, formula) in formula_cells {
+            self.parse_and_register_formula(mirror, cell_id, sheet_id, formula, true);
+        }
+        self.register_all_variables(mirror);
+        self.incrementally_registered_sheets.extend(new_sheets);
+        Ok(())
+    }
+
+    /// Open sparse-graph edit admission after proving every required sheet was
+    /// incrementally registered. Returns the prior state for exact restoration.
+    ///
+    /// This deliberately does not return a guard borrowing `ComputeCore`: the
+    /// engine must be able to borrow its mirror and other stores while applying
+    /// the admitted mutation. Its dispatch scope must always call the matching
+    /// restore method, including on mutation errors.
+    pub(crate) fn begin_deferred_partial_graph_edit_admission(
+        &mut self,
+        required_sheets: &[SheetId],
+    ) -> Result<bool, ComputeError> {
+        let prior = self.deferred_partial_graph_edit_admitted;
+        if self.deferred_snapshot.is_none() {
+            return Ok(prior);
+        }
+
+        let missing: Vec<String> = required_sheets
+            .iter()
+            .filter(|sheet_id| !self.incrementally_registered_sheets.contains(sheet_id))
+            .map(SheetId::to_uuid_string)
+            .collect();
+        if !missing.is_empty() {
+            return Err(ComputeError::InvalidInput {
+                message: format!(
+                    "partial dependency graph edit requires registered hydrated sheets: {}",
+                    missing.join(", ")
+                ),
+            });
+        }
+
+        self.deferred_partial_graph_edit_admitted = true;
+        Ok(prior)
+    }
+
+    /// Restore sparse-graph admission to the state returned by `begin`.
+    pub(crate) fn restore_deferred_partial_graph_edit_admission(&mut self, prior: bool) {
+        self.deferred_partial_graph_edit_admitted = prior;
+    }
+
     /// Build the dependency graph if it hasn't been built yet (deferred from minimal init).
     ///
     /// Called automatically before any recalc or mutation that needs the graph.
@@ -392,7 +510,7 @@ impl ComputeCore {
         // context: cross-sheet references, names, and later-sheet cells can be
         // absent. Formula readback is seeded separately, but graph construction
         // must wait for full deferred hydration.
-        if self.deferred_snapshot.is_some() {
+        if self.deferred_snapshot.is_some() && !self.deferred_partial_graph_edit_admitted {
             return Err(Self::deferred_graph_construction_error());
         }
 
