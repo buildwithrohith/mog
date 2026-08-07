@@ -91,6 +91,36 @@ fn malformed_cell_resyncs_to_later_cells_and_records_diagnostic() {
 }
 
 #[test]
+fn clean_fast_parse_keeps_diagnostics_empty() {
+    let xml = br#"<worksheet><sheetData><row r="1">
+      <c r="A1"><v>1</v></c>
+      <c r="B1" t="s"><v>0</v></c>
+    </row></sheetData></worksheet>"#;
+    let shared_strings = vec!["clean"];
+    let mut cells = vec![CellData::default(); 10];
+    let mut strings = Vec::new();
+    let mut extras = ParseExtras::default();
+    let mut diagnostics = FastParseDiagnostics::default();
+
+    let count = parse_worksheet_fast_with_extras(
+        xml,
+        &shared_strings,
+        &mut cells,
+        &mut strings,
+        &mut Vec::new(),
+        &mut extras,
+        &mut diagnostics,
+        &[],
+    );
+
+    assert_eq!(count, 2);
+    assert_eq!(value_bytes(&cells[0], &strings), b"1");
+    assert_eq!(value_bytes(&cells[1], &strings), b"clean");
+    assert_eq!(diagnostics.total_count(), 0);
+    assert_eq!(diagnostics.sample_count(), 0);
+}
+
+#[test]
 fn invalid_cell_reference_is_skipped_without_misplacing_neighbors() {
     let xml = br#"<worksheet><sheetData><row r="1">
       <c r="A1"><v>1</v></c>
