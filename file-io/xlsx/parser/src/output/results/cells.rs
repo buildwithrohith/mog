@@ -1,5 +1,7 @@
 use super::*;
 
+use std::sync::Arc;
+
 /// Empty cell type value
 pub const CELL_TYPE_VAL_EMPTY: u8 = 0;
 /// Number cell type value
@@ -85,6 +87,10 @@ pub struct FullCellData {
     /// Preserved for raw SST passthrough to avoid lossy text-based reverse lookup.
     #[serde(skip)]
     pub sst_index: Option<u32>,
+    /// Workbook-scoped resolved SST text. Full parsing fills this sidecar after
+    /// retaining the index, so repeated SST cells share one allocation.
+    #[serde(skip)]
+    pub sst_resolved: Option<Arc<str>>,
     /// Whether the cell had an explicit `s` attribute in the original XML.
     /// Needed for round-trip fidelity: `s="0"` vs absent `s` are semantically
     /// equivalent but must be preserved for byte-fidelity.

@@ -1620,6 +1620,7 @@ mod tests {
             preserve_space_formula: false,
             preserve_space_value: false,
             sst_index: None,
+            sst_resolved: None,
             has_explicit_style: false,
         }
     }

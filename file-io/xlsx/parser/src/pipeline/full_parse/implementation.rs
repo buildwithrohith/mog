@@ -12,7 +12,7 @@
 #![allow(clippy::string_slice)]
 
 use crate::domain::cells::{
-    CellData, ParseExtras, apply_parse_extras, build_col_style_ranges_from_widths,
+    CellData, ParseExtras, apply_parse_extras_with_arcs, build_col_style_ranges_from_widths,
     coalesce_authored_style_only_cells, convert_cell_data, count_worksheet_cell_elements,
     data_table_info, parse_worksheet_fast_with_extras, pre_sheet_data_region,
 };
@@ -69,6 +69,7 @@ use crate::pipeline::metadata::parse_metadata;
 
 use crate::infra::xml_namespaces::NamespaceMap;
 use crate::pipeline::import_extensions::ImportExtensionParts;
+use std::sync::Arc;
 
 fn authored_run_repeats_positional_default(
     run: &domain_types::AuthoredStyleRun,
@@ -485,6 +486,12 @@ pub(super) fn parse_xlsx_full_native_impl(
     let shared_strings_declared_count = shared_strings_parser.declared_count();
     let shared_strings_declared_unique_count = shared_strings_parser.declared_unique_count();
     let shared_strings_ext_lst_xml = shared_strings_parser.root_ext_lst_xml();
+    // Keep one Arc per workbook SST entry. Full-parse cells retain only their
+    // index during worksheet scanning and point at these shared allocations.
+    let shared_string_arcs: Vec<Arc<str>> = shared_strings
+        .iter()
+        .map(|value| Arc::from(value.as_str()))
+        .collect();
     let t2 = tick(&timings);
 
     // Parse styles
@@ -868,6 +875,7 @@ pub(super) fn parse_xlsx_full_native_impl(
                     ps.name,
                     &ps.xml,
                     &shared_strings,
+                    &shared_string_arcs,
                     ps.comments,
                     ps.comment_authors,
                     ps.comments_root_namespace_attrs,
@@ -927,6 +935,7 @@ pub(super) fn parse_xlsx_full_native_impl(
             &archive,
             &selected_sheet_contexts,
             &shared_strings,
+            &shared_string_arcs,
             &pivot_caches,
             &mut ctx,
             &timings,
@@ -943,6 +952,7 @@ pub(super) fn parse_xlsx_full_native_impl(
         &archive,
         &selected_sheet_contexts,
         &shared_strings,
+        &shared_string_arcs,
         &pivot_caches,
         &mut ctx,
         &timings,
@@ -1241,6 +1251,7 @@ fn process_sheet_core(
     sheet_name: String,
     worksheet_xml: &[u8],
     shared_strings: &[String],
+    shared_string_arcs: &[Arc<str>],
     comments_json: Vec<CommentOutput>,
     comment_authors: Vec<String>,
     comments_root_namespace_attrs: Vec<(String, String)>,
@@ -1354,12 +1365,13 @@ fn process_sheet_core(
         .collect();
 
     // Apply collected extras (replaces postprocess_worksheet XML rescan)
-    apply_parse_extras(
+    apply_parse_extras_with_arcs(
         &mut cells,
         &extras,
         &cells_buffer[..cell_count],
         &strings_buffer,
         shared_strings,
+        shared_string_arcs,
     );
 
     // Auxiliary XML parsers — scope to post-sheetData region for performance.
@@ -1588,6 +1600,7 @@ fn process_sheet_parallel(
     sheet_name: String,
     worksheet_xml: &[u8],
     shared_strings: &[String],
+    shared_string_arcs: &[Arc<str>],
     comments_json: Vec<CommentOutput>,
     comment_authors: Vec<String>,
     comments_root_namespace_attrs: Vec<(String, String)>,
@@ -1611,6 +1624,7 @@ fn process_sheet_parallel(
         sheet_name,
         worksheet_xml,
         shared_strings,
+        shared_string_arcs,
         comments_json,
         comment_authors,
         comments_root_namespace_attrs,
@@ -1636,6 +1650,7 @@ fn parse_sheets_sequential(
     archive: &XlsxArchive,
     sheet_package_contexts: &[(usize, &SheetPackageContext)],
     shared_strings: &[String],
+    shared_string_arcs: &[Arc<str>],
     pivot_caches: &std::collections::HashMap<u32, crate::domain::pivot::types::ParsedPivotCache>,
     ctx: &mut ParseContext,
     timings: &Option<&mut ParseTimings>,
@@ -1768,12 +1783,13 @@ fn parse_sheets_sequential(
         let ws_t3 = tick(timings);
 
         // --- Sub-phase: Postprocessing (inline from extras, no XML rescan) ---
-        apply_parse_extras(
+        apply_parse_extras_with_arcs(
             &mut cells,
             &extras,
             &cells_buffer[..cell_count],
             &strings_buffer,
             shared_strings,
+            shared_string_arcs,
         );
         let ws_t4 = tick(timings);
 

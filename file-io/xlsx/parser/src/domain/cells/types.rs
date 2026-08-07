@@ -24,6 +24,28 @@ pub const VALUE_TYPE_FORMULA: u8 = 3;
 /// value_type. The full path uses this to detect formula cells and extract their cached values.
 pub const VALUE_TYPE_CACHED_FORMULA: u8 = 4;
 
+/// Borrowed shared-string lookup used by parser paths that already own the
+/// workbook string table. Implemented for both the public `&[&str]` shape and
+/// the internal `&[String]` shape so callers do not rebuild a pointer slice per
+/// worksheet.
+pub(crate) trait SharedStringLookup {
+    fn get(&self, index: usize) -> Option<&str>;
+}
+
+impl<'a> SharedStringLookup for [&'a str] {
+    #[inline]
+    fn get(&self, index: usize) -> Option<&str> {
+        self.as_ref().get(index).copied()
+    }
+}
+
+impl SharedStringLookup for [String] {
+    #[inline]
+    fn get(&self, index: usize) -> Option<&str> {
+        self.as_ref().get(index).map(String::as_str)
+    }
+}
+
 /// Cell data layout in shared buffer (20 bytes per cell)
 ///
 /// This struct is designed for zero-copy transfer between WASM and JavaScript

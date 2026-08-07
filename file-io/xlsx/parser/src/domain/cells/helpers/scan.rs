@@ -1,4 +1,5 @@
 use super::super::adapters::find_byte;
+use super::super::types::SharedStringLookup;
 use super::super::types::{
     AuthoredStyleOnlyCell, CELL_TYPE_BOOL, CELL_TYPE_DATE, CELL_TYPE_ERROR,
     CELL_TYPE_FORMULA_STRING, CELL_TYPE_NUMBER, CELL_TYPE_STRING, CellData, VALUE_TYPE_INLINE,
@@ -44,11 +45,12 @@ pub(crate) struct ScanResult {
 ///
 /// Safe because `<c>` children in OOXML are always flat (`<f>`, `<v>`, `<is>`).
 #[inline(always)]
-pub(crate) fn scan_cell<'a>(
+pub(crate) fn scan_cell<'a, T: SharedStringLookup + ?Sized>(
     xml: &'a [u8],
     cell_start: usize, // position of '<' in '<c ...'
     fallback_row: u32,
-    shared_strings: &'a [&'a str],
+    shared_strings: &'a T,
+    resolve_shared_strings: bool,
     strings: &mut Vec<u8>,
     _row_style_idx: Option<u32>,
     _col_styles: &[Option<u32>],
@@ -239,11 +241,17 @@ pub(crate) fn scan_cell<'a>(
         find_byte(xml, b'<', body_start)
     };
     let mut owned_value: Option<Vec<u8>> = None;
-    let (value_type, value_bytes): (u8, &[u8]) = if let Some(first_lt) = first_lt_opt {
+    let (value_type, mut value_bytes): (u8, &[u8]) = if let Some(first_lt) = first_lt_opt {
         let next = first_lt + 1;
         if next < len {
             if start_tag_at(xml, first_lt, b"f").is_some() {
-                extract_formula_forward(xml, first_lt, cell_type, shared_strings)
+                extract_formula_forward(
+                    xml,
+                    first_lt,
+                    cell_type,
+                    shared_strings,
+                    resolve_shared_strings,
+                )
             } else if let Some(v_tag) = start_tag_at(xml, first_lt, b"v") {
                 // Inline <v> extraction to also capture xml_space and sst_raw_idx
                 let tag_bytes = &xml[first_lt..=v_tag.tag_end];
@@ -261,8 +269,17 @@ pub(crate) fn scan_cell<'a>(
                         let raw_idx = parse_u32(value_bytes);
                         sst_raw_idx = raw_idx;
                         if let Some(idx) = raw_idx {
-                            if let Some(shared_str) = shared_strings.get(idx as usize) {
-                                (VALUE_TYPE_SHARED_STRING, shared_str.as_bytes())
+                            if resolve_shared_strings {
+                                if let Some(shared_str) = shared_strings.get(idx as usize) {
+                                    (VALUE_TYPE_SHARED_STRING, shared_str.as_bytes())
+                                } else {
+                                    (VALUE_TYPE_INLINE, value_bytes)
+                                }
+                            } else if shared_strings.get(idx as usize).is_some() {
+                                // Full parsing retains the SST index in extras and resolves the
+                                // shared Arc after CellData conversion. Avoid copying the text
+                                // into the per-sheet byte buffer here.
+                                (VALUE_TYPE_SHARED_STRING, b"")
                             } else {
                                 (VALUE_TYPE_INLINE, value_bytes)
                             }
@@ -292,6 +309,20 @@ pub(crate) fn scan_cell<'a>(
     } else {
         (VALUE_TYPE_NONE, b"" as &[u8])
     };
+
+    // A cached string formula enters through the `<f/>` branch above, so its
+    // SST index is not seen by the ordinary `<v>` side channel. In full-parse
+    // mode the cached index is retained and the temporary bytes are omitted;
+    // the later extras pass installs the workbook-scoped Arc instead.
+    if !resolve_shared_strings
+        && cell_type == CELL_TYPE_STRING
+        && value_type == crate::domain::cells::types::VALUE_TYPE_CACHED_FORMULA
+        && let Some(idx) = parse_u32(value_bytes)
+        && shared_strings.get(idx as usize).is_some()
+    {
+        sst_raw_idx = Some(idx);
+        value_bytes = b"";
+    }
 
     // --- Step 3: find </c> end ---
     // Fast path: after the last child element's closing tag, </c> is usually

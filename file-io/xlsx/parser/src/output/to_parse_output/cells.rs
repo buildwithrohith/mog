@@ -2,6 +2,9 @@
 
 use super::StrInternPool;
 
+use std::fmt::{self, Write as _};
+use std::sync::Arc;
+
 use domain_types::{
     CellData, CellDataExtras, FormulaCacheProvenance, FormulaCacheState,
     FormulaCachedValuePresence, ImportedCellProjectionRole,
@@ -242,7 +245,8 @@ pub(super) fn convert_cell_with_projection_role_and_provenance(
     // have cell_formula.is_some() but formula.is_none() (no formula text).
     let has_empty_cached_value =
         (is_formula || cell.formula.is_some() || cell.cell_formula.is_some())
-            && cell.value.as_ref().map_or(false, |v| v.is_empty())
+            && (cell.value.as_ref().is_some_and(String::is_empty)
+                || cell.sst_resolved.as_deref().is_some_and(str::is_empty))
             && cell.cached_value_type == 0;
     let is_formula_cell = is_formula || cell.formula.is_some() || cell.cell_formula.is_some();
 
@@ -294,7 +298,10 @@ pub(super) fn convert_cell_with_projection_role_and_provenance(
         original_value: if can_drop_sst_provenance || can_drop_numeric_original_value {
             None
         } else {
-            cell.value.clone()
+            cell.sst_resolved
+                .as_deref()
+                .map(str::to_owned)
+                .or_else(|| cell.value.clone())
         },
     };
 
@@ -325,7 +332,12 @@ fn formula_cache_provenance(
 
     let cached_value_presence = if has_empty_cached_value {
         FormulaCachedValuePresence::ExplicitEmpty
-    } else if cell.value.as_ref().is_some_and(|value| !value.is_empty()) {
+    } else if cell.value.as_ref().is_some_and(|value| !value.is_empty())
+        || cell
+            .sst_resolved
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+    {
         FormulaCachedValuePresence::NonEmpty
     } else {
         FormulaCachedValuePresence::Absent
@@ -336,6 +348,7 @@ fn formula_cache_provenance(
         && cached_value_kind.is_none()
         && cached_value_presence.is_absent()
         && cell.value.is_none()
+        && cell.sst_resolved.is_none()
     {
         return FormulaCacheProvenance::default();
     }
@@ -345,7 +358,11 @@ fn formula_cache_provenance(
         force_recalc: cell.force_recalc,
         cached_value_kind,
         cached_value_presence,
-        cached_value_lexeme: cell.value.clone(),
+        cached_value_lexeme: cell
+            .sst_resolved
+            .as_deref()
+            .map(str::to_owned)
+            .or_else(|| cell.value.clone()),
         formula_identity_fingerprint: cell.formula.clone(),
         ..Default::default()
     }
@@ -385,6 +402,53 @@ fn rich_string_for_cell(
     })
 }
 
+const NUMBER_FORMAT_BUFFER_SIZE: usize = 32;
+
+struct NumberFormatBuffer {
+    bytes: [u8; NUMBER_FORMAT_BUFFER_SIZE],
+    len: usize,
+}
+
+impl NumberFormatBuffer {
+    fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+
+    fn trimmed_len(&self) -> usize {
+        let mut len = self.len;
+        if self.as_bytes().contains(&b'.') {
+            while len > 0 && self.bytes[len - 1] == b'0' {
+                len -= 1;
+            }
+            if len > 0 && self.bytes[len - 1] == b'.' {
+                len -= 1;
+            }
+        }
+        len
+    }
+}
+
+impl Default for NumberFormatBuffer {
+    fn default() -> Self {
+        Self {
+            bytes: [0; NUMBER_FORMAT_BUFFER_SIZE],
+            len: 0,
+        }
+    }
+}
+
+impl fmt::Write for NumberFormatBuffer {
+    fn write_str(&mut self, value: &str) -> fmt::Result {
+        let end = self.len.checked_add(value.len()).ok_or(fmt::Error)?;
+        if end > self.bytes.len() {
+            return Err(fmt::Error);
+        }
+        self.bytes[self.len..end].copy_from_slice(value.as_bytes());
+        self.len = end;
+        Ok(())
+    }
+}
+
 fn numeric_original_value_is_writer_canonical(value: Option<&str>) -> bool {
     let Some(value) = value else {
         return false;
@@ -392,19 +456,40 @@ fn numeric_original_value_is_writer_canonical(value: Option<&str>) -> bool {
     let Ok(parsed) = value.parse::<f64>() else {
         return false;
     };
-    parsed.is_finite() && format_number_like_writer(parsed) == value
+    if !parsed.is_finite() {
+        return false;
+    }
+
+    let mut rendered = NumberFormatBuffer::default();
+    let result = if parsed.fract() == 0.0 && parsed.abs() < 1e15 {
+        write!(&mut rendered, "{parsed:.0}")
+    } else {
+        write!(&mut rendered, "{parsed}")
+    };
+    if result.is_err() {
+        return false;
+    }
+
+    let rendered_len = rendered.trimmed_len();
+    rendered.as_bytes().get(..rendered_len) == Some(value.as_bytes())
 }
 
-fn format_number_like_writer(n: f64) -> String {
-    if n.fract() == 0.0 && n.abs() < 1e15 {
-        format!("{n:.0}")
-    } else {
-        let s = format!("{n}");
-        if s.contains('.') {
-            s.trim_end_matches('0').trim_end_matches('.').to_string()
-        } else {
-            s
-        }
+#[cfg(test)]
+mod numeric_provenance_tests {
+    use super::numeric_original_value_is_writer_canonical;
+
+    #[test]
+    fn canonical_numeric_comparison_preserves_writer_lexemes_without_allocating() {
+        assert!(numeric_original_value_is_writer_canonical(Some("2")));
+        assert!(numeric_original_value_is_writer_canonical(Some(
+            "7039265000250605000000000000"
+        )));
+        assert!(!numeric_original_value_is_writer_canonical(Some(
+            "7.039265000250605e+27"
+        )));
+        assert!(!numeric_original_value_is_writer_canonical(Some("2.0")));
+        assert!(!numeric_original_value_is_writer_canonical(Some("1.0")));
+        assert!(!numeric_original_value_is_writer_canonical(Some("NaN")));
     }
 }
 
@@ -433,9 +518,14 @@ pub(super) fn resolve_cell_value(
             }
         }
         CELL_TYPE_STRING => cell
-            .value
+            .sst_resolved
             .as_ref()
-            .map(|v| CellValue::Text(string_pool.intern(v)))
+            .map(|value| CellValue::Text(Arc::clone(value)))
+            .or_else(|| {
+                cell.value
+                    .as_ref()
+                    .map(|value| CellValue::Text(string_pool.intern(value)))
+            })
             .unwrap_or_else(|| CellValue::Text(string_pool.intern(""))),
         CELL_TYPE_DATE => cell
             .value
@@ -467,13 +557,17 @@ pub(super) fn resolve_formula_cached_value(
     cell: &FullCellData,
     string_pool: &mut StrInternPool,
 ) -> CellValue {
-    let value_str = match &cell.value {
-        Some(v) => v,
-        None => return CellValue::Null,
+    let value_str = cell.sst_resolved.as_deref().or(cell.value.as_deref());
+    let Some(value_str) = value_str else {
+        return CellValue::Null;
     };
 
     match cell.cached_value_type {
-        CACHED_VALUE_TYPE_STRING => CellValue::Text(string_pool.intern(value_str)),
+        CACHED_VALUE_TYPE_STRING => CellValue::Text(
+            cell.sst_resolved
+                .clone()
+                .unwrap_or_else(|| string_pool.intern(value_str)),
+        ),
         CACHED_VALUE_TYPE_ERROR => CellValue::Error(parse_error_code(value_str), None),
         CACHED_VALUE_TYPE_BOOL => {
             CellValue::Boolean(value_str == "1" || value_str.eq_ignore_ascii_case("true"))
@@ -484,7 +578,11 @@ pub(super) fn resolve_formula_cached_value(
             match value_str.parse::<f64>().ok() {
                 Some(n) => CellValue::number(n),
                 None if value_str.is_empty() => CellValue::Null,
-                None => CellValue::Text(string_pool.intern(value_str)),
+                None => CellValue::Text(
+                    cell.sst_resolved
+                        .clone()
+                        .unwrap_or_else(|| string_pool.intern(value_str)),
+                ),
             }
         }
     }

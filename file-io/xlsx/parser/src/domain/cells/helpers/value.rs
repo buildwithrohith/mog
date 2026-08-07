@@ -1,6 +1,6 @@
 use super::super::types::{
-    CELL_TYPE_STRING, VALUE_TYPE_CACHED_FORMULA, VALUE_TYPE_FORMULA, VALUE_TYPE_INLINE,
-    VALUE_TYPE_NONE, VALUE_TYPE_SHARED_STRING,
+    CELL_TYPE_STRING, SharedStringLookup, VALUE_TYPE_CACHED_FORMULA, VALUE_TYPE_FORMULA,
+    VALUE_TYPE_INLINE, VALUE_TYPE_NONE, VALUE_TYPE_SHARED_STRING,
 };
 use super::bytes::parse_u32;
 use super::cell_attrs::parse_cell_type;
@@ -19,9 +19,16 @@ use crate::domain::strings::read::decode_xml_entities_full;
 /// - `<f/>` or `<f .../>` (self-closing formula - shared formula reference)
 /// - `<is><t>` (inline string) elements
 pub fn extract_cell_value_fast<'a>(xml: &'a [u8], shared_strings: &'a [&'a str]) -> (u8, &'a [u8]) {
+    extract_cell_value_fast_with_lookup(xml, shared_strings)
+}
+
+pub(crate) fn extract_cell_value_fast_with_lookup<'a, T: SharedStringLookup + ?Sized>(
+    xml: &'a [u8],
+    shared_strings: &'a T,
+) -> (u8, &'a [u8]) {
     // Check for formula element (<f> or <prefix:f>).
     if let Some(f_tag) = find_start_tag(xml, b"f", 0) {
-        return extract_formula_forward(xml, f_tag.lt, parse_cell_type(xml), shared_strings);
+        return extract_formula_forward(xml, f_tag.lt, parse_cell_type(xml), shared_strings, true);
     }
 
     // Check for value (<v>) — handles both <v>text</v> and <v xml:space="preserve">text</v>
@@ -32,6 +39,7 @@ pub fn extract_cell_value_fast<'a>(xml: &'a [u8], shared_strings: &'a [&'a str])
             parse_cell_type(xml),
             shared_strings,
             VALUE_TYPE_INLINE,
+            true,
         );
     }
 
@@ -48,11 +56,12 @@ pub fn extract_cell_value_fast<'a>(xml: &'a [u8], shared_strings: &'a [&'a str])
 /// Handles `<f>formula</f>`, `<f ...>formula</f>`, and `<f .../>` (self-closing
 /// shared formula reference with cached `<v>` value).
 #[inline]
-pub(super) fn extract_formula_forward<'a>(
+pub(super) fn extract_formula_forward<'a, T: SharedStringLookup + ?Sized>(
     xml: &'a [u8],
     f_lt: usize,
     cell_type: u8,
-    shared_strings: &'a [&'a str],
+    shared_strings: &'a T,
+    resolve_shared_strings: bool,
 ) -> (u8, &'a [u8]) {
     let Some(f_tag) = start_tag_at(xml, f_lt, b"f") else {
         return (VALUE_TYPE_NONE, b"");
@@ -75,6 +84,7 @@ pub(super) fn extract_formula_forward<'a>(
                 cell_type,
                 shared_strings,
                 VALUE_TYPE_CACHED_FORMULA,
+                resolve_shared_strings,
             ),
             _ => (VALUE_TYPE_CACHED_FORMULA, b""),
         }
@@ -93,12 +103,13 @@ pub(super) fn extract_formula_forward<'a>(
 /// Shared string resolution returns `VALUE_TYPE_SHARED_STRING` for plain values or
 /// preserves `VALUE_TYPE_CACHED_FORMULA` for formula cells.
 #[inline]
-fn extract_v_forward<'a>(
+fn extract_v_forward<'a, T: SharedStringLookup + ?Sized>(
     xml: &'a [u8],
     v_lt: usize,
     cell_type: u8,
-    shared_strings: &'a [&'a str],
+    shared_strings: &'a T,
     success_type: u8,
+    resolve_shared_strings: bool,
 ) -> (u8, &'a [u8]) {
     let Some(v_tag) = start_tag_at(xml, v_lt, b"v") else {
         return (VALUE_TYPE_NONE, b"");
@@ -111,7 +122,7 @@ fn extract_v_forward<'a>(
         let value_bytes = &xml[v_tag.content_start..v_close.lt];
 
         // Resolve shared string reference
-        if cell_type == CELL_TYPE_STRING {
+        if resolve_shared_strings && cell_type == CELL_TYPE_STRING {
             if let Some(idx) = parse_u32(value_bytes) {
                 if let Some(shared_str) = shared_strings.get(idx as usize) {
                     // Plain values → SHARED_STRING; cached formulas keep CACHED_FORMULA

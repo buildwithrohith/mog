@@ -23,6 +23,7 @@ pub use cell_attrs::{parse_cell_ref_fast, parse_cell_type, parse_style_idx};
 pub(crate) use formula_extras::FormulaExtras;
 pub use formula_extras::extract_formula_extras_fused;
 pub use formula_refs::adjust_formula_references;
+pub(crate) use formula_refs::{expand_formula_references, tokenize_formula_references};
 pub(crate) use scan::{ScanResult, scan_cell};
 pub use shared_formula::extract_shared_formula_info;
 pub(crate) use tags::{
@@ -30,4 +31,5 @@ pub(crate) use tags::{
     post_sheet_data_region, pre_sheet_data_region, start_tag_at,
 };
 pub use value::extract_cell_value_fast;
+pub(crate) use value::extract_cell_value_fast_with_lookup;
 pub(crate) use worksheet_scan::{CellEnd, find_cell_end, parse_row_number};

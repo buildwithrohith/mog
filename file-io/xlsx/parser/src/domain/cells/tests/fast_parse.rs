@@ -1,8 +1,10 @@
 use crate::domain::cells::{
     CELL_TYPE_BOOL, CELL_TYPE_ERROR, CELL_TYPE_FORMULA_STRING, CELL_TYPE_NUMBER, CELL_TYPE_STRING,
     CellData, ParseExtras, VALUE_TYPE_CACHED_FORMULA, VALUE_TYPE_FORMULA, VALUE_TYPE_INLINE,
-    VALUE_TYPE_SHARED_STRING, parse_worksheet_fast, parse_worksheet_fast_with_extras,
+    VALUE_TYPE_SHARED_STRING, apply_parse_extras_with_arcs, convert_cell_data,
+    parse_worksheet_fast, parse_worksheet_fast_with_extras,
 };
+use std::sync::Arc;
 
 fn value_bytes<'a>(cell: &CellData, strings: &'a [u8]) -> &'a [u8] {
     let start = cell.get_value_offset() as usize;
@@ -53,6 +55,66 @@ fn test_parse_worksheet_basic() {
     // Third cell: A2 with formula
     assert_eq!(cells[2].get_row(), 1);
     assert_eq!(cells[2].get_col(), 0);
+}
+
+#[test]
+fn full_parse_shared_strings_resolve_from_workbook_arcs_without_sheet_copies() {
+    let xml = br#"<worksheet><sheetData><row r="1">
+      <c r="A1" t="s"><v>0</v></c>
+      <c r="B1" t="s"><f>A1</f><v>0</v></c>
+    </row></sheetData></worksheet>"#;
+    let shared_strings: Vec<&str> = vec!["Shared"];
+    let shared_string_arcs: Vec<Arc<str>> = shared_strings
+        .iter()
+        .map(|value| Arc::from(*value))
+        .collect();
+    let mut cells = vec![CellData::default(); 4];
+    let mut strings = Vec::new();
+    let mut row_heights = Vec::new();
+    let mut extras = ParseExtras::default();
+
+    let count = parse_worksheet_fast_with_extras(
+        xml,
+        &shared_strings,
+        &mut cells,
+        &mut strings,
+        &mut row_heights,
+        &mut extras,
+        &[],
+    );
+
+    assert_eq!(count, 2);
+    assert_eq!(cells[0].value_type, VALUE_TYPE_SHARED_STRING);
+    let first_value_len = cells[0].value_len;
+    assert_eq!(first_value_len, 0);
+    assert_eq!(extras.sst_indices, vec![(0, 0)]);
+    assert_eq!(extras.cached_values, vec![(1, 2, 1)]);
+
+    let mut decode_buf = Vec::new();
+    let mut full_cells: Vec<_> = cells[..count]
+        .iter()
+        .map(|cell| convert_cell_data(cell, &strings, &mut decode_buf))
+        .collect();
+    apply_parse_extras_with_arcs(
+        &mut full_cells,
+        &extras,
+        &cells[..count],
+        &strings,
+        &[],
+        &shared_string_arcs,
+    );
+
+    assert_eq!(full_cells[0].value.as_deref(), Some(""));
+    assert_eq!(full_cells[0].sst_index, Some(0));
+    assert!(Arc::ptr_eq(
+        full_cells[0].sst_resolved.as_ref().unwrap(),
+        &shared_string_arcs[0]
+    ));
+    assert!(full_cells[1].value.is_none());
+    assert!(Arc::ptr_eq(
+        full_cells[1].sst_resolved.as_ref().unwrap(),
+        &shared_string_arcs[0]
+    ));
 }
 
 #[test]

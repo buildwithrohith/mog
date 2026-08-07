@@ -61,6 +61,28 @@ pub fn parse_worksheet_fast_with_extras(
     )
 }
 
+/// Crate-local fast parser entry point for an owned workbook string table.
+/// Unlike the public `&[&str]` API, this path borrows `&[String]` directly so
+/// lazy worksheet materialization does not allocate a pointer slice per sheet.
+pub(crate) fn parse_worksheet_fast_with_owned_strings(
+    xml: &[u8],
+    shared_strings: &[String],
+    cells: &mut [CellData],
+    strings: &mut Vec<u8>,
+    row_heights: &mut Vec<RowHeight>,
+    col_styles: &[Option<u32>],
+) -> usize {
+    fast::parse_worksheet_core(
+        xml,
+        shared_strings,
+        cells,
+        strings,
+        row_heights,
+        None,
+        col_styles,
+    )
+}
+
 /// Parse worksheet XML with error recovery context.
 ///
 /// Returns `(cells_parsed, cells_skipped)`, where skipped cells had recoverable

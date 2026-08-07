@@ -1,12 +1,13 @@
 //! Conversion from fast worksheet cell buffers into full-parse cell output.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
+use crate::domain::cells::helpers::{expand_formula_references, tokenize_formula_references};
 use crate::domain::cells::{
     AuthoredStyleOnlyCell, CELL_TYPE_BOOL, CELL_TYPE_EMPTY, CELL_TYPE_ERROR, CELL_TYPE_FORMULA,
     CELL_TYPE_FORMULA_STRING, CELL_TYPE_NUMBER, CELL_TYPE_STRING, CellData, ParseExtras,
     VALUE_TYPE_CACHED_FORMULA, VALUE_TYPE_FORMULA, VALUE_TYPE_INLINE, VALUE_TYPE_SHARED_STRING,
-    adjust_formula_references,
 };
 use crate::output::results::{
     CELL_TYPE_VAL_BOOL, CELL_TYPE_VAL_EMPTY, CELL_TYPE_VAL_ERROR, CELL_TYPE_VAL_FORMULA,
@@ -47,9 +48,13 @@ pub(crate) fn col_style_range_at(ranges: &[domain_types::ColStyleRange], col: u3
 /// Convert bytes to String after the XML part boundary has validated UTF-8.
 #[inline]
 fn bytes_to_string(bytes: &[u8]) -> String {
-    std::str::from_utf8(bytes)
-        .expect("worksheet/shared-string XML text was validated as UTF-8 at the archive boundary")
-        .to_owned()
+    debug_assert!(std::str::from_utf8(bytes).is_ok());
+    // SAFETY: Full conversion receives worksheet/shared-string bytes only from
+    // `XlsxArchive::read_file`/`read_file_into`, whose `read_entry` call
+    // validates XML-part UTF-8 before the bytes reach CellData. Entity and
+    // OOXML escape decoding preserves valid UTF-8 (or leaves invalid scalar
+    // references as their original ASCII spelling).
+    unsafe { std::str::from_utf8_unchecked(bytes) }.to_owned()
 }
 
 #[inline]
@@ -206,17 +211,38 @@ pub(crate) fn convert_cell_data(
         preserve_space_formula: false,
         preserve_space_value: false,
         sst_index: None,
+        sst_resolved: None,
         has_explicit_style: false,
     }
 }
 
 /// Apply the extras collected during the first parse pass to the FullCellData array.
+#[cfg(test)]
 pub(crate) fn apply_parse_extras(
     cells: &mut [FullCellData],
     extras: &ParseExtras,
     cells_buffer: &[CellData],
     strings_buffer: &[u8],
     shared_strings: &[String],
+) {
+    apply_parse_extras_with_arcs(
+        cells,
+        extras,
+        cells_buffer,
+        strings_buffer,
+        shared_strings,
+        &[],
+    );
+}
+
+/// Apply parse extras while retaining workbook-scoped resolved SST arcs.
+pub(crate) fn apply_parse_extras_with_arcs(
+    cells: &mut [FullCellData],
+    extras: &ParseExtras,
+    cells_buffer: &[CellData],
+    strings_buffer: &[u8],
+    shared_strings: &[String],
+    shared_string_arcs: &[Arc<str>],
 ) {
     let mut decode_buf = Vec::new();
     for &(cell_idx, offset, len) in &extras.cached_values {
@@ -228,26 +254,26 @@ pub(crate) fn apply_parse_extras(
             let end = (start + len as usize).min(strings_buffer.len());
             if start <= strings_buffer.len() {
                 let value_bytes = &strings_buffer[start..end];
-                let value_str = decode_xstring_to_string(value_bytes, &mut decode_buf);
-
                 if cell_idx < cells_buffer.len() {
                     let cd = cells_buffer[cell_idx];
                     if cd.cell_type == CELL_TYPE_STRING {
-                        let resolved = value_str
-                            .parse::<usize>()
+                        let resolved_idx = std::str::from_utf8(value_bytes)
                             .ok()
-                            .and_then(|idx| shared_strings.get(idx).cloned());
-                        if let Some(s) = resolved {
-                            cells[cell_idx].value = Some(s);
-                        } else {
-                            cells[cell_idx].value = Some(value_str.clone());
+                            .and_then(|value| value.parse::<usize>().ok());
+                        if let Some(idx) = resolved_idx {
+                            if let Some(s) = shared_string_arcs.get(idx) {
+                                cells[cell_idx].sst_resolved = Some(Arc::clone(s));
+                                continue;
+                            }
+                            if let Some(s) = shared_strings.get(idx) {
+                                cells[cell_idx].value = Some(s.clone());
+                                continue;
+                            }
                         }
-                    } else {
-                        cells[cell_idx].value = Some(value_str.clone());
                     }
-                } else {
-                    cells[cell_idx].value = Some(value_str.clone());
                 }
+                let value_str = decode_xstring_to_string(value_bytes, &mut decode_buf);
+                cells[cell_idx].value = Some(value_str);
             }
         }
     }
@@ -318,6 +344,9 @@ pub(crate) fn apply_parse_extras(
     for &(cell_idx, sst_idx) in &extras.sst_indices {
         if cell_idx < cells.len() {
             cells[cell_idx].sst_index = Some(sst_idx);
+            if let Some(s) = shared_string_arcs.get(sst_idx as usize) {
+                cells[cell_idx].sst_resolved = Some(Arc::clone(s));
+            }
         }
     }
     for &cell_idx in &extras.explicit_style_cells {
@@ -334,6 +363,17 @@ pub(crate) fn apply_parse_extras(
         return;
     }
 
+    let shared_formula_templates = extras
+        .sf_masters
+        .iter()
+        .map(|(&si, master)| {
+            (
+                si,
+                tokenize_formula_references(master.formula_text.as_bytes()),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
     let mut cell_pos_map: HashMap<(u32, u32), usize> = HashMap::with_capacity(cells.len());
     for (idx, cell) in cells.iter().enumerate() {
         cell_pos_map.insert((cell.row, cell.col), idx);
@@ -341,11 +381,15 @@ pub(crate) fn apply_parse_extras(
 
     if !extras.sf_masters.is_empty() && !extras.sf_refs.is_empty() {
         for &(si, ref_row, ref_col) in &extras.sf_refs {
-            if let Some(master) = extras.sf_masters.get(&si) {
+            if let (Some(master), Some(template)) = (
+                extras.sf_masters.get(&si),
+                shared_formula_templates.get(&si),
+            ) {
                 let row_offset = ref_row as i32 - master.master_row as i32;
                 let col_offset = ref_col as i32 - master.master_col as i32;
-                let expanded = adjust_formula_references(
+                let expanded = expand_formula_references(
                     master.formula_text.as_bytes(),
+                    template,
                     row_offset,
                     col_offset,
                 );
@@ -509,6 +553,7 @@ mod tests {
             preserve_space_formula: false,
             preserve_space_value: false,
             sst_index: None,
+            sst_resolved: None,
             has_explicit_style: false,
         }
     }

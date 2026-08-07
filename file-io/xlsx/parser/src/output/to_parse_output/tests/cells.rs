@@ -50,6 +50,7 @@ fn test_resolve_cell_value_number() {
         preserve_space_formula: false,
         preserve_space_value: false,
         sst_index: None,
+        sst_resolved: None,
         has_explicit_style: false,
     };
     let mut string_pool = StrInternPool::default();
@@ -140,6 +141,7 @@ fn test_resolve_cell_value_string() {
         preserve_space_formula: false,
         preserve_space_value: false,
         sst_index: None,
+        sst_resolved: None,
         has_explicit_style: false,
     };
     let mut string_pool = StrInternPool::default();
@@ -169,6 +171,7 @@ fn parse_output_interns_repeated_cell_text_allocations() {
         preserve_space_formula: false,
         preserve_space_value: false,
         sst_index: None,
+        sst_resolved: None,
         has_explicit_style: false,
     };
     let result = threading_result(
@@ -206,6 +209,38 @@ fn parse_output_interns_repeated_cell_text_allocations() {
 }
 
 #[test]
+fn parse_output_uses_the_pre_resolved_sst_arc() {
+    let shared = Arc::<str>::from("Shared label");
+    let cell = FullCellData {
+        row: 0,
+        col: 0,
+        cell_type: CELL_TYPE_STRING,
+        style_idx: 0,
+        value: Some(String::new()),
+        formula: None,
+        force_recalc: false,
+        array_ref: None,
+        cell_metadata_index: None,
+        vm: None,
+        phonetic: false,
+        date_lexical_value: None,
+        cached_value_type: 0,
+        cell_formula: None,
+        preserve_space_formula: false,
+        preserve_space_value: false,
+        sst_index: Some(0),
+        sst_resolved: Some(Arc::clone(&shared)),
+        has_explicit_style: false,
+    };
+    let mut string_pool = StrInternPool::default();
+
+    let CellValue::Text(resolved) = resolve_cell_value(&cell, &mut string_pool) else {
+        panic!("expected pre-resolved SST text");
+    };
+    assert!(Arc::ptr_eq(&resolved, &shared));
+}
+
+#[test]
 fn test_resolve_cell_value_bool() {
     let cell = FullCellData {
         row: 0,
@@ -225,6 +260,7 @@ fn test_resolve_cell_value_bool() {
         preserve_space_formula: false,
         preserve_space_value: false,
         sst_index: None,
+        sst_resolved: None,
         has_explicit_style: false,
     };
     let mut string_pool = StrInternPool::default();
@@ -254,6 +290,7 @@ fn test_resolve_cell_value_empty() {
         preserve_space_formula: false,
         preserve_space_value: false,
         sst_index: None,
+        sst_resolved: None,
         has_explicit_style: false,
     };
     let mut string_pool = StrInternPool::default();
@@ -280,6 +317,7 @@ fn test_convert_cell_with_formula() {
         preserve_space_formula: false,
         preserve_space_value: false,
         sst_index: None,
+        sst_resolved: None,
         has_explicit_style: false,
     };
     let cd = convert_cell(&cell, &[]);

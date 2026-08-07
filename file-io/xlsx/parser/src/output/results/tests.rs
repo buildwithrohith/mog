@@ -125,6 +125,7 @@ fn test_full_cell_data_serialize() {
         preserve_space_formula: false,
         preserve_space_value: false,
         sst_index: None,
+        sst_resolved: None,
         has_explicit_style: false,
     };
     let json = serde_json::to_string(&cell).unwrap();

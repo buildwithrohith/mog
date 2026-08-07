@@ -22,12 +22,8 @@ pub(super) fn parse_sheet_internal(
 
     let metadata = &workbook.sheet_metadata[index];
     let expected_cells = estimated_cells(metadata);
-    let mut parsed = parse_materialized_cells(
-        &worksheet_xml,
-        sheet_num,
-        metadata,
-        &workbook.shared_string_refs,
-    )?;
+    let mut parsed =
+        parse_materialized_cells(&worksheet_xml, metadata, &workbook.shared_string_refs)?;
 
     if parsed.cell_count < expected_cells / 2 {
         let warning_msg = format!(

@@ -242,6 +242,7 @@ pub fn parse_xlsx_parallel(xlsx_data: &[u8]) -> Result<ParallelParseResult, Para
         })?;
         shared_string_values.push(s.to_owned());
     }
+    let shared_string_refs: Vec<&str> = shared_string_values.iter().map(String::as_str).collect();
 
     // 3. Parse workbook to get sheet names
     let workbook_xml = archive
@@ -284,7 +285,7 @@ pub fn parse_xlsx_parallel(xlsx_data: &[u8]) -> Result<ParallelParseResult, Para
     // 5. Parse worksheets in parallel using rayon
     let parsed_sheets: Vec<SheetCells> = decompressed_sheets
         .into_par_iter()
-        .map(|sheet| parse_single_sheet(sheet.idx, sheet.name, &sheet.xml, &shared_string_values))
+        .map(|sheet| parse_single_sheet(sheet.idx, sheet.name, &sheet.xml, &shared_string_refs))
         .collect::<Result<Vec<_>, _>>()?;
 
     // 6. Sort by sheet index to maintain order
@@ -299,7 +300,7 @@ fn parse_single_sheet(
     sheet_idx: usize,
     sheet_name: String,
     xml: &[u8],
-    shared_strings: &[String],
+    shared_strings: &[&str],
 ) -> Result<SheetCells, ParallelParseError> {
     ensure_parallel_limit(
         "worksheet cell",
@@ -318,14 +319,11 @@ fn parse_single_sheet(
     let mut cells = vec![CellData::default(); max_cells];
     let mut strings = Vec::with_capacity(estimated_strings);
 
-    // Create string references for parse_worksheet_fast
-    let shared_string_refs: Vec<&str> = shared_strings.iter().map(|s| s.as_str()).collect();
-
     // Parse the worksheet
     let mut row_heights: Vec<RowHeight> = Vec::new();
     let cell_count = parse_worksheet_fast(
         xml,
-        &shared_string_refs,
+        shared_strings,
         &mut cells,
         &mut strings,
         &mut row_heights,
@@ -397,6 +395,7 @@ pub fn parse_xlsx_parallel_full(
         })?;
         shared_string_values.push(s.to_owned());
     }
+    let shared_string_refs: Vec<&str> = shared_string_values.iter().map(String::as_str).collect();
 
     // 3. Parse workbook to get sheet names
     let workbook_xml = archive
@@ -444,7 +443,7 @@ pub fn parse_xlsx_parallel_full(
     // Now parse in parallel
     let parsed_sheets: Vec<SheetCells> = sheet_data
         .into_par_iter()
-        .map(|(idx, name, xml)| parse_single_sheet(idx, name, &xml, &shared_string_values))
+        .map(|(idx, name, xml)| parse_single_sheet(idx, name, &xml, &shared_string_refs))
         .collect::<Result<Vec<_>, _>>()?;
 
     // 6. Sort by sheet index to maintain order
