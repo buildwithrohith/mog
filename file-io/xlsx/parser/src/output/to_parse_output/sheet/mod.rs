@@ -1,5 +1,7 @@
 use super::*;
 
+use domain_types::ImportedCellProjectionRole;
+
 mod comments;
 
 use comments::build_sheet_comments;
@@ -90,27 +92,47 @@ pub(super) fn convert_sheet(
             shared_strings_phonetic_xml,
         )
     });
-    let converted_cells: Vec<CellData> = sheet
-        .cells
-        .iter()
-        .map(|c| {
-            let role = projection_roles
-                .get(&(c.row, c.col))
-                .copied()
-                .unwrap_or_default();
-            convert_cell_with_projection_role_and_provenance(
-                c,
-                shared_strings,
-                string_pool,
-                shared_strings_rich_runs,
-                shared_strings_phonetic_xml,
-                role,
-                sst_compaction.as_ref(),
-                compact_numeric_provenance,
-                compact_non_formula_cached_type,
-            )
-        })
-        .collect();
+    let converted_cells: Vec<CellData> = if projection_roles.is_empty() {
+        sheet
+            .cells
+            .iter()
+            .map(|c| {
+                convert_cell_with_projection_role_and_provenance(
+                    c,
+                    shared_strings,
+                    string_pool,
+                    shared_strings_rich_runs,
+                    shared_strings_phonetic_xml,
+                    ImportedCellProjectionRole::Normal,
+                    sst_compaction.as_ref(),
+                    compact_numeric_provenance,
+                    compact_non_formula_cached_type,
+                )
+            })
+            .collect()
+    } else {
+        sheet
+            .cells
+            .iter()
+            .map(|c| {
+                let role = projection_roles
+                    .get(&(c.row, c.col))
+                    .copied()
+                    .unwrap_or(ImportedCellProjectionRole::Normal);
+                convert_cell_with_projection_role_and_provenance(
+                    c,
+                    shared_strings,
+                    string_pool,
+                    shared_strings_rich_runs,
+                    shared_strings_phonetic_xml,
+                    role,
+                    sst_compaction.as_ref(),
+                    compact_numeric_provenance,
+                    compact_non_formula_cached_type,
+                )
+            })
+            .collect()
+    };
     let mut authored_style_points = Vec::new();
     let mut cells = Vec::with_capacity(converted_cells.len());
     for mut cell in converted_cells {
