@@ -28,7 +28,7 @@ impl ComputeCore {
         projection_deltas: &mut Vec<ProjectionDelta>,
         metrics: &mut RecalcMetrics,
     ) {
-        let ordered_sheets = self.ordered_sheets_cache.clone();
+        let ordered_sheets = Arc::clone(&self.ordered_sheets_cache);
         let has_subscriber = tracing::dispatcher::has_been_set();
 
         for &cell_id in level {
@@ -53,7 +53,7 @@ impl ComputeCore {
                 c
             };
             ctx.ast_cache = Some(&self.ast_cache);
-            ctx.access.ordered_sheets = ordered_sheets.clone();
+            ctx.access.ordered_sheets = Arc::clone(&ordered_sheets);
             ctx.access.formula_text_provider = self.formula_text_provider();
             #[cfg(feature = "native")]
             {

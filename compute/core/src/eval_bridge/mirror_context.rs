@@ -88,7 +88,7 @@ impl<'a> MirrorContext<'a> {
         mirror: &'a CellMirror,
         current_cell_id: CellId,
         current_sheet: SheetId,
-        ordered_sheets: Vec<SheetId>,
+        ordered_sheets: Arc<[SheetId]>,
     ) -> Self {
         Self {
             access: MirrorAccess::with_sheet_order(

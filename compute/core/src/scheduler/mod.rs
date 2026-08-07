@@ -215,7 +215,8 @@ pub struct ComputeCore {
     /// evaluation to match Excel's declaration-order evaluation of circular refs.
     sheet_order: FxHashMap<SheetId, usize>,
     /// Cached sorted sheet list for 3-D reference evaluation. Rebuilt on sheet add/delete.
-    ordered_sheets_cache: Vec<SheetId>,
+    /// Shared with per-formula evaluation contexts without copying the sheet IDs.
+    ordered_sheets_cache: Arc<[SheetId]>,
     /// Guard against recursive data table prepass calls. When true,
     /// `run_data_table_prepass` returns empty (TABLE cells are skipped).
     in_data_table_eval: bool,
@@ -264,7 +265,7 @@ impl ComputeCore {
             current_sumifs_cache_epoch: None,
             cell_range_keys: FxHashMap::default(),
             sheet_order: FxHashMap::default(),
-            ordered_sheets_cache: Vec::new(),
+            ordered_sheets_cache: Arc::from([]),
             in_data_table_eval: false,
             // Initial state requires a recalc: formula cells start with Null
             // values from the mirror until `full_recalc` evaluates them.
@@ -361,7 +362,8 @@ impl ComputeCore {
             .map(|(&id, &pos)| (id, pos))
             .collect();
         pairs.sort_by_key(|(_, pos)| *pos);
-        self.ordered_sheets_cache = pairs.into_iter().map(|(id, _)| id).collect();
+        self.ordered_sheets_cache =
+            Arc::from(pairs.into_iter().map(|(id, _)| id).collect::<Vec<_>>());
     }
 
     /// Return the ordered list of sheet IDs (from snapshot init).
