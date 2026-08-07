@@ -388,6 +388,21 @@ mod tests {
         assert!(result.unwrap_err().contains("UTF-8"));
     }
 
+    #[test]
+    fn public_parse_rejects_malformed_cell_value_utf8() {
+        let mut sheet_xml = br#"<worksheet><sheetData><row r="1"><c r="A1" t="str"><v>"#.to_vec();
+        sheet_xml.push(0xff);
+        sheet_xml.extend_from_slice(br#"</v></c></row></sheetData></worksheet>"#);
+        let xlsx = minimal_xlsx_with_sheet(sheet_xml);
+
+        let result = parse_xlsx_to_output(&xlsx);
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(error.contains("UTF-8"), "unexpected error: {error}");
+        assert!(error.contains("sheet1.xml"), "unexpected error: {error}");
+    }
+
     /// Regression test: charts must survive export → re-import → re-export.
     /// Tests that absolute OPC target paths (e.g., `/xl/drawings/drawing1.xml`)
     /// are correctly normalized to ZIP paths during export.

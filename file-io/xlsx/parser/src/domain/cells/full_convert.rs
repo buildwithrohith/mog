@@ -48,9 +48,13 @@ pub(crate) fn col_style_range_at(ranges: &[domain_types::ColStyleRange], col: u3
 /// Convert bytes to String after the XML part boundary has validated UTF-8.
 #[inline]
 fn bytes_to_string(bytes: &[u8]) -> String {
-    std::str::from_utf8(bytes)
-        .expect("worksheet/shared-string XML text was validated as UTF-8 at the archive boundary")
-        .to_owned()
+    debug_assert!(std::str::from_utf8(bytes).is_ok());
+    // SAFETY: Full conversion receives worksheet/shared-string bytes only from
+    // `XlsxArchive::read_file`/`read_file_into`, whose `read_entry` call
+    // validates XML-part UTF-8 before the bytes reach CellData. Entity and
+    // OOXML escape decoding preserves valid UTF-8 (or leaves invalid scalar
+    // references as their original ASCII spelling).
+    unsafe { std::str::from_utf8_unchecked(bytes) }.to_owned()
 }
 
 #[inline]
