@@ -139,7 +139,7 @@ re-resolve (hand-guarded lockfile; validated by fresh frozen install).
   gcc, unusable on macOS). Smoke: 19/19 in amd64 container.
 - BIG_PARSE_CONCURRENCY raise: now justifiable (staging runs fork binary);
   still not applied — do after staging Excel session confirms.
-- WATCH: mog repo git identity got reset to Vishhvak mid-session (culprit
+- WATCH: mog repo git identity got reset to the machine default mid-session (culprit
   unknown); re-verify `git config user.name` before EVERY fork commit/push.
 
 ## Round 5+ backlog (documented, not planned)
