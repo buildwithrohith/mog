@@ -170,3 +170,19 @@ re-resolve (hand-guarded lockfile; validated by fresh frozen install).
 - Codex lanes: luna max = workhorse; sol medium = judgment/hard; never raise
   sol effort. Panes need ~20s boot before send; "Sent N bytes" ≠ submitted —
   verify pickup, bare --enter if text sits in the input line.
+
+## Round 6: DONE (wrap-up round, 2026-08-08)
+- Plan 026 values-only wire: NO-OP by evidence — round-5 values/formats
+  binary siblings already identity-free (encode_values range_binary.rs:614-661,
+  encode_formats 764-807; dense values 56.5%/formats 10.4% of JSON). Remaining
+  identity-carrying read is viewport-bounded validation queryRange (~tens of
+  KB/population); new codec variant ruled not worth the surface.
+- SAPIEX_EXCEL_BIG_PARSE_CONCURRENCY=2 SET on Railway STAGING (read back
+  verified; redeploy SUCCESS 01:12). PROD stays 1 until prod runs the fork
+  engine (stock peak 13.2GB x2 > 24GB replica — do NOT raise before then).
+- MALLOC_CONF already live in Dockerfile:103 since #1978.
+- DEFERRED (documented, needs its own effort): async/worker NAPI (event-loop
+  responsiveness, HIGH risk, not a memory item).
+- Remaining after round 6: owner-gated prod rollout (main cut by Rohith);
+  first staging Excel session = live linux dlopen proof; upstream rebase
+  hygiene. Optimization effort CONCLUDED.

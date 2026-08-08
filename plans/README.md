@@ -49,6 +49,8 @@ NOT commit this directory).
 | 024 | Mirror positional-map merge (lazy reverse index) | P2 | M-L | — | Q (opt/mirror-bimap) | DONE (accessor-routing and representation commits `52e4dfd8`, `cd3f1e85`; compute-core 3,036/3,036 and mirror 181/181) |
 | 025 | Binary wire format for bulk range reads | P2 | L | — | R (opt/binary-wire) | DONE (WASM bytes-tuple STOP passed; pure-numeric 10k 260,047/899,407 = 28.91%, 71.09% reduction; mixed 10k 438,950/1,568,291 = 27.99%; commits `0971128f`, `09c9e42d`, `203e5439`, `7a2d5fa7`) |
 
+| 026 | Identity-free binary wire variant for value/format reads | P2 | M | 025 | T (opt/values-only-wire) | DONE (already satisfied by round-5 values/formats siblings; dense 10k values 80,027/141,585 = 56.52%, formats 30,055/290,201 = 10.36%; query identity baseline 260,047/899,407 = 28.91%; no remaining eligible identity-carrying viewer caller; compute-core 3,060 passed + 1 ignored; wire Jest 321 passed; bridge regen stable; no commit); advisor concurred: remaining identity-carrying read (validation queryRange) is viewport-bounded, new codec variant not worth the surface |
+
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) |
 REJECTED (one-line rationale).
 
