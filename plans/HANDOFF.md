@@ -192,11 +192,19 @@ re-resolve (hand-guarded lockfile; validated by fresh frozen install).
   excel-vanilla save gates from #2745) MERGED 04:55Z; merge commit f7f3686a3.
   Pre-merge back-merge of main hotfixes (42a15c158/778cf7a75/18ff12a67) into
   develop resolved one wiki/index.md conflict (union).
-- PROD NOW RUNS THE FORK ENGINE. Post-cut sequence still owed, in order:
-  (1) one prod Excel smoke session = live linux dlopen proof on prod infra;
-  (2) only then raise prod SAPIEX_EXCEL_BIG_PARSE_CONCURRENCY 1 -> 2
-  (project d3ccff56, prod env 8e8045b2, service a8c390dd). Deliberately NOT
-  raised at cut time — the smoke gates it.
+- PROD NOW RUNS THE FORK ENGINE. Post-cut sequence COMPLETE (2026-08-08):
+  (1) prod Excel smoke PASSED — live prod session (deployment ecd6c2b5a,
+  a same-day main hotfix on top of the cut) ran pack_open on a real project
+  workbook: 5 sheets, used range A1:SA156 read clean; runtime log shows
+  "deferred tool activated: pack_open" 13:44:45Z with zero engine errors.
+  That is the linux dlopen proof on prod infra (disable_initial_exec_tls
+  held). A second independent prod Excel use at 08:01Z was also clean.
+  (2) SAPIEX_EXCEL_BIG_PARSE_CONCURRENCY raised 1 -> 2 on Railway prod
+  (project d3ccff56, prod env 8e8045b2, service a8c390dd); variableUpsert
+  13:46Z, auto-redeploy SUCCESS ~13:48Z, read-back verified = 2.
+  Watch item: memory on the first genuinely big prod workbook (worst-case
+  pair ~2x10.2GB import peak on a 24GB replica is tight by design; live
+  per-workbook footprint 1.63GB makes the steady state comfortable).
 - Excel-vanilla plugin gained a save gate battery (Sapiex-side, #2745):
   save_workbook refuses on failing `Check:` rows (constants/errors/|v|>0.5,
   missing red-italic redline) and on percent-formatted cells storing whole
