@@ -186,3 +186,21 @@ re-resolve (hand-guarded lockfile; validated by fresh frozen install).
 - Remaining after round 6: owner-gated prod rollout (main cut by Rohith);
   first staging Excel session = live linux dlopen proof; upstream rebase
   hygiene. Optimization effort CONCLUDED.
+
+## Prod cut: DONE (2026-08-08)
+- Sapiex PR #2746 (develop -> main, 92 commits incl. every engine round + the
+  excel-vanilla save gates from #2745) MERGED 04:55Z; merge commit f7f3686a3.
+  Pre-merge back-merge of main hotfixes (42a15c158/778cf7a75/18ff12a67) into
+  develop resolved one wiki/index.md conflict (union).
+- PROD NOW RUNS THE FORK ENGINE. Post-cut sequence still owed, in order:
+  (1) one prod Excel smoke session = live linux dlopen proof on prod infra;
+  (2) only then raise prod SAPIEX_EXCEL_BIG_PARSE_CONCURRENCY 1 -> 2
+  (project d3ccff56, prod env 8e8045b2, service a8c390dd). Deliberately NOT
+  raised at cut time — the smoke gates it.
+- Excel-vanilla plugin gained a save gate battery (Sapiex-side, #2745):
+  save_workbook refuses on failing `Check:` rows (constants/errors/|v|>0.5,
+  missing red-italic redline) and on percent-formatted cells storing whole
+  numbers (>=10 renders >=1000%); advisory suspects list for percent-labelled
+  rows without percent formats. Engine-relevant: exercises getUsedRange /
+  getValues / getFormulas / formats.getCellProperties over full sheets on
+  every save — a cheap read-path regression canary.
