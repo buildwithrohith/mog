@@ -212,3 +212,21 @@ re-resolve (hand-guarded lockfile; validated by fresh frozen install).
   rows without percent formats. Engine-relevant: exercises getUsedRange /
   getValues / getFormulas / formats.getCellProperties over full sheets on
   every save — a cheap read-path regression canary.
+
+## Post-effort verification (2026-08-10)
+- TREE VERIFIED — `sapiex-patches` HEAD is source-identical to vendored
+  `352fc890` (git diff excluding `plans/` and `*.md` = 0 files). The ~145 later
+  commits are docs + merged lane-branch history. Every plan item 001-026 is
+  LIVE IN PROD since cut #2746 (2026-08-08). When auditing what shipped,
+  compare TREES, not commit reachability — the 2026-08-06 history rewrite makes
+  ancestry checks lie.
+- PLAN 018 VERIFIED on prod Linux via Railway memory metrics (numbers in the
+  README row). No staging synthetic run needed; prod real-workbook evidence is
+  stronger.
+- DIET EFFECT — prod Sapiex memory pre-cut (Aug 4-8): avg 3.67GB / median 3.67
+  / p95 4.73; post-cut (Aug 8-10): avg 3.24GB (-12%) / median 3.11 (-15%) /
+  p95 4.13. Post-cut max spike 10.43GB on a 24GB replica at
+  `BIG_PARSE_CONCURRENCY=2` — the big-workbook watch item is answered for the
+  observed mix.
+- REMAINING OPEN ITEMS unchanged: upstream rebase hygiene; async/worker NAPI
+  (deferred by design, HIGH risk, not memory).
