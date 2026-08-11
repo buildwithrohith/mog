@@ -40,9 +40,8 @@ use value_types::ComputeError;
 /// Defensive cap for live provider `update_v1` drains.
 ///
 /// Imported base state must reach providers through full-state snapshots, not
-/// live update fan-out. A payload this large is overwhelmingly likely to be a
-/// leaked bootstrap transaction; reject it before bridge serialization tries to
-/// allocate a JS/WASM array for the bytes.
+/// live update fan-out. Hydration transactions are filtered by source before
+/// this cap is checked; the cap remains for genuinely anomalous live updates.
 pub(crate) const MAX_PROVIDER_UPDATE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,9 +98,9 @@ impl UpdateBuffer {
 
     /// Push one v1-encoded update payload with an explicit diagnostic source.
     ///
-    /// Source tags are intentionally metadata only: the provider protocol still
-    /// drains a flat `Vec<Vec<u8>>`, while guardrail errors can report which
-    /// class of transaction leaked into the live-update path.
+    /// Source tags stay internal to the engine. The provider protocol still
+    /// drains a flat `Vec<Vec<u8>>`, while the drain can discard transactions
+    /// that are known to be full-state hydration rather than live edits.
     pub(crate) fn push_with_source(&self, source: UpdateSource, update: Vec<u8>) {
         let mut guard = self.inner.lock().expect("UpdateBuffer poisoned");
         guard.push(PendingUpdate {
@@ -127,15 +126,32 @@ impl UpdateBuffer {
 
     /// Drain pending updates after enforcing the per-drain cap.
     ///
-    /// A single update larger than the cap is rejected as a likely bootstrap
-    /// leak. Multiple smaller updates are drained as a FIFO prefix whose total
-    /// bytes fit under the cap, leaving the tail queued for the next drain.
+    /// Full-state hydration and import-bootstrap updates are not provider
+    /// updates: their durable representation is the full snapshot encoded from
+    /// the live document. Drop those entries before enforcing the cap. A single
+    /// oversized live update is still rejected, while multiple smaller updates
+    /// are drained as a FIFO prefix whose total bytes fit under the cap.
     pub(crate) fn drain_checked(&self) -> Result<Vec<Vec<u8>>, ComputeError> {
         self.drain_checked_with_cap(MAX_PROVIDER_UPDATE_BYTES)
     }
 
     fn drain_checked_with_cap(&self, cap_bytes: usize) -> Result<Vec<Vec<u8>>, ComputeError> {
         let mut guard = self.inner.lock().expect("UpdateBuffer poisoned");
+        guard.retain(|pending| {
+            let is_hydration = matches!(
+                pending.source,
+                UpdateSource::FullHydration | UpdateSource::ImportBootstrap
+            );
+            if is_hydration {
+                tracing::info!(
+                    target: "provider_update_drain",
+                    source = %pending.source,
+                    bytes = pending.bytes.len(),
+                    "dropping hydration update from provider drain",
+                );
+            }
+            !is_hydration
+        });
         let pending_updates = guard.len();
         if let Some(oversized) = guard.iter().find(|pending| pending.bytes.len() > cap_bytes) {
             return Err(ComputeError::InvalidInput {
@@ -226,9 +242,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn drain_checked_rejects_bootstrap_sized_payload_with_source_diagnostic() {
+    fn drain_checked_rejects_oversized_user_payload_with_source_diagnostic() {
         let buffer = UpdateBuffer::default();
-        buffer.push_with_source(UpdateSource::ImportBootstrap, vec![0; 5]);
+        buffer.push_with_source(UpdateSource::UserMutation, vec![0; 5]);
 
         let err = buffer
             .drain_checked_with_cap(4)
@@ -238,9 +254,24 @@ mod tests {
             message.contains("bootstrap update leaked into provider drain"),
             "{message}"
         );
-        assert!(message.contains("source=import_bootstrap"), "{message}");
+        assert!(message.contains("source=user_mutation"), "{message}");
         assert!(message.contains("capBytes=4"), "{message}");
         assert_eq!(buffer.len(), 1, "diagnostic rejection must not drop bytes");
+    }
+
+    #[test]
+    fn drain_checked_drops_hydration_updates_before_cap_validation() {
+        let buffer = UpdateBuffer::default();
+        buffer.push_with_source(UpdateSource::UserMutation, vec![1]);
+        buffer.push_with_source(UpdateSource::FullHydration, vec![0; 5]);
+        buffer.push_with_source(UpdateSource::ImportBootstrap, vec![0; 6]);
+        buffer.push_with_source(UpdateSource::UndoRedo, vec![2, 3]);
+
+        let drained = buffer
+            .drain_checked_with_cap(4)
+            .expect("hydration updates must not trip the provider cap");
+        assert_eq!(drained, vec![vec![1], vec![2, 3]]);
+        assert_eq!(buffer.len(), 0);
     }
 
     #[test]

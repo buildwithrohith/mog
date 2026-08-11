@@ -6,6 +6,7 @@ use super::sync_authored_cells;
 use crate::snapshot::MutationResult;
 use crate::snapshot::{ObjectDigest, SyncApplyMutationMetadataWire, SyncApplyOperationContextWire};
 use cell_types::SheetId;
+use snapshot_types::VersionSyncSourceKindWire;
 use value_types::ComputeError;
 use yrs::Transact;
 
@@ -35,6 +36,30 @@ impl YrsComputeEngine {
 
         self.active_sync_context = Some(sync_context);
 
+        // Provider replay and other explicit hydration sources apply a full
+        // persisted state to the live Yrs document. The observer sees that
+        // apply as one large update, so classify it before the transaction
+        // commits; the provider drain will discard it after the snapshot path
+        // has independently captured the live document.
+        let hydration_source = self
+            .active_sync_context
+            .as_ref()
+            .and_then(|context| context.operation_context.collaboration.as_ref())
+            .and_then(|collaboration| match &collaboration.source_kind {
+                VersionSyncSourceKindWire::ProviderReplay
+                | VersionSyncSourceKindWire::CollaborationHydration => {
+                    Some(super::update_buffer::UpdateSource::FullHydration)
+                }
+                VersionSyncSourceKindWire::ImportHydration => {
+                    Some(super::update_buffer::UpdateSource::ImportBootstrap)
+                }
+                _ => None,
+            });
+        let previous_update_source = self.update_source;
+        if let Some(source) = hydration_source {
+            self.install_update_observer(source);
+        }
+
         let result = (|| -> Result<(Vec<u8>, MutationResult), ComputeError> {
             sync::apply_update(self.stores.storage.doc(), update).map_err(|e| {
                 ComputeError::Eval {
@@ -53,6 +78,10 @@ impl YrsComputeEngine {
             // compute core, and mirror all reflect the converged CRDT state.
             self.rebuild_from_yrs_after_sync(pre_sheet_order, pre_authored_cells)
         })();
+
+        if hydration_source.is_some() {
+            self.install_update_observer(previous_update_source);
+        }
 
         let applied_context = self.active_sync_context.clone();
         self.active_sync_context = None;

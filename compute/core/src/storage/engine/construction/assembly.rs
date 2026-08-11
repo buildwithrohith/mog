@@ -323,6 +323,7 @@ fn assemble_engine_inner(
         update_buffer,
         active_sync_context: None,
         _update_subscription: update_subscription,
+        update_source: crate::storage::engine::update_buffer::UpdateSource::UserMutation,
         scenario_session: crate::what_if::scenarios::ScenarioSessionState::default(),
         deferred_hydration: None,
     };
@@ -356,9 +357,7 @@ pub(in crate::storage::engine) fn rebuild_engine_from_snapshot(
     // time. Replacing storage above discards that doc; reinstall the observer on
     // the new doc so cell edits continue to feed update_buffer (and from there,
     // the IndexedDB provider via drainPendingUpdates).
-    engine._update_subscription = crate::storage::engine::update_buffer::install_observer(
-        engine.stores.storage.doc(),
-        &engine.update_buffer,
+    engine.install_update_observer(
         crate::storage::engine::update_buffer::UpdateSource::InternalRebuild,
     );
     // CellMirror is built inside init_from_snapshot / init_from_snapshot_minimal.
