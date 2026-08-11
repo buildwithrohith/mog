@@ -230,3 +230,15 @@ re-resolve (hand-guarded lockfile; validated by fresh frozen install).
   observed mix.
 - REMAINING OPEN ITEMS unchanged: upstream rebase hygiene; async/worker NAPI
   (deferred by design, HIGH risk, not memory).
+
+## Plan 027: import-peak attribution (2026-08-10)
+- Peak is NOT the parser (0.5%): `complete_deferred_hydration` (Yrs CRDT
+  materialization) owns 75-90% of the ~9.4-10.6GB climb, encode 10-25%.
+  Staging + Yrs are resident simultaneously through the whole hydrate.
+- Streaming sheet-by-sheet parse RULED OUT as a peak reducer (~63MB at stake).
+  Only real lever: staged per-sheet hydration with staging release (008/022
+  machinery extended into the import path) — L/MED-HIGH, decision NOT NOW
+  (spike transient + capacity-safe + bill is baseline-driven). If it ever
+  matters, process isolation (worker-service parses) is the cheaper de-risk.
+- Measurement harness lives at `compute/napi/mem-attrib.mjs` — reusable for
+  any future A/B on the import path.
