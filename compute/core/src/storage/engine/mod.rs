@@ -177,6 +177,11 @@ pub struct YrsComputeEngine {
     /// `update_buffer`. Read only via `Drop`.
     _update_subscription: compute_collab::UpdateSubscriptionHandle,
 
+    /// Source assigned to the currently installed update observer. Hydration
+    /// and provider-replay scopes temporarily replace the observer and restore
+    /// this source when the scope ends.
+    pub(crate) update_source: update_buffer::UpdateSource,
+
     /// Session-scoped Scenario Manager apply/restore state.
     ///
     /// This is intentionally not persisted in Yrs. Apply captures a local
@@ -238,6 +243,14 @@ impl YrsComputeEngine {
 
     pub(crate) fn clear_runtime_diagnostics(&mut self) {
         self.runtime_diagnostics.clear();
+    }
+
+    pub(crate) fn install_update_observer(&mut self, source: update_buffer::UpdateSource) {
+        let subscription =
+            update_buffer::install_observer(self.stores.storage.doc(), &self.update_buffer, source);
+        let previous_subscription = std::mem::replace(&mut self._update_subscription, subscription);
+        drop(previous_subscription);
+        self.update_source = source;
     }
 }
 

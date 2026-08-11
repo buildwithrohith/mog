@@ -92,6 +92,72 @@ fn deferred_xlsx_full_hydration_provider_replay_restores_imported_values() {
 }
 
 #[test]
+fn reopened_document_drops_oversized_provider_hydration_before_save() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let (mut reopened, _) = YrsComputeEngine::from_snapshot(simple_snapshot()).unwrap();
+    let reopened_sheet_id = SheetId::from_uuid_str(
+        reopened
+            .get_all_sheet_ids()
+            .first()
+            .expect("reopened workbook should have a sheet"),
+    )
+    .unwrap();
+    let hydration_text = "hydrated-cell-value-"
+        .repeat((crate::storage::engine::update_buffer::MAX_PROVIDER_UPDATE_BYTES / 20) + 4096);
+
+    let observed_update_bytes = Arc::new(AtomicUsize::new(0));
+    let observed_update_bytes_for_callback = Arc::clone(&observed_update_bytes);
+    let capture = compute_collab::subscribe_update_v1(reopened.storage().doc(), move |bytes| {
+        observed_update_bytes_for_callback.store(bytes.len(), Ordering::Relaxed);
+    });
+    reopened.install_update_observer(
+        crate::storage::engine::update_buffer::UpdateSource::FullHydration,
+    );
+    reopened
+        .set_cell_value_as_text(&reopened_sheet_id, 4, 0, &hydration_text)
+        .expect("reopened hydration value should be accepted");
+    assert!(
+        observed_update_bytes.load(Ordering::Relaxed)
+            > crate::storage::engine::update_buffer::MAX_PROVIDER_UPDATE_BYTES,
+        "the reopened hydration transaction must exceed the provider cap: {} bytes",
+        observed_update_bytes.load(Ordering::Relaxed),
+    );
+    drop(capture);
+    reopened
+        .install_update_observer(crate::storage::engine::update_buffer::UpdateSource::UserMutation);
+
+    let persisted_state = compute_collab::encode_full_state(reopened.storage().doc());
+    assert!(
+        persisted_state.len() > crate::storage::engine::update_buffer::MAX_PROVIDER_UPDATE_BYTES,
+        "the reopened fixture must exercise the provider cap: {} bytes",
+        persisted_state.len(),
+    );
+
+    let drained = reopened
+        .drain_pending_updates()
+        .expect("oversized provider hydration must not fail the drain");
+    assert!(
+        drained.is_empty(),
+        "provider replay hydration is represented by the full snapshot, not an append update",
+    );
+
+    let saved_state = compute_collab::encode_full_state(reopened.storage().doc());
+    assert!(
+        !saved_state.is_empty(),
+        "reopened document should still save"
+    );
+    assert!(
+        matches!(
+            reopened.get_cell_value(&reopened_sheet_id, 4, 0),
+            CellValue::Text(ref value) if value.len() == hydration_text.len()
+        ),
+        "reopened save must preserve the full hydration value",
+    );
+}
+
+#[test]
 fn deferred_xlsx_provider_replay_preserves_style_only_empty_cell_fill() {
     let bytes = style_only_empty_fill_fixture_xlsx();
 

@@ -380,9 +380,7 @@ pub(in crate::storage::engine) fn import_from_xlsx_bytes_deferred(
 
     // Pass 9: Observer/undo/settings for the critical Yrs document.
     engine.update_buffer.clear();
-    engine._update_subscription = crate::storage::engine::update_buffer::install_observer(
-        engine.stores.storage.doc(),
-        &engine.update_buffer,
+    engine.install_update_observer(
         crate::storage::engine::update_buffer::UpdateSource::ImportBootstrap,
     );
     let (observer, undo_manager) = create_observer_and_undo(&engine.stores.storage);
@@ -428,6 +426,12 @@ pub(in crate::storage::engine) fn import_from_xlsx_bytes_deferred(
         sheet_dependency_manifest,
         committed_cell_edit_batches: Vec::new(),
     });
+
+    // ImportBootstrap covers initialization only. Once the deferred document
+    // is installed, edits made while later sheets remain lazy are ordinary
+    // user mutations and must stay provider-visible.
+    engine
+        .install_update_observer(crate::storage::engine::update_buffer::UpdateSource::UserMutation);
 
     Ok(RecalcResult::empty())
 }
@@ -912,15 +916,9 @@ fn hydrate_deferred_sheet_inner(
         // The update observer is independent of the semantic mutation
         // observer. Tag this one transaction separately and remove only its
         // update payload after commit so a queued user update cannot be lost.
-        let previous_subscription = std::mem::replace(
-            &mut engine._update_subscription,
-            crate::storage::engine::update_buffer::install_observer(
-                engine.stores.storage.doc(),
-                &engine.update_buffer,
-                crate::storage::engine::update_buffer::UpdateSource::FullHydration,
-            ),
+        engine.install_update_observer(
+            crate::storage::engine::update_buffer::UpdateSource::FullHydration,
         );
-        drop(previous_subscription);
         let result = {
             let _suppress = engine.mutation.suppress_guard();
             engine.stores.storage.hydrate_existing_sheet_with_ranges(
@@ -937,15 +935,9 @@ fn hydrate_deferred_sheet_inner(
                 &mut allocator,
             )
         };
-        let previous_subscription = std::mem::replace(
-            &mut engine._update_subscription,
-            crate::storage::engine::update_buffer::install_observer(
-                engine.stores.storage.doc(),
-                &engine.update_buffer,
-                crate::storage::engine::update_buffer::UpdateSource::UserMutation,
-            ),
+        engine.install_update_observer(
+            crate::storage::engine::update_buffer::UpdateSource::UserMutation,
         );
-        drop(previous_subscription);
         engine
             .update_buffer
             .clear_source(crate::storage::engine::update_buffer::UpdateSource::FullHydration);
@@ -1396,9 +1388,7 @@ pub(in crate::storage::engine) fn commit_deferred_hydration(
     // all-sheet materialized and export/graph guards can be cleared.
     engine.update_buffer.clear();
     engine.stores = completion.stores;
-    engine._update_subscription = crate::storage::engine::update_buffer::install_observer(
-        engine.stores.storage.doc(),
-        &engine.update_buffer,
+    engine.install_update_observer(
         crate::storage::engine::update_buffer::UpdateSource::FullHydration,
     );
     engine.mirror = completion.mirror;
@@ -1430,15 +1420,8 @@ pub(in crate::storage::engine) fn commit_deferred_hydration(
     engine
         .update_buffer
         .clear_source(crate::storage::engine::update_buffer::UpdateSource::FullHydration);
-    let previous_subscription = std::mem::replace(
-        &mut engine._update_subscription,
-        crate::storage::engine::update_buffer::install_observer(
-            engine.stores.storage.doc(),
-            &engine.update_buffer,
-            crate::storage::engine::update_buffer::UpdateSource::UserMutation,
-        ),
-    );
-    drop(previous_subscription);
+    engine
+        .install_update_observer(crate::storage::engine::update_buffer::UpdateSource::UserMutation);
 
     for batch in committed_cell_edit_batches {
         let mutation = match batch.kind {
